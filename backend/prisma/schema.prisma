@@ -1020,6 +1020,11 @@ model Publication {
   totalAuthors       Int     @default(1)
   schoolAuthors      Int     @default(1)
   mainAuthorAtSchool Boolean @default(false)
+  /// SỐ tác giả chính (First/Corresponding/Last) NGOÀI Trường — đếm từ
+  /// externalAuthors lúc khai. Kênh tích hợp phát mainAuthors = (tác giả chính
+  /// thuộc Trường đã xác nhận, đếm sống) + số này. Cần vì tác giả chính ngoài
+  /// Trường không có dòng PublicationAuthor để đếm sống (mục 1 yeu-cau-web-khoa).
+  externalMainAuthors Int    @default(0)
 
   createdBy String?
   createdAt DateTime  @default(now())
@@ -1223,6 +1228,10 @@ model ProjectMember {
   role         ProjectRole       @default(MEMBER)
   /// Tỷ lệ chia giờ do nhóm thoả thuận; chủ nhiệm là người khai (Phụ lục 2 tr. 2.8).
   sharePercent Int?
+  /// Diện học viên sau đại học của thành viên: "cao_hoc" | "ncs" | null. CHỈ để
+  /// GHI NHẬN cho thống kê — KHÔNG dùng vào quy đổi giờ/điểm, và kênh tích hợp
+  /// sang ACADsoom không phát trường này.
+  studentType  String?
   claimStatus  AuthorClaimStatus @default(PENDING)
   invitedBy    String?
   respondedAt  DateTime?

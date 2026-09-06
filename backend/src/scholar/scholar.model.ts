@@ -36,6 +36,15 @@ export const EDUCATION_SOURCES = ['SELF', 'STAFF_PAGE'] as const;
 
 const OptionalText = (max: number) => z.string().max(max).nullish();
 
+/**
+ * Diện học viên sau đại học của MỘT đồng tác giả / thành viên nhiệm vụ — CHỈ để
+ * GHI NHẬN cho thống kê về sau. KHÔNG dùng vào bất kỳ phép quy đổi giờ / điểm /
+ * KPI nào (giờ do ACADsoom tính, và kênh tích hợp KHÔNG phát trường này). Khác
+ * `GRAD_STUDY_LEVELS` vốn là bậc CHÍNH CHỦ đang theo học, khai ở hồ sơ của mình.
+ */
+export const STUDENT_TYPES = ['cao_hoc', 'ncs'] as const;
+const StudentTypeField = z.enum(STUDENT_TYPES).nullish();
+
 // ── Lý lịch khoa học ────────────────────────────────────────────────────────
 export const NameVariantResSchema = z.object({
   id: z.string(),
@@ -170,6 +179,24 @@ export const ResolvedAuthorSchema = z.object({
   orcid: z.string().nullish(),
   sequence: z.enum(['first', 'additional']).nullish(),
   affiliation: z.string().nullish(),
+  /**
+   * Diện học viên của tác giả này — CHỈ ghi nhận cho thống kê, KHÔNG tính giờ.
+   * Lưu ngay trong authorsRaw (JSON) nên không cần cột/di trú riêng, và round-trip
+   * qua đây vì cùng schema dùng cho cả nhận vào lẫn trả ra.
+   */
+  studentType: StudentTypeField,
+  /**
+   * Tác giả nước ngoài — CHỈ ghi nhận cho thống kê. Về NV2 xử lý y hệt non_school
+   * (KHÔNG tính); kênh tích hợp sang ACADsoom không phát trường này. Lưu ngay
+   * trong authorsRaw (JSON) như `studentType`, không cần cột/di trú riêng.
+   */
+  isForeign: z.boolean().nullish(),
+  /**
+   * Thuộc Đại học Quốc gia — đơn vị khác trong ĐHQG-HCM nhưng KHÔNG phải Trường
+   * ĐH KHTN. CHỈ ghi nhận cho thống kê; về NV2 xử lý y hệt non_school (KHÔNG
+   * tính). Lưu ngay trong authorsRaw (JSON) như `isForeign`, không cột/di trú riêng.
+   */
+  isVnu: z.boolean().nullish(),
 });
 
 export const ResolvedWorkSchema = z.object({
@@ -326,6 +353,19 @@ export const PublicationListResSchema = z.object({
 const YearNum = z.number().int().min(1900).max(2200);
 const MonthNum = z.number().int().min(1).max(12);
 
+/**
+ * Tác giả NGOÀI Trường (không có tài khoản). Giao diện đã gửi kèm cờ vị trí cho
+ * MỌI tác giả kể cả người ngoài; dùng để đếm mainAuthors — TỔNG tác giả chính
+ * của BÀI, kể cả ngoài Trường (mục 1, docs/yeu-cau-web-khoa.md).
+ */
+export const ExternalAuthorSchema = z.object({
+  name: z.string().max(300).optional(),
+  isFirst: z.boolean().optional(),
+  isCorresponding: z.boolean().optional(),
+  isLast: z.boolean().optional(),
+  sharePercent: z.number().nullish(),
+});
+
 export const CreatePublicationBodySchema = z.object({
   work: ResolvedWorkSchema,
   /** Mặc định PUBLISHED — phần lớn bài được khai sau khi đã in. */
@@ -337,6 +377,9 @@ export const CreatePublicationBodySchema = z.object({
   me: MyAuthorshipSchema,
   /** Đồng tác giả trong Khoa — họ sẽ ở PENDING cho tới khi tự xác nhận. */
   coAuthorUserIds: z.array(z.string()).max(50).default([]),
+  /** Tác giả ngoài Trường + cờ vị trí — để đếm mainAuthors (tổng tác giả chính
+   *  của bài, kể cả ngoài Trường). Giao diện vốn đã gửi, trước đây bị Zod bỏ. */
+  externalAuthors: z.array(ExternalAuthorSchema).max(2000).default([]),
   totalAuthors: z.number().int().min(1).max(2000).optional(),
 
   // ── Phân loại Phụ lục 2, chọn NGAY lúc khai ──────────────────────────────
@@ -386,6 +429,16 @@ export const UpdatePublicationBodySchema = z.object({
 
   me: MyAuthorshipSchema.partial().optional(),
   coAuthorUserIds: z.array(z.string()).max(50).optional(),
+
+  /**
+   * Danh sách tác giả gốc, gửi lên KHI cần ghi lại `studentType` (diện học viên)
+   * cho từng tác giả — dữ liệu GHI NHẬN, không đụng quy đổi. Giao diện gửi nguyên
+   * mảng đã nạp về, chỉ phủ thêm `studentType`, nên thứ tự và danh tính tác giả
+   * giữ nguyên. Bỏ trống thì không đụng tới authorsRaw.
+   */
+  authorsRaw: z.array(ResolvedAuthorSchema).max(2000).optional(),
+  /** Tác giả ngoài Trường + cờ vị trí — cập nhật lại số tác giả chính ngoài Trường. */
+  externalAuthors: z.array(ExternalAuthorSchema).max(2000).optional(),
 });
 export type UpdatePublicationBodyType = z.infer<
   typeof UpdatePublicationBodySchema
@@ -449,6 +502,10 @@ export const IntegrationPublicationResSchema = z.object({
     z.object({
       publicationId: z.string(),
       doi: z.string().nullable(),
+      // CÁCH NHẬP: ACADsoom dựa vào đây để đòi minh chứng — bài nhập tay ('Khai
+      // tay'/'manual'/import .bib) phải nộp fulltext, bài tự truy xuất thì miễn.
+      // Không có `@ZodSerializerDto` sẽ nuốt mất trường này ở đầu ra.
+      source: z.string().nullable(),
       title: z.string(),
       venue: z.string().nullable(),
       url: z.string().nullable(),
@@ -474,6 +531,8 @@ export const IntegrationPublicationResSchema = z.object({
       mainAuthorAtSchool: z.boolean(),
       /** SỐ tác giả chính thuộc Trường đã xác nhận — mẫu số của Cách 2. */
       mainAuthorsAtSchool: z.number().int(),
+      /** TỔNG tác giả chính CỦA BÀI (kể cả ngoài Trường) — mẫu số thật của phần 1/3. */
+      mainAuthors: z.number().int(),
       isMainAuthor: z.boolean(),
       sharePercent: z.number().int().nullable(),
 
@@ -700,6 +759,9 @@ export const PeopleResSchema = z.object({
 
 export const IntegrationQuerySchema = z.object({
   email: z.string().email().optional(),
+  /** Nhiều email, ngăn bằng dấu phẩy — lọc một lượt cho nhiều người (traDanhBa /
+   *  đăng nhập của ACADsoom). `email` (số ít) vẫn nhận để tương thích. */
+  emails: z.string().max(4000).optional(),
   from: z.coerce.number().int().min(1900).max(2200).optional(),
   to: z.coerce.number().int().min(1900).max(2200).optional(),
   /**
@@ -812,6 +874,8 @@ export const ProjectMemberResSchema = z.object({
   externalOrg: z.string().nullable(),
   role: z.enum(PROJECT_ROLES),
   sharePercent: z.number().int().nullable(),
+  /** Diện học viên — CHỈ ghi nhận cho thống kê, không tính giờ. */
+  studentType: z.enum(STUDENT_TYPES).nullable(),
   claimStatus: z.enum(CLAIM_STATUSES),
   invitedBy: z.string().nullable(),
   respondedAt: z.date().nullable(),
@@ -886,6 +950,8 @@ export const CreateProjectBodySchema = z.object({
         userId: z.string(),
         role: z.enum(PROJECT_ROLES).optional(),
         sharePercent: z.number().int().min(1).max(100).nullish(),
+        /** Diện học viên — CHỈ ghi nhận cho thống kê, không tính giờ. */
+        studentType: StudentTypeField,
       }),
     )
     .max(50)
@@ -902,6 +968,8 @@ export const CreateProjectBodySchema = z.object({
         org: OptionalText(300),
         role: z.enum(PROJECT_ROLES).optional(),
         sharePercent: z.number().int().min(1).max(100).nullish(),
+        /** Diện học viên — CHỈ ghi nhận cho thống kê, không tính giờ. */
+        studentType: StudentTypeField,
       }),
     )
     .max(50)
@@ -941,6 +1009,8 @@ export const UpdateProjectBodySchema = CreateProjectBodySchema.partial().extend(
           memberId: z.string(),
           role: z.enum(PROJECT_ROLES).optional(),
           sharePercent: z.number().int().min(1).max(100).nullish(),
+          /** Diện học viên — CHỈ ghi nhận cho thống kê, không tính giờ. */
+          studentType: StudentTypeField,
         }),
       )
       .max(50)

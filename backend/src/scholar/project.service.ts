@@ -95,6 +95,8 @@ export class ProjectService {
         externalOrg: m.externalOrg ?? null,
         role: m.role,
         sharePercent: m.sharePercent,
+        // GHI NHẬN diện học viên — không tham gia bất kỳ phép tính giờ nào.
+        studentType: m.studentType ?? null,
         claimStatus: m.claimStatus,
         invitedBy: m.invitedBy,
         respondedAt: m.respondedAt,
@@ -215,6 +217,7 @@ export class ProjectService {
       org?: string | null;
       role?: 'LEAD' | 'SECRETARY' | 'MEMBER';
       sharePercent?: number | null;
+      studentType?: 'cao_hoc' | 'ncs' | null;
     }>,
   ) {
     const sach = people.filter((p) => p.name.trim());
@@ -226,6 +229,8 @@ export class ProjectService {
         externalName: p.name.trim(),
         externalOrg: p.org?.trim() || null,
         sharePercent: p.sharePercent ?? null,
+        // GHI NHẬN diện học viên — không tính giờ.
+        studentType: p.studentType ?? null,
         role: p.role ?? ('MEMBER' as const),
         claimStatus: 'CONFIRMED' as const,
         respondedAt: new Date(),
@@ -241,6 +246,7 @@ export class ProjectService {
       userId: string;
       role?: 'LEAD' | 'SECRETARY' | 'MEMBER';
       sharePercent?: number | null;
+      studentType?: 'cao_hoc' | 'ncs' | null;
     }>,
   ) {
     // Khử trùng theo userId: gắn tên một người hai lần là lỗi của người khai,
@@ -261,6 +267,8 @@ export class ProjectService {
         userId: p.userId,
         role: p.role ?? ('MEMBER' as const),
         sharePercent: p.sharePercent ?? null,
+        // GHI NHẬN diện học viên — không tính giờ.
+        studentType: p.studentType ?? null,
         invitedBy,
         claimStatus: 'PENDING' as const,
       })),
@@ -356,6 +364,10 @@ export class ProjectService {
             ...(m.sharePercent === undefined
               ? {}
               : { sharePercent: m.sharePercent ?? null }),
+            // GHI NHẬN diện học viên — không tính giờ. Gửi lên mới đụng.
+            ...(m.studentType === undefined
+              ? {}
+              : { studentType: m.studentType ?? null }),
           },
         });
       }

@@ -455,6 +455,11 @@ export class ScholarService {
         reprint: body.reprint ?? false,
         fromProject: body.fromProject ?? false,
         stage: body.stage ?? 0,
+        // TỔNG tác giả chính NGOÀI Trường — đếm lúc khai; integrationList cộng vào
+        // mainAuthorsAtSchool (đếm sống) để ra mainAuthors. recount() không đụng cột này.
+        externalMainAuthors: (body.externalAuthors ?? []).filter(
+          (a) => a.isFirst || a.isCorresponding || a.isLast,
+        ).length,
         createdBy: userId,
       },
       select: { id: true },
@@ -616,6 +621,13 @@ export class ScholarService {
         publisher: body.publisher ?? undefined,
         url: body.url ?? undefined,
         issn: body.issn ?? undefined,
+        // Ghi lại authorsRaw KHI giao diện gửi lên — chỉ dùng để lưu `studentType`
+        // (diện học viên) cho từng tác giả. GHI NHẬN thuần tuý, không đụng tới bất
+        // kỳ con số quy đổi giờ/điểm nào. Bỏ trống thì giữ nguyên danh sách cũ.
+        authorsRaw:
+          body.authorsRaw === undefined
+            ? undefined
+            : (body.authorsRaw as unknown as Prisma.InputJsonValue),
         status: body.status ?? undefined,
         publishedYear,
         publishedMonth:
@@ -636,6 +648,13 @@ export class ScholarService {
         totalAuthors: body.totalAuthors ?? undefined,
         schoolAuthors: body.schoolAuthors ?? undefined,
         mainAuthorAtSchool: body.mainAuthorAtSchool ?? undefined,
+        // Cập nhật số tác giả chính ngoài Trường khi giao diện gửi externalAuthors.
+        externalMainAuthors:
+          body.externalAuthors === undefined
+            ? undefined
+            : body.externalAuthors.filter(
+                (a) => a.isFirst || a.isCorresponding || a.isLast,
+              ).length,
       },
     });
 
@@ -979,7 +998,20 @@ export class ScholarService {
 
     const rows = await this.prisma.publicationAuthor.findMany({
       where: {
-        ...(query.email ? { user: { email: query.email.toLowerCase() } } : {}),
+        ...(query.email
+          ? { user: { email: query.email.toLowerCase() } }
+          : query.emails
+            ? {
+                user: {
+                  email: {
+                    in: query.emails
+                      .split(',')
+                      .map((e) => e.trim().toLowerCase())
+                      .filter(Boolean),
+                  },
+                },
+              }
+            : {}),
         ...(since
           ? {
               // Bài đổi mà dòng tác giả không đổi (vd sửa quartile), hoặc ngược
@@ -1026,6 +1058,10 @@ export class ScholarService {
         item: {
           publicationId: p.id,
           doi: p.doi,
+          // CÁCH NHẬP, để ACADsoom quyết có đòi minh chứng không: nguồn tự truy
+          // xuất (crossref/openalex/orcid/arxiv/…) thì miễn; 'Khai tay'/'manual'/
+          // import file thì tự khai → phải nộp minh chứng (yêu cầu của trưởng khoa).
+          source: p.source ?? null,
           title: p.title,
           venue: p.containerTitle,
           url: p.url,
@@ -1055,6 +1091,12 @@ export class ScholarService {
           mainAuthorsAtSchool: p.authors.filter(
             (a) => a.isFirst || a.isCorresponding || a.isLast,
           ).length,
+          // TỔNG tác giả chính CỦA BÀI = (chính thuộc Trường, đếm sống) + (chính
+          // NGOÀI Trường, lưu lúc khai). Đây mới là mẫu số thật của phần 1/3 (mục 1).
+          mainAuthors:
+            p.authors.filter(
+              (a) => a.isFirst || a.isCorresponding || a.isLast,
+            ).length + (p.externalMainAuthors ?? 0),
           isMainAuthor: r.isFirst || r.isCorresponding || r.isLast,
           sharePercent: r.sharePercent,
 
@@ -1102,7 +1144,20 @@ export class ScholarService {
     const { since } = query;
     const rows = await this.prisma.scholarProfile.findMany({
       where: {
-        ...(query.email ? { user: { email: query.email.toLowerCase() } } : {}),
+        ...(query.email
+          ? { user: { email: query.email.toLowerCase() } }
+          : query.emails
+            ? {
+                user: {
+                  email: {
+                    in: query.emails
+                      .split(',')
+                      .map((e) => e.trim().toLowerCase())
+                      .filter(Boolean),
+                  },
+                },
+              }
+            : {}),
         // Ảnh chụp: chỉ người đang khai một diện. Chế độ `since`: mọi hồ sơ vừa
         // đổi, kể cả người vừa xoá diện học (để gửi `removed`).
         ...(since
@@ -1154,7 +1209,18 @@ export class ScholarService {
         // (nguyenvuongthuyngan@ / ngannguyen@) cạnh bản thật nvtngan@ (LECTURER).
         // Không lọc thì PHYsoom/ACADsoom kéo về sẽ tạo tài khoản rác/trùng.
         role: 'LECTURER',
-        ...(query.email ? { email: query.email.toLowerCase() } : {}),
+        ...(query.email
+          ? { email: query.email.toLowerCase() }
+          : query.emails
+            ? {
+                email: {
+                  in: query.emails
+                    .split(',')
+                    .map((e) => e.trim().toLowerCase())
+                    .filter(Boolean),
+                },
+              }
+            : {}),
         ...(since ? { updatedAt: { gte: since } } : {}),
       },
       select: {

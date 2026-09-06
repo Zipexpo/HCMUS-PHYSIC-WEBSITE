@@ -57,6 +57,11 @@ export class ResolveService {
     const arxiv = normalizeArxiv(raw);
     if (arxiv) return this.byArxiv(arxiv);
 
+    // Link Nhà sách HCMUS: sách NXB trong nước không tra được bằng ISBN, nhưng
+    // trang sản phẩm có đủ tên/tác giả/NXB/năm/số trang để bóc ra.
+    const storeUrl = this.hcmusBookstoreUrl(raw);
+    if (storeUrl) return this.byHcmusBookstore(storeUrl);
+
     const isbn = normalizeIsbn(raw);
     if (isbn && /^\d{9}[\dxX]$|^\d{13}$/.test(raw.replace(/[^0-9xX]/g, ''))) {
       return this.byIsbn(isbn);
@@ -301,31 +306,173 @@ export class ResolveService {
   }
 
   // ── ISBN ──────────────────────────────────────────────────────────────────
+  /**
+   * OpenLibrary trước (không cần khoá). Phần lớn sách NXB trong nước không có ở
+   * đó, nên trượt thì hỏi tiếp Google Books — kho phủ sách tiếng Việt rộng hơn.
+   */
   async byIsbn(isbn: string): Promise<ResolvedWork | null> {
-    return this.cached(`scholar:isbn:${isbn}`, async () => {
-      const json = await this.getJson(
-        `https://openlibrary.org/api/books?bibkeys=ISBN:${isbn}&format=json&jscmd=data`,
+    return this.cached(
+      `scholar:isbn:${isbn}`,
+      async () =>
+        (await this.openLibraryByIsbn(isbn)) ??
+        (await this.googleBooksByIsbn(isbn)),
+    );
+  }
+
+  private async openLibraryByIsbn(isbn: string): Promise<ResolvedWork | null> {
+    const json = await this.getJson(
+      `https://openlibrary.org/api/books?bibkeys=ISBN:${isbn}&format=json&jscmd=data`,
+    );
+    const b = asObj(dig(json, `ISBN:${isbn}`));
+    const title = asStr(b.title);
+    if (!title) return null;
+
+    return {
+      isbn,
+      type: 'book',
+      title,
+      publisher: asStr(dig(asArr(b.publishers)[0], 'name')),
+      url: asStr(b.url),
+      publishedYear: parseYear(asStr(b.publish_date)),
+      publishedMonth: null,
+      authors: asArr(b.authors).map((raw, i) => ({
+        name: asStr(asObj(raw).name),
+        sequence: i === 0 ? ('first' as const) : ('additional' as const),
+      })),
+      source: 'openlibrary',
+      raw: b,
+    } satisfies ResolvedWork;
+  }
+
+  /**
+   * Google Books — kho lớn, phủ nhiều sách tiếng Việt OpenLibrary thiếu. Không
+   * có khoá thì Google giới hạn theo IP (hay 429); đặt GOOGLE_BOOKS_KEY thì ổn
+   * định 1000 lượt/ngày (miễn phí). Thiếu khoá vẫn thử — chỉ kém chắc chứ không
+   * chặn ai: hỏng thì getJson trả null, người dùng vẫn khai tay được.
+   */
+  private async googleBooksByIsbn(isbn: string): Promise<ResolvedWork | null> {
+    const key = process.env.GOOGLE_BOOKS_KEY
+      ? `&key=${process.env.GOOGLE_BOOKS_KEY}`
+      : '';
+    const json = await this.getJson(
+      `https://www.googleapis.com/books/v1/volumes?q=isbn:${isbn}&country=VN${key}`,
+    );
+    const v = asObj(dig(asArr(asObj(json).items)[0], 'volumeInfo'));
+    const title = asStr(v.title);
+    if (!title) return null;
+    const subtitle = asStr(v.subtitle);
+
+    return {
+      isbn,
+      type: 'book',
+      title: subtitle ? `${title}: ${subtitle}` : title,
+      publisher: asStr(v.publisher),
+      url: asStr(v.canonicalVolumeLink) ?? asStr(v.infoLink),
+      publishedYear: parseYear(asStr(v.publishedDate)),
+      publishedMonth: parseMonth(asStr(v.publishedDate)),
+      authors: asArr(v.authors).map((raw, i) => ({
+        name: asStr(raw),
+        sequence: i === 0 ? ('first' as const) : ('additional' as const),
+      })),
+      source: 'googlebooks',
+      raw: v,
+    } satisfies ResolvedWork;
+  }
+
+  // ── Nhà sách HCMUS ─────────────────────────────────────────────────────────
+  /**
+   * Nhận diện link sản phẩm Nhà sách HCMUS. CHỈ đúng host này — không mở cửa cho
+   * SSRF sang host tuỳ ý. Trả URL đã chuẩn hoá (bỏ query/hash), hoặc null.
+   */
+  private hcmusBookstoreUrl(raw: string): string | null {
+    let u: URL;
+    try {
+      u = new URL(raw.trim());
+    } catch {
+      return null;
+    }
+    if (u.protocol !== 'https:' && u.protocol !== 'http:') return null;
+    if (u.hostname.toLowerCase() !== 'bookstore.hcmus.edu.vn') return null;
+    return `https://bookstore.hcmus.edu.vn${u.pathname}`;
+  }
+
+  /**
+   * Bóc thông tin sách từ trang Nhà sách HCMUS (nền Google Sites). Trang KHÔNG in
+   * ISBN, nên chỉ lấy tên/tác giả/NXB/năm/số trang — người khai tự điền ISBN. Cào
+   * bằng regex trên văn bản đã lột thẻ: bố cục là "nhãn đậm + giá trị", giá trị
+   * hay bị xé thành nhiều <span> nên phải lột thẻ trước rồi mới dò theo nhãn.
+   */
+  async byHcmusBookstore(url: string): Promise<ResolvedWork | null> {
+    return this.cached(`scholar:hcmus-store:${url}`, async () => {
+      const html = await this.getText(url);
+      if (!html) return null;
+
+      const title = this.decodeEntities(
+        (html.match(/<title[^>]*>([^<]*)<\/title>/i)?.[1] ?? '').trim(),
       );
-      const b = asObj(dig(json, `ISBN:${isbn}`));
-      const title = asStr(b.title);
-      if (!title) return null;
+      const text = this.stripHtml(html);
+      const grab = (re: RegExp): string | null => {
+        const m = text.match(re);
+        return m ? m[1].replace(/\s+/g, ' ').trim() : null;
+      };
+      // Dừng ở nhãn kế tiếp / tiêu đề khối để không nuốt sang phần sau.
+      const STOP =
+        'Số trang|Năm xuất bản|Nhà xuất bản|Tác giả|Khổ|Giá|ISBN|Tóm tắt|Nội dung';
+      const authorsRaw = grab(
+        new RegExp(`Tác giả\\s*:?\\s*(.+?)\\s*(?:${STOP})`, 'i'),
+      );
+      const publisher = grab(
+        new RegExp(`Nhà xuất bản\\s*:?\\s*(.+?)\\s*(?:${STOP})`, 'i'),
+      );
+      const pages = grab(/Số trang\s*:?\s*(\d{1,5})/i);
+      const year = grab(/Năm xuất bản\s*:?\s*(\d{4})/i);
+
+      if (!title && !authorsRaw) return null;
+
+      const authors = (authorsRaw ?? '')
+        .replace(/[.…]+\s*$/, '') // bỏ "…"/"..." cuối = "và những người khác"
+        .split(/\s*[;,]\s*/)
+        .map((s) => s.trim())
+        .filter(Boolean)
+        .map((name, i) => ({
+          name,
+          sequence: i === 0 ? ('first' as const) : ('additional' as const),
+        }));
 
       return {
-        isbn,
         type: 'book',
-        title,
-        publisher: asStr(dig(asArr(b.publishers)[0], 'name')),
-        url: asStr(b.url),
-        publishedYear: parseYear(asStr(b.publish_date)),
+        title: title || authors[0]?.name || 'Sách',
+        publisher: publisher ?? null,
+        url,
+        pages: pages ?? null,
+        publishedYear: year ? Number(year) : null,
         publishedMonth: null,
-        authors: asArr(b.authors).map((raw, i) => ({
-          name: asStr(asObj(raw).name),
-          sequence: i === 0 ? ('first' as const) : ('additional' as const),
-        })),
-        source: 'openlibrary',
-        raw: b,
+        authors,
+        source: 'hcmus-bookstore',
+        raw: { title, authorsRaw, publisher, pages, year },
       } satisfies ResolvedWork;
     });
+  }
+
+  private stripHtml(html: string): string {
+    const noScript = html.replace(/<(script|style)[\s\S]*?<\/\1>/gi, ' ');
+    return this.decodeEntities(noScript.replace(/<[^>]+>/g, ' '))
+      .replace(/\s+/g, ' ')
+      .trim();
+  }
+
+  private decodeEntities(s: string): string {
+    return s
+      .replace(/&nbsp;/g, ' ')
+      .replace(/&#(\d+);/g, (_, n) => String.fromCharCode(Number(n)))
+      .replace(/&#x([0-9a-f]+);/gi, (_, n) =>
+        String.fromCharCode(parseInt(n, 16)),
+      )
+      .replace(/&amp;/g, '&')
+      .replace(/&lt;/g, '<')
+      .replace(/&gt;/g, '>')
+      .replace(/&quot;/g, '"')
+      .replace(/&#39;|&apos;/g, "'");
   }
 
   // ── ORCID ─────────────────────────────────────────────────────────────────
