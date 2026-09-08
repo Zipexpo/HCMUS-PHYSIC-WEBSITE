@@ -54,6 +54,7 @@ import {
   UpdateProjectBodyDTO,
   StatsResDTO,
   FacultyDetailResDTO,
+  FacultyReportResDTO,
   UpdateStaffPageBodyDTO,
   UpdatePublicationBodyDTO,
   UpdateScholarProfileBodyDTO,
@@ -479,5 +480,13 @@ export class ScholarController {
   @ZodSerializerDto(FacultyDetailResDTO)
   facultyDetail() {
     return this.service.facultyDetail();
+  }
+
+  /** Báo cáo chi tiết toàn Khoa (danh sách công bố + đề tài) để xuất Excel — chỉ quản trị. */
+  @Get('stats/faculty/report')
+  @Roles(RoleName.Admin, RoleName.SuperAdmin)
+  @ZodSerializerDto(FacultyReportResDTO)
+  facultyReport() {
+    return this.service.facultyReport();
   }
 }

@@ -1009,6 +1009,127 @@ export class ScholarService {
     };
   }
 
+  /**
+   * Báo cáo chi tiết toàn Khoa (danh sách công bố + đề tài) — ghép sẵn tên tác
+   * giả / chủ nhiệm / thành viên để bên nhận chỉ việc trải ra bảng Excel.
+   */
+  async facultyReport() {
+    const vietName = (u?: { firstName: string | null; lastName: string | null } | null) =>
+      u ? [u.lastName, u.firstName].filter(Boolean).join(' ').trim() : '';
+
+    const [pubs, projects] = await Promise.all([
+      this.prisma.publication.findMany({
+        where: { deletedAt: null },
+        orderBy: [{ countYear: 'desc' }, { publishedMonth: 'desc' }],
+        select: {
+          type: true,
+          countYear: true,
+          publishedYear: true,
+          publishedMonth: true,
+          acceptedYear: true,
+          acceptedMonth: true,
+          status: true,
+          quartile: true,
+          catalogCode: true,
+          title: true,
+          containerTitle: true,
+          volume: true,
+          issue: true,
+          pages: true,
+          issn: true,
+          doi: true,
+          url: true,
+          totalAuthors: true,
+          authorsRaw: true,
+          authors: {
+            where: { claimStatus: 'CONFIRMED' },
+            select: {
+              isFirst: true,
+              isCorresponding: true,
+              user: { select: { firstName: true, lastName: true } },
+            },
+          },
+        },
+      }),
+      this.prisma.researchProject.findMany({
+        orderBy: [{ startYear: 'desc' }, { startMonth: 'desc' }],
+        select: {
+          decisionNo: true,
+          title: true,
+          status: true,
+          startYear: true,
+          startMonth: true,
+          endYear: true,
+          endMonth: true,
+          members: {
+            select: {
+              role: true,
+              externalName: true,
+              user: { select: { firstName: true, lastName: true } },
+            },
+          },
+        },
+      }),
+    ]);
+
+    return {
+      publications: pubs.map((p) => {
+        const raw = (Array.isArray(p.authorsRaw) ? p.authorsRaw : []) as Array<{
+          name?: string;
+          given?: string;
+          family?: string;
+        }>;
+        const authorNames = raw
+          .map((a) => a.name || [a.given, a.family].filter(Boolean).join(' '))
+          .map((s) => (s ?? '').trim())
+          .filter(Boolean);
+        const first = p.authors.find((a) => a.isFirst);
+        const corr = p.authors.find((a) => a.isCorresponding);
+        return {
+          type: p.type,
+          countYear: p.countYear,
+          publishedYear: p.publishedYear,
+          publishedMonth: p.publishedMonth,
+          acceptedYear: p.acceptedYear,
+          acceptedMonth: p.acceptedMonth,
+          status: p.status,
+          quartile: p.quartile,
+          catalogCode: p.catalogCode,
+          title: p.title,
+          containerTitle: p.containerTitle,
+          volume: p.volume,
+          issue: p.issue,
+          pages: p.pages,
+          issn: p.issn,
+          doi: p.doi,
+          url: p.url,
+          totalAuthors: p.totalAuthors,
+          authorNames,
+          firstAuthor: vietName(first?.user) || authorNames[0] || '',
+          correspondingAuthor: vietName(corr?.user),
+        };
+      }),
+      projects: projects.map((pr) => {
+        const lead = pr.members.find((m) => m.role === 'LEAD');
+        const memberNames = pr.members
+          .map((m) => (m.user ? vietName(m.user) : (m.externalName ?? '')).trim())
+          .filter(Boolean);
+        return {
+          decisionNo: pr.decisionNo,
+          title: pr.title,
+          status: pr.status,
+          startYear: pr.startYear,
+          startMonth: pr.startMonth,
+          endYear: pr.endYear,
+          endMonth: pr.endMonth,
+          leadName: lead ? (lead.user ? vietName(lead.user) : (lead.externalName ?? '')) : '',
+          memberNames,
+          memberCount: pr.members.length,
+        };
+      }),
+    };
+  }
+
   // ── API tích hợp cho ACADsoom ─────────────────────────────────────────────
   /**
    * CHỈ trả bài đã phân loại và tác giả đã xác nhận. Không trả giờ quy đổi —

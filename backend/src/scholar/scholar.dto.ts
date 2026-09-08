@@ -40,6 +40,7 @@ import {
   UpdateProjectBodySchema,
   StatsResSchema,
   FacultyDetailResSchema,
+  FacultyReportResSchema,
   UpdateStaffPageBodySchema,
   UpdatePublicationBodySchema,
   UpdateScholarProfileBodySchema,
@@ -99,6 +100,7 @@ export class IntegrationStaffResDTO extends createZodDto(
 
 export class StatsResDTO extends createZodDto(StatsResSchema) {}
 export class FacultyDetailResDTO extends createZodDto(FacultyDetailResSchema) {}
+export class FacultyReportResDTO extends createZodDto(FacultyReportResSchema) {}
 
 export class StaffPageResDTO extends createZodDto(StaffPageResSchema) {}
 export class UpdateStaffPageBodyDTO extends createZodDto(

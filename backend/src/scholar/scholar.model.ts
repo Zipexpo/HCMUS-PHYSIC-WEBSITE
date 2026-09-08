@@ -830,6 +830,53 @@ export const FacultyDetailResSchema = z.object({
   ),
 });
 
+/**
+ * BÁO CÁO chi tiết toàn Khoa — mỗi công bố / đề tài một dòng với đủ trường để
+ * dựng file danh sách (khớp mẫu Khoa). Tên tác giả / chủ nhiệm / thành viên đã
+ * ghép sẵn ở máy chủ; bên nhận chỉ trải ra bảng. Admin-gated.
+ */
+export const FacultyReportResSchema = z.object({
+  publications: z.array(
+    z.object({
+      type: z.string(),
+      countYear: z.number().int().nullable(),
+      publishedYear: z.number().int().nullable(),
+      publishedMonth: z.number().int().nullable(),
+      acceptedYear: z.number().int().nullable(),
+      acceptedMonth: z.number().int().nullable(),
+      status: z.string(),
+      quartile: z.string().nullable(),
+      catalogCode: z.string().nullable(),
+      title: z.string(),
+      containerTitle: z.string().nullable(),
+      volume: z.string().nullable(),
+      issue: z.string().nullable(),
+      pages: z.string().nullable(),
+      issn: z.string().nullable(),
+      doi: z.string().nullable(),
+      url: z.string().nullable(),
+      totalAuthors: z.number().int(),
+      authorNames: z.array(z.string()),
+      firstAuthor: z.string(),
+      correspondingAuthor: z.string(),
+    }),
+  ),
+  projects: z.array(
+    z.object({
+      decisionNo: z.string().nullable(),
+      title: z.string(),
+      status: z.string(),
+      startYear: z.number().int().nullable(),
+      startMonth: z.number().int().nullable(),
+      endYear: z.number().int().nullable(),
+      endMonth: z.number().int().nullable(),
+      leadName: z.string(),
+      memberNames: z.array(z.string()),
+      memberCount: z.number().int(),
+    }),
+  ),
+});
+
 // ── Trang nhân sự trên web Khoa ─────────────────────────────────────────────
 // Giảng viên sửa trang của CHÍNH MÌNH từ app. Không có tham số chỉ định trang
 // khác — quyền chặn ở tầng dữ liệu qua ScholarProfile.staffPageSlug.
