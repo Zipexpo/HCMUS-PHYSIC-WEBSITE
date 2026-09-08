@@ -912,6 +912,7 @@ export const StaffPageResSchema = z.object({
   eyebrow: z.string(),
   eyebrowEn: z.string(),
   name: z.string(),
+  nameEn: z.string(),
   intro: z.string(),
   introEn: z.string(),
   research: z.array(EntrySchema),
@@ -933,6 +934,10 @@ export type SyncStaffPageBodyType = z.infer<typeof SyncStaffPageBodySchema>;
 
 export const UpdateStaffPageBodySchema = z.object({
   photo: z.string().max(1000).nullish(),
+  // Tên hiển thị trên trang (khác tên tài khoản dùng để ghép đơn vị). Song ngữ:
+  // ghi vào cả `name` và `nameLines` (một dòng) để trình dựng trang hiện đúng.
+  name: z.string().max(300).nullish(),
+  nameEn: z.string().max(300).nullish(),
   eyebrow: z.string().max(200).nullish(),
   eyebrowEn: z.string().max(200).nullish(),
   intro: z.string().max(5000).nullish(),

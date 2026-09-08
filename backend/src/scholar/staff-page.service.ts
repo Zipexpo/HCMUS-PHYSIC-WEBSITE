@@ -159,13 +159,25 @@ export class StaffPageService {
         descEn: asEn(e.desc),
       }));
 
+    // Tên hiển thị nằm ở `nameLines` (mỗi dòng một ô song ngữ); gộp lại cho app.
+    // Không có nameLines thì lùi về prop `name`.
+    const rawLines = (p.nameLines ?? []) as Array<Record<string, unknown>>;
+    const joinLines = (pick: (v: unknown) => string) =>
+      rawLines
+        .map((l) => pick(l.text))
+        .filter((s) => s.trim())
+        .join(' ');
+    const nameVi = joinLines(asText) || asText(p.name);
+    const nameEn = joinLines(asEn) || asEn(p.name);
+
     return {
       slug,
       layoutId: layout.id,
       photo: asPlain(p.photo),
       eyebrow: asText(p.eyebrow),
       eyebrowEn: asEn(p.eyebrow),
-      name: asText(p.name),
+      name: nameVi,
+      nameEn,
       intro: asText(p.intro),
       introEn: asEn(p.intro),
       research: entries('research'),
@@ -198,6 +210,14 @@ export class StaffPageService {
     const next: Record<string, unknown> = { ...prev };
 
     if (body.photo !== undefined) next.photo = body.photo ?? '';
+    // Tên hiển thị: ghi vào `name` VÀ `nameLines` (một dòng song ngữ) vì trình
+    // dựng trang ưu tiên `nameLines`. Trang chỉ hiện một dòng nên gộp là đủ.
+    // Bỏ qua khi tên (VI) rỗng để không vô tình xoá mất tên trên trang.
+    if (body.name !== undefined && (body.name ?? '').trim()) {
+      const loc = toLoc2(body.name, body.nameEn, prev.name);
+      next.name = loc;
+      next.nameLines = [{ text: loc }];
+    }
     if (body.eyebrow !== undefined) {
       next.eyebrow = toLoc2(body.eyebrow ?? '', body.eyebrowEn, prev.eyebrow);
     }
