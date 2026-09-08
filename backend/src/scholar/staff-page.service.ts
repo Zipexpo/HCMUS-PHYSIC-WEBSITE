@@ -213,7 +213,7 @@ export class StaffPageService {
     // Tên hiển thị: ghi vào `name` VÀ `nameLines` (một dòng song ngữ) vì trình
     // dựng trang ưu tiên `nameLines`. Trang chỉ hiện một dòng nên gộp là đủ.
     // Bỏ qua khi tên (VI) rỗng để không vô tình xoá mất tên trên trang.
-    if (body.name !== undefined && (body.name ?? '').trim()) {
+    if (body.name != null && body.name.trim()) {
       const loc = toLoc2(body.name, body.nameEn, prev.name);
       next.name = loc;
       next.nameLines = [{ text: loc }];
