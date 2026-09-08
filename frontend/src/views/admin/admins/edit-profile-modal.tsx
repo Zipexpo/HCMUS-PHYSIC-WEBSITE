@@ -46,6 +46,8 @@ export const EMPLOYMENT: [string, string][] = [
   ["bien_che", "Biên chế"],
   ["hop_dong", "Hợp đồng"],
   ["thinh_giang", "Thỉnh giảng"],
+  // Tính điểm y như thỉnh giảng (người ngoài); nhãn riêng để thống kê.
+  ["thinh_giang_nuoc_ngoai", "Thỉnh giảng nước ngoài"],
 ];
 
 const day = (iso: string | null) => (iso ? iso.slice(0, 10) : "");

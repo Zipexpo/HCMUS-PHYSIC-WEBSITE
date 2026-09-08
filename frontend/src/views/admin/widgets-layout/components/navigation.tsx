@@ -38,6 +38,11 @@ const withLocale = (url: string | null | undefined, locale: string): string => {
   return `/${locale}${url.startsWith("/") ? url : `/${url}`}`;
 };
 
+// Link RA NGOÀI (app khác: physoom, phys-profile…) mở ở TAB MỚI để không rời
+// trang Khoa. Đường nội bộ (/duong-dan) thì điều hướng cùng tab như thường.
+const isExternal = (url: string | null | undefined): boolean =>
+  !!url && /^https?:\/\//i.test(url.trim());
+
 // Hiển thị nhãn của mục trong thanh array của Puck thay vì "item #0".
 const labelItemSummary = (
   item: { label?: LocalizedString | string; url?: string },
@@ -196,6 +201,8 @@ function NavbarChildItem({
         role="menuitem"
         href={isEditing ? "#" : withLocale(child.url, locale)}
         tabIndex={isEditing ? -1 : undefined}
+        target={!isEditing && isExternal(child.url) ? "_blank" : undefined}
+        rel={!isEditing && isExternal(child.url) ? "noopener noreferrer" : undefined}
         onClick={(e) => {
           if (isEditing) e.preventDefault();
         }}
@@ -220,6 +227,8 @@ function NavbarChildItem({
                     role="menuitem"
                     href={isEditing ? "#" : withLocale(sub.url, locale)}
                     tabIndex={isEditing ? -1 : undefined}
+                    target={!isEditing && isExternal(sub.url) ? "_blank" : undefined}
+                    rel={!isEditing && isExternal(sub.url) ? "noopener noreferrer" : undefined}
                     onClick={(e) => {
                       if (isEditing) e.preventDefault();
                     }}
@@ -613,6 +622,8 @@ function NavbarClient({
                               <a
                                 key={ci}
                                 href={withLocale(child.url, locale)}
+                                target={isExternal(child.url) ? "_blank" : undefined}
+                                rel={isExternal(child.url) ? "noopener noreferrer" : undefined}
                                 onClick={() => setMobileMenuOpen(false)}
                                 className="py-2 text-[15px] text-slate-600 dark:text-slate-300 hover:text-blue-700 dark:hover:text-blue-300"
                               >

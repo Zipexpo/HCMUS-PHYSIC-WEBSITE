@@ -20,12 +20,22 @@ import {
   resolveMediaUrl,
 } from "@/lib/api";
 import { isFacultyWide } from "@/lib/department";
-import { EditProfileModal } from "@/views/admin/admins/edit-profile-modal";
+import {
+  DEGREES,
+  EditProfileModal,
+  POSITIONS,
+} from "@/views/admin/admins/edit-profile-modal";
 import { PortalMenu } from "@/views/admin/widgets-layout/portal-menu";
 import { CreateStaffModal } from "./create-staff-modal";
 
 const PAGE_SIZE = 10;
 const ACTIVE_WINDOW_MS = 5 * 60 * 1000;
+
+// Bảng chỉ có KHOÁ (vd "truong_khoa"); đổi sang nhãn tiếng Việt để hiển thị.
+const posLabel = (k?: string | null) =>
+  POSITIONS.find(([key]) => key === k)?.[1] ?? k ?? null;
+const degLabel = (k?: string | null) =>
+  DEGREES.find(([key]) => key === k)?.[1] ?? k ?? null;
 
 const initialsOf = (a: AdminListItem) => {
   const f = a.firstName?.[0] ?? "";
@@ -211,12 +221,14 @@ export function StaffListView() {
                         </p>
                       </div>
                     </div>
-                    <div className="text-sm text-slate-700 dark:text-slate-300 truncate">
-                      {a.department?.name ?? "—"}
-                      {a.rank && (
-                        <span className="ml-1.5 text-xs text-slate-400 dark:text-slate-500">
-                          · {a.rank}
-                        </span>
+                    <div className="text-sm text-slate-700 dark:text-slate-300 min-w-0">
+                      <div className="truncate">{a.department?.name ?? "—"}</div>
+                      {(a.rank || a.positionKey || a.degree) && (
+                        <div className="text-xs text-slate-400 dark:text-slate-500 truncate">
+                          {[a.rank, posLabel(a.positionKey), degLabel(a.degree)]
+                            .filter(Boolean)
+                            .join(" · ")}
+                        </div>
                       )}
                     </div>
                     <div>
