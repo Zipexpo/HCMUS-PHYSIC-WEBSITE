@@ -12,6 +12,7 @@ import {
 import { laterOf, pageBySince } from './integration-cursor';
 import { parseBibliographyFile } from './resolve/bibliography';
 import { ResolveService } from './resolve/resolve.service';
+import { StaffPageService } from './staff-page.service';
 import {
   normalizeDoi,
   resolveCountYear,
@@ -71,6 +72,7 @@ export class ScholarService {
     private readonly resolver: ResolveService,
     private readonly publicRevalidate: PublicRevalidateService,
     private readonly bus: EventBusService,
+    private readonly staffPage: StaffPageService,
   ) {}
 
   // ── Lý lịch khoa học ──────────────────────────────────────────────────────
@@ -183,6 +185,14 @@ export class ScholarService {
           body.gradStudyNote === undefined ? undefined : body.gradStudyNote,
       },
     });
+    // ID học thuật (ORCID/Scopus/…) khai ở Định danh phải hiện thành icon-link
+    // trên trang nhân sự → sao sang props khối hồ sơ ngay. Chưa có trang / lỗi
+    // đồng bộ không được làm hỏng việc lưu Định danh.
+    await this.staffPage
+      .syncScholarLinksForUser(userId)
+      .catch((err) =>
+        this.logger.warn(`syncScholarLinksForUser(${userId}) lỗi: ${err}`),
+      );
     this.bus.emit('profile.changed', { userIds: [userId] });
     return this.getProfile(userId);
   }

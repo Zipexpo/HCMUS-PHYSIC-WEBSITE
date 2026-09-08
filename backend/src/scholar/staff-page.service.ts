@@ -637,81 +637,39 @@ export class StaffPageService {
   }
 
   /**
-   * Tự điền hồ sơ học thuật (ORCID / Scopus / Google Scholar / ResearcherID) vào
-   * MỌI khối hồ sơ trên trang nhân sự — chỉ quản trị. Ghép khối ↔ người theo
-   * EMAIL (`props.email` của khối, cùng cách updateProfileCards ghép thẻ danh
-   * sách), lấy ID từ ScholarProfile. CHỈ ghi đè ô nào nguồn CÓ giá trị — không
-   * xoá ID người dùng đã tự điền trên khối. Ghi cả puckData (trình dựng) lẫn
-   * publishedPuckData (trang công khai) rồi revalidate.
+   * Sao hồ sơ học thuật (ORCID / Scopus / Google Scholar / ResearcherID) từ Định
+   * danh vào props của trang nhân sự để hiện icon-link — chỉ quản trị, một lượt
+   * cho MỌI người.
+   *
+   * Ghép người ↔ trang theo `staffPageSlug` (KHÔNG theo email: khối editorial để
+   * `props.email` rỗng nên ghép email luôn trượt — chính là lý do icon không hiện
+   * dù đã khai ORCID). CHỈ ghi ô nào nguồn CÓ giá trị, không xoá ID người tự điền.
    */
   async backfillScholarLinks() {
     const profiles = await this.prisma.scholarProfile.findMany({
+      where: { staffPageSlug: { not: null } },
       select: {
+        staffPageSlug: true,
         orcid: true,
         scopusAuthorId: true,
         researcherId: true,
         googleScholarId: true,
-        user: { select: { email: true } },
       },
     });
-    const byEmail = new Map<string, Record<string, string>>();
+    const report = { doi: 0, boQua: 0, khongCoTrang: [] as string[] };
+    const touched = new Set<string>();
     for (const p of profiles) {
-      const email = p.user?.email?.toLowerCase();
-      if (!email) continue;
-      byEmail.set(email, {
+      const changed = await this.writeScholarLinks(p.staffPageSlug!, {
         orcid: p.orcid ?? '',
         scopus: p.scopusAuthorId ?? '',
         googleScholar: p.googleScholarId ?? '',
         researcherId: p.researcherId ?? '',
       });
-    }
-
-    // Trang nhân sự = layout có khối StaffProfileEditorial trong puckData/published.
-    const rows = await this.prisma.$queryRaw<Array<{ id: string }>>`
-      SELECT id FROM "PageLayout"
-      WHERE "deletedAt" IS NULL
-        AND (position('StaffProfileEditorial' in "puckData"::text) > 0
-          OR position('StaffProfileEditorial' in coalesce("publishedPuckData"::text, '')) > 0)
-    `;
-
-    const report = { doi: 0, boQua: 0, khongKhop: [] as string[] };
-    const touched = new Set<string>();
-    for (const { id } of rows) {
-      const layout = await this.prisma.pageLayout.findUnique({
-        where: { id },
-        select: {
-          slug: true,
-          puckData: true,
-          publishedPuckData: true,
-          isPublished: true,
-        },
-      });
-      if (!layout) continue;
-      // Đếm/báo cáo từ bản nháp (puckData tồn tại ở mọi trang); bản published chỉ
-      // ghi theo, không đếm lại để khỏi nhân đôi cùng một khối.
-      const d = this.setScholarLinksOnStaffBlocks(
-        layout.puckData,
-        byEmail,
-        report,
-      );
-      const p = layout.isPublished
-        ? this.setScholarLinksOnStaffBlocks(
-            layout.publishedPuckData,
-            byEmail,
-            null,
-          )
-        : { tree: layout.publishedPuckData, changed: 0 };
-      if (!d.changed && !p.changed) continue;
-      await this.prisma.pageLayout.update({
-        where: { id },
-        data: {
-          ...(d.changed ? { puckData: d.tree as Prisma.InputJsonValue } : {}),
-          ...(p.changed
-            ? { publishedPuckData: p.tree as Prisma.InputJsonValue }
-            : {}),
-        },
-      });
-      touched.add(layout.slug);
+      if (changed === null) report.khongCoTrang.push(p.staffPageSlug!);
+      else if (changed) {
+        report.doi++;
+        touched.add(p.staffPageSlug!);
+      } else report.boQua++;
     }
     if (touched.size) {
       await this.cache.clear();
@@ -720,18 +678,82 @@ export class StaffPageService {
         'sitemap',
       ]);
     }
-    return { ...report, khongKhop: [...new Set(report.khongKhop)] };
+    return { ...report, khongCoTrang: [...new Set(report.khongCoTrang)] };
   }
 
   /**
-   * Nhân bản cây, điền ID học thuật cho mọi khối hồ sơ khớp EMAIL. Chỉ set ô nào
-   * nguồn CÓ giá trị (không xoá ô người dùng đã điền). `report` = null khi duyệt
-   * bản published (đã đếm ở bản nháp) để khỏi đếm trùng.
+   * Sao ID học thuật sang trang của MỘT người (theo staffPageSlug) rồi revalidate
+   * ngay. Gọi sau khi đổi Định danh để icon hiện liền; không có trang thì bỏ qua.
+   */
+  async syncScholarLinksForUser(userId: string): Promise<void> {
+    const p = await this.prisma.scholarProfile.findUnique({
+      where: { userId },
+      select: {
+        staffPageSlug: true,
+        orcid: true,
+        scopusAuthorId: true,
+        researcherId: true,
+        googleScholarId: true,
+      },
+    });
+    if (!p?.staffPageSlug) return;
+    const changed = await this.writeScholarLinks(p.staffPageSlug, {
+      orcid: p.orcid ?? '',
+      scopus: p.scopusAuthorId ?? '',
+      googleScholar: p.googleScholarId ?? '',
+      researcherId: p.researcherId ?? '',
+    });
+    if (changed) {
+      await this.cache.clear();
+      this.publicRevalidate.trigger([`page:${p.staffPageSlug}`, 'sitemap']);
+    }
+  }
+
+  /**
+   * Ghi 4 ID vào MỌI khối hồ sơ của layout khớp `slug` (cả puckData lẫn
+   * publishedPuckData). Chỉ set ô nào nguồn CÓ giá trị — không xoá ID người tự
+   * điền. KHÔNG revalidate (caller gom lại). Trả về: `null` = không có trang,
+   * `true` = có ghi đổi, `false` = có trang nhưng không đổi.
+   */
+  private async writeScholarLinks(
+    slug: string,
+    ids: Record<'orcid' | 'scopus' | 'googleScholar' | 'researcherId', string>,
+  ): Promise<boolean | null> {
+    const layout = await this.prisma.pageLayout.findFirst({
+      where: { slug, deletedAt: null },
+      orderBy: [{ isPublished: 'desc' }, { updatedAt: 'desc' }],
+      select: {
+        id: true,
+        puckData: true,
+        publishedPuckData: true,
+        isPublished: true,
+      },
+    });
+    if (!layout) return null;
+    const d = this.setScholarLinksOnStaffBlocks(layout.puckData, ids);
+    const pub = layout.isPublished
+      ? this.setScholarLinksOnStaffBlocks(layout.publishedPuckData, ids)
+      : { tree: layout.publishedPuckData, changed: 0 };
+    if (!d.changed && !pub.changed) return false;
+    await this.prisma.pageLayout.update({
+      where: { id: layout.id },
+      data: {
+        ...(d.changed ? { puckData: d.tree as Prisma.InputJsonValue } : {}),
+        ...(pub.changed
+          ? { publishedPuckData: pub.tree as Prisma.InputJsonValue }
+          : {}),
+      },
+    });
+    return true;
+  }
+
+  /**
+   * Nhân bản cây, điền ID học thuật cho MỌI khối hồ sơ trong đó (layout đã khớp
+   * người theo slug nên khỏi lọc email). Chỉ set ô nào nguồn CÓ giá trị.
    */
   private setScholarLinksOnStaffBlocks(
     root: unknown,
-    byEmail: Map<string, Record<string, string>>,
-    report: { doi: number; boQua: number; khongKhop: string[] } | null,
+    ids: Record<'orcid' | 'scopus' | 'googleScholar' | 'researcherId', string>,
   ): { tree: unknown; changed: number } {
     let changed = 0;
     const walk = (n: unknown): unknown => {
@@ -739,16 +761,6 @@ export class StaffPageService {
       if (!n || typeof n !== 'object') return n;
       const node = n as PuckNode;
       if (node.type && STAFF_TYPES.includes(node.type) && node.props) {
-        const email = String(node.props.email ?? '').toLowerCase();
-        if (!email) {
-          if (report) report.boQua++;
-          return node;
-        }
-        const links = byEmail.get(email);
-        if (!links) {
-          if (report) report.khongKhop.push(email);
-          return node;
-        }
         const props = { ...node.props };
         let hit = false;
         for (const key of [
@@ -757,18 +769,14 @@ export class StaffPageService {
           'googleScholar',
           'researcherId',
         ] as const) {
-          const val = links[key];
+          const val = ids[key];
           if (val && props[key] !== val) {
             props[key] = val;
             hit = true;
           }
         }
-        if (!hit) {
-          if (report) report.boQua++;
-          return node;
-        }
+        if (!hit) return node;
         changed++;
-        if (report) report.doi++;
         return { ...node, props };
       }
       const out: Record<string, unknown> = {};
