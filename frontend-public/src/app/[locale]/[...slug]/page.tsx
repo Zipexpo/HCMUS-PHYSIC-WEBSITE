@@ -1,5 +1,6 @@
 import { PuckRenderer } from "@admin/views/admin/widgets-layout/puck-renderer";
 import type { Metadata } from "next";
+import { FixedScale } from "@/components/fixed-scale";
 import { notFound } from "next/navigation";
 import { breadcrumbListSchema, JsonLd } from "@/components/JsonLd";
 import { VisitorTracker } from "@/components/visitor-tracker";
@@ -113,11 +114,23 @@ export default async function PublicLayoutPage({ params }: PageProps) {
       { name: "Trang chủ", url: `${base}/` },
       { name: layout.name, url: `${base}/${slugPath}` },
     ];
+    const puck = layout.publishedPuckData ?? layout.puckData;
+    // Trang nhân sự = layout có khối StaffProfileEditorial. Khoá layout cố định +
+    // scale cho desktop (mục 2 yêu cầu), các trang khác giữ nguyên co giãn.
+    const laTrangNhanSu = JSON.stringify(puck ?? "").includes(
+      "StaffProfileEditorial",
+    );
     return (
       <>
         <JsonLd schema={breadcrumbListSchema(crumbs)} />
         <VisitorTracker slug={slugPath} />
-        <PuckRenderer puckData={layout.publishedPuckData ?? layout.puckData} />
+        {laTrangNhanSu ? (
+          <FixedScale>
+            <PuckRenderer puckData={puck} />
+          </FixedScale>
+        ) : (
+          <PuckRenderer puckData={puck} />
+        )}
       </>
     );
   } catch {

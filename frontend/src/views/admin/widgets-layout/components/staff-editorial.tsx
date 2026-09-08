@@ -111,6 +111,27 @@ function EntryList({ items, tx }: { items: Entry[]; tx: (v: LocalizedString) => 
   );
 }
 
+// Tách học vị (ThS/TS/PGS.TS/GS.TS/GS/PGS/CN) ra khỏi tên: học vị hiển thị ở phần
+// đệm (eyebrow), tên chỉ còn đúng tên người → gọn 1 hàng. Dữ liệu cũ dính "THS. …"
+// vào tên; chuẩn hoá lúc HIỂN THỊ nên không phải chạy lại migration cho 135 trang.
+const HOC_VI_RE = /^(gs\s*\.?\s*ts|pgs\s*\.?\s*ts|gs|pgs|ts|ths|cn)\s*\.?\s+/i;
+const HOC_VI_DAY: Record<string, string> = {
+  gsts: "Giáo sư, Tiến sĩ",
+  pgsts: "Phó Giáo sư, Tiến sĩ",
+  gs: "Giáo sư",
+  pgs: "Phó Giáo sư",
+  ts: "Tiến sĩ",
+  ths: "Thạc sĩ",
+  cn: "Cử nhân",
+};
+function tachHocVi(lines: string[]): { ten: string; hocVi: string } {
+  const full = lines.join(" ").replace(/\s+/g, " ").trim();
+  const m = full.match(HOC_VI_RE);
+  if (!m) return { ten: full, hocVi: "" };
+  const key = m[1].toLowerCase().replace(/[.\s]/g, "");
+  return { ten: full.slice(m[0].length).trim(), hocVi: HOC_VI_DAY[key] ?? "" };
+}
+
 function StaffProfileEditorialRender(props: Props) {
   const { locale } = useLocale();
   const tx = (v: LocalizedString) => t(v, locale) || "";
@@ -120,6 +141,7 @@ function StaffProfileEditorialRender(props: Props) {
     .map((l) => tx(l.text))
     .filter((s) => s.trim());
   const nameLines = lines.length ? lines : [tx(props.name)].filter(Boolean);
+  const { ten: tenHienThi, hocVi: hocViDem } = tachHocVi(nameLines);
 
   const research = (props.research ?? []).filter((e) => tx(e.title).trim());
   const teaching = (props.teaching ?? []).filter((e) => tx(e.title).trim());
@@ -310,21 +332,17 @@ function StaffProfileEditorialRender(props: Props) {
 
         <div className="w-full md:w-7/12 flex flex-col justify-center">
           <div className="text-white blend">
-            {tx(props.eyebrow) ? (
+            {tx(props.eyebrow) || hocViDem ? (
               <p className="text-xs md:text-sm tracking-[0.3em] mb-4 font-medium uppercase">
-                {tx(props.eyebrow)}
+                {tx(props.eyebrow) || hocViDem}
               </p>
             ) : null}
-            {nameLines.length ? (
+            {tenHienThi ? (
               <h1
-                className="text-4xl sm:text-5xl lg:text-6xl uppercase leading-[0.95] mb-5"
+                className="text-3xl md:text-4xl uppercase leading-tight mb-5"
                 style={{ fontFamily: "var(--font-playfair)" }}
               >
-                {nameLines.map((line, i) => (
-                  <span key={`${line}-${i}`} className="block">
-                    {line}
-                  </span>
-                ))}
+                {tenHienThi}
               </h1>
             ) : null}
             {tx(props.intro) ? (
