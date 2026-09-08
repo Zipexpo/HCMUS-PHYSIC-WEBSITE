@@ -880,15 +880,22 @@ export const FacultyReportResSchema = z.object({
 // ── Trang nhân sự trên web Khoa ─────────────────────────────────────────────
 // Giảng viên sửa trang của CHÍNH MÌNH từ app. Không có tham số chỉ định trang
 // khác — quyền chặn ở tầng dữ liệu qua ScholarProfile.staffPageSlug.
+// Song ngữ: mỗi ô có thêm bản `*En` (tuỳ chọn) để app phys-profile đẩy được cả
+// tiếng Anh. Bỏ trống thì trang công khai tự lùi về tiếng Việt (xem i18n `t`).
 const EntrySchema = z.object({
   title: z.string().min(1).max(300),
   desc: z.string().max(2000).optional(),
+  titleEn: z.string().max(300).optional(),
+  descEn: z.string().max(2000).optional(),
 });
 
 const ExtraSchema = z.object({
   section: z.string().min(1).max(120),
   title: z.string().min(1).max(300),
   desc: z.string().max(2000).optional(),
+  sectionEn: z.string().max(120).optional(),
+  titleEn: z.string().max(300).optional(),
+  descEn: z.string().max(2000).optional(),
 });
 
 const StaffPubSchema = z.object({
@@ -903,14 +910,17 @@ export const StaffPageResSchema = z.object({
   layoutId: z.string(),
   photo: z.string(),
   eyebrow: z.string(),
+  eyebrowEn: z.string(),
   name: z.string(),
   intro: z.string(),
+  introEn: z.string(),
   research: z.array(EntrySchema),
   teaching: z.array(EntrySchema),
   extras: z.array(ExtraSchema),
   publications: z.array(StaffPubSchema),
   /** Khối "Thông tin chi tiết" (prop `html`) — nay sửa được qua ô soạn thảo ở app. */
   legacyHtml: z.string(),
+  legacyHtmlEn: z.string(),
 });
 
 /** Sinh lại danh sách trên trang từ CSDL. Ghi đè hẳn danh sách cũ. */
@@ -924,7 +934,9 @@ export type SyncStaffPageBodyType = z.infer<typeof SyncStaffPageBodySchema>;
 export const UpdateStaffPageBodySchema = z.object({
   photo: z.string().max(1000).nullish(),
   eyebrow: z.string().max(200).nullish(),
+  eyebrowEn: z.string().max(200).nullish(),
   intro: z.string().max(5000).nullish(),
+  introEn: z.string().max(5000).nullish(),
   research: z.array(EntrySchema).max(50).optional(),
   teaching: z.array(EntrySchema).max(50).optional(),
   extras: z.array(ExtraSchema).max(50).optional(),
@@ -935,6 +947,7 @@ export const UpdateStaffPageBodySchema = z.object({
    * nên trần phải lớn hơn mọi khối cũ để không chặn nhầm bản đang có.
    */
   legacyHtml: z.string().max(500000).nullish(),
+  legacyHtmlEn: z.string().max(500000).nullish(),
 });
 export type UpdateStaffPageBodyType = z.infer<typeof UpdateStaffPageBodySchema>;
 

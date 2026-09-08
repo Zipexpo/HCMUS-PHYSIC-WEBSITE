@@ -38,6 +38,13 @@ const asText = (v: unknown): string => {
   return String(l?.vi ?? l?.en ?? '');
 };
 
+/** Bản tiếng Anh của một ô song ngữ (chuỗi trần coi như chưa có bản Anh). */
+const asEn = (v: unknown): string => {
+  if (typeof v === 'string') return '';
+  const l = v as Localized | null | undefined;
+  return String(l?.en ?? '');
+};
+
 /**
  * Chuỗi trần — URL ảnh, năm. Khác `asText` vốn dành cho ô song ngữ. Gặp object
  * thì trả rỗng: dữ liệu sai hình dạng mà để lọt ra trang thành "[object Object]"
@@ -52,7 +59,22 @@ const toLocalized = (vi: string, prev: unknown): Localized => {
   return { vi, en: p.en ?? '' };
 };
 
-type EntryIn = { title: string; desc?: string };
+/**
+ * Như `toLocalized` nhưng có bản tiếng Anh do app gửi: gửi `en` (kể cả chuỗi
+ * rỗng để xoá) thì dùng nó; KHÔNG gửi (undefined/null) thì giữ nguyên `en` cũ.
+ * Nhờ vậy lần lưu nào không đụng tiếng Anh cũng không vô tình xoá mất nó.
+ */
+const toLoc2 = (vi: string, en: string | null | undefined, prev: unknown): Localized => {
+  const p = (typeof prev === 'object' && prev ? prev : {}) as Localized;
+  return { vi, en: en != null ? en : (p.en ?? '') };
+};
+
+type EntryIn = {
+  title: string;
+  desc?: string;
+  titleEn?: string;
+  descEn?: string;
+};
 type PubIn = { year?: string; title: string; meta?: string; url?: string };
 
 @Injectable()
@@ -133,6 +155,8 @@ export class StaffPageService {
       ((p[key] ?? []) as Array<Record<string, unknown>>).map((e) => ({
         title: asText(e.title),
         desc: asText(e.desc),
+        titleEn: asEn(e.title),
+        descEn: asEn(e.desc),
       }));
 
     return {
@@ -140,14 +164,19 @@ export class StaffPageService {
       layoutId: layout.id,
       photo: asPlain(p.photo),
       eyebrow: asText(p.eyebrow),
+      eyebrowEn: asEn(p.eyebrow),
       name: asText(p.name),
       intro: asText(p.intro),
+      introEn: asEn(p.intro),
       research: entries('research'),
       teaching: entries('teaching'),
       extras: ((p.extras ?? []) as Array<Record<string, unknown>>).map((e) => ({
         section: asText(e.section),
         title: asText(e.title),
         desc: asText(e.desc),
+        sectionEn: asEn(e.section),
+        titleEn: asEn(e.title),
+        descEn: asEn(e.desc),
       })),
       publications: (
         (p.publications ?? []) as Array<Record<string, unknown>>
@@ -159,6 +188,7 @@ export class StaffPageService {
       })),
       /** Khối "Thông tin chi tiết" — nay sửa được, xem ghi chú đầu tệp. */
       legacyHtml: asText(p.html),
+      legacyHtmlEn: asEn(p.html),
     };
   }
 
@@ -169,29 +199,29 @@ export class StaffPageService {
 
     if (body.photo !== undefined) next.photo = body.photo ?? '';
     if (body.eyebrow !== undefined) {
-      next.eyebrow = toLocalized(body.eyebrow ?? '', prev.eyebrow);
+      next.eyebrow = toLoc2(body.eyebrow ?? '', body.eyebrowEn, prev.eyebrow);
     }
     if (body.intro !== undefined) {
-      next.intro = toLocalized(body.intro ?? '', prev.intro);
+      next.intro = toLoc2(body.intro ?? '', body.introEn, prev.intro);
     }
     // Khối "Thông tin chi tiết": ghi HTML thô vào prop `html` theo ĐÚNG cách song
     // ngữ như `intro` — giữ nguyên `en` cũ, thay `vi`. Chỉ đụng khi app có gửi.
     if (body.legacyHtml !== undefined) {
-      next.html = toLocalized(body.legacyHtml ?? '', prev.html);
+      next.html = toLoc2(body.legacyHtml ?? '', body.legacyHtmlEn, prev.html);
     }
     for (const key of ['research', 'teaching'] as const) {
       const list = body[key];
       if (!list) continue;
       next[key] = list.map((e: EntryIn) => ({
-        title: toLocalized(e.title, null),
-        desc: toLocalized(e.desc ?? '', null),
+        title: toLoc2(e.title, e.titleEn, null),
+        desc: toLoc2(e.desc ?? '', e.descEn, null),
       }));
     }
     if (body.extras) {
       next.extras = body.extras.map((e) => ({
-        section: toLocalized(e.section, null),
-        title: toLocalized(e.title, null),
-        desc: toLocalized(e.desc ?? '', null),
+        section: toLoc2(e.section, e.sectionEn, null),
+        title: toLoc2(e.title, e.titleEn, null),
+        desc: toLoc2(e.desc ?? '', e.descEn, null),
       }));
     }
     if (body.publications) {
