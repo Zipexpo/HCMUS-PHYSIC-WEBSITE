@@ -208,19 +208,28 @@ function StaffProfileEditorialRender(props: Props) {
   // được; không có ảnh thì giữ nguyên nền INK đặc như cũ (byte-for-byte).
   const heroBg = resolveMediaUrl(props.heroBg || "");
   const heroVeil = inkVeil(0.72);
-  // Ảnh nền CHỈ phủ vùng hero (560px mobile / 52vh desktop trên cùng); dưới
-  // ngưỡng đó phải là nền PAPER như cũ. Lớp gradient PAPER (trong suốt phần
-  // trên, đặc phần dưới) đè lên ảnh để che nó ở phần thân — nếu không ảnh
-  // `cover` sẽ tràn xuống hết trang.
-  const mobileBgImage = heroBg
-    ? `linear-gradient(to bottom, ${heroVeil} 560px, transparent 560px), linear-gradient(to bottom, transparent 560px, ${PAPER} 560px), url("${heroBg}")`
-    : `linear-gradient(to bottom, ${INK} 560px, transparent 560px)`;
-  const desktopBgImage = heroBg
-    ? `linear-gradient(to bottom, ${heroVeil} 52vh, transparent 52vh), linear-gradient(to bottom, transparent 52vh, ${PAPER} 52vh), url("${heroBg}")`
-    : `linear-gradient(to bottom, ${INK} 52vh, transparent 52vh)`;
-  const heroBgExtra = heroBg
-    ? `\n          background-size: auto, auto, cover;\n          background-position: center, center, center top;\n          background-repeat: no-repeat, no-repeat, no-repeat;`
-    : "";
+  // Nền tối phủ ĐÚNG vùng hero, và vùng hero cao bao nhiêu thì nó cao bấy nhiêu.
+  //
+  // Bản trước cắt nền bằng một con số cố định — 560px trên mobile, 52vh trên
+  // desktop — vẽ lên CẢ TRANG rồi lấy một lớp gradient PAPER đè lên phần dưới để
+  // giấu ảnh đi. Cách đó chỉ đúng khi hero tình cờ cao đúng bằng con số ấy.
+  //
+  // `52vh` là chiều cao KHUNG NHÌN, còn hero cao bao nhiêu thì do NỘI DUNG và
+  // CHIỀU RỘNG quyết định: quanh 1200px cột chữ hẹp lại, dòng "Học vấn" xuống
+  // thêm dòng, hero vượt quá 52vh — nền tối hết trước khi hero hết, nên chữ
+  // `blend` của khối dưới rơi trúng phần nền tối còn sót và thành đen trên đen.
+  // Đổi màn hình, đổi cỡ chữ, hay thêm một dòng học vấn là ngưỡng lại sai chỗ
+  // khác; không có con số nào đúng cho mọi trường hợp.
+  //
+  // Nên bỏ hẳn ngưỡng: đặt nền lên CHÍNH khối hero. Hero cao bao nhiêu thì nền
+  // đúng bấy nhiêu, ở mọi chiều rộng, mọi độ dài nội dung.
+  const heroBgCss = heroBg
+    ? `background-color: ${INK};
+          background-image: linear-gradient(${heroVeil}, ${heroVeil}), url("${heroBg}");
+          background-size: auto, cover;
+          background-position: center, center top;
+          background-repeat: no-repeat, no-repeat;`
+    : `background-color: ${INK};`;
 
   // Hồ sơ học thuật: mỗi ID có giá trị thì hiện một icon-link màu thương hiệu.
   // Đặt NGOÀI vùng `blend` để logo giữ đúng màu, không bị phép trừ màu đảo.
@@ -311,18 +320,12 @@ function StaffProfileEditorialRender(props: Props) {
 
   return (
     <div className="staff-editorial w-full antialiased">
-      {/* Nền: đen ở nửa trên, trắng ngà bên dưới — ranh giới là chỗ chữ đảo màu.
-          Dùng <style> vì ngưỡng đổi màu khác nhau giữa mobile (px) và desktop (vh). */}
+      {/* Nền: khối hero tối, phần thân trắng ngà — ranh giới là ĐÁY CỦA HERO,
+          không phải một ngưỡng px/vh đoán trước. Dùng <style> vì ảnh nền là dữ
+          liệu người dùng nhập, không viết cứng vào class được. */}
       <style>{`
-        .staff-editorial {
-          background-color: ${PAPER};
-          background-image: ${mobileBgImage};${heroBgExtra}
-        }
-        @media (min-width: 768px) {
-          .staff-editorial {
-            background-image: ${desktopBgImage};
-          }
-        }
+        .staff-editorial { background-color: ${PAPER}; }
+        .staff-editorial .staff-hero { ${heroBgCss} }
         /* Chữ trắng + phép trừ màu: trên nền đen ra trắng, trên nền giấy ra đen. */
         .staff-editorial .blend { mix-blend-mode: difference; }
         @media (prefers-reduced-transparency: reduce) {
@@ -330,7 +333,9 @@ function StaffProfileEditorialRender(props: Props) {
         }
       `}</style>
 
-      {/* ── Hero ── */}
+      {/* ── Hero ── Khối ngoài full-bleed CHỈ để mang nền: khối trong bị
+          `max-w-7xl` bó lại nên đặt nền lên đó thì hai bên trống. */}
+      <div className="staff-hero">
       <div className="max-w-7xl mx-auto px-6 sm:px-12 pt-12 md:pt-16 pb-16 md:pb-24 flex flex-col md:flex-row items-start gap-10 md:gap-12">
         <div className="w-full max-w-[15rem] sm:max-w-xs mx-auto md:max-w-none md:w-4/12 shrink-0 z-10">
           <div className="aspect-[3/4] w-full shadow-2xl overflow-hidden rounded-tl-[5rem] rounded-bl-[5rem] rounded-tr-xl rounded-br-xl bg-gray-200">
@@ -406,6 +411,7 @@ function StaffProfileEditorialRender(props: Props) {
             </div>
           ) : null}
         </div>
+      </div>
       </div>
 
       {/* ── Nghiên cứu / Giảng dạy ── */}
