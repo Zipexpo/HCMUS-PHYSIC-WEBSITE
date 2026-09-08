@@ -132,6 +132,11 @@ function tachHocVi(lines: string[]): { ten: string; hocVi: string } {
   return { ten: full.slice(m[0].length).trim(), hocVi: HOC_VI_DAY[key] ?? "" };
 }
 
+// Mục nào là "quá trình đào tạo" (để tự kéo lên hero khi trống giới thiệu). Khớp
+// nhãn `section` mà biên tập viên đặt: Học vấn / Quá trình đào tạo / Education…
+const DAO_TAO_RE =
+  /học vấn|học vị|quá trình đào tạo|đào tạo|education|academic|qualification/i;
+
 function StaffProfileEditorialRender(props: Props) {
   const { locale } = useLocale();
   const tx = (v: LocalizedString) => t(v, locale) || "";
@@ -155,6 +160,23 @@ function StaffProfileEditorialRender(props: Props) {
     if (!sec || !tx(e.title).trim()) continue;
     groups.set(sec, [...(groups.get(sec) ?? []), { title: e.title, desc: e.desc }]);
   }
+
+  // Quá trình đào tạo: khi KHÔNG có đoạn giới thiệu, kéo mục "Học vấn" lên lấp
+  // khoảng trống bên phải ảnh ở hero (thay vì để trống), rồi bỏ khỏi lưới cột
+  // để không lặp. Có giới thiệu thì để nguyên như cũ (đào tạo nằm dưới lưới cột).
+  const coGioiThieu = !!tx(props.intro).trim();
+  let heroDaoTaoTitle = "";
+  const heroDaoTao: Entry[] = [];
+  if (!coGioiThieu) {
+    for (const key of [...groups.keys()]) {
+      if (DAO_TAO_RE.test(key)) {
+        heroDaoTaoTitle ||= key;
+        heroDaoTao.push(...(groups.get(key) ?? []));
+        groups.delete(key);
+      }
+    }
+  }
+
   const columns: { title: string; items: Entry[] }[] = [
     ...(research.length
       ? [
@@ -349,6 +371,21 @@ function StaffProfileEditorialRender(props: Props) {
               <p className="text-base md:text-lg max-w-xl font-light leading-relaxed">
                 {tx(props.intro)}
               </p>
+            ) : heroDaoTao.length ? (
+              <div className="max-w-xl">
+                <p className="text-xs md:text-sm tracking-[0.25em] mb-3 font-semibold uppercase">
+                  {heroDaoTaoTitle ||
+                    (locale === "en" ? "Education" : "Quá trình đào tạo")}
+                </p>
+                <ul className="space-y-2 text-sm md:text-base font-light leading-relaxed">
+                  {heroDaoTao.map((e, i) => (
+                    <li key={`${tx(e.title)}-${i}`}>
+                      <span className="font-medium">{tx(e.title)}</span>
+                      {tx(e.desc) ? <span> — {tx(e.desc)}</span> : null}
+                    </li>
+                  ))}
+                </ul>
+              </div>
             ) : null}
           </div>
           {scholarLinks.length ? (
