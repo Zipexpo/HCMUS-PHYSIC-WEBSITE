@@ -39,6 +39,7 @@ import {
   SyncStaffPageBodySchema,
   UpdateProjectBodySchema,
   StatsResSchema,
+  FacultyDetailResSchema,
   UpdateStaffPageBodySchema,
   UpdatePublicationBodySchema,
   UpdateScholarProfileBodySchema,
@@ -97,6 +98,7 @@ export class IntegrationStaffResDTO extends createZodDto(
 ) {}
 
 export class StatsResDTO extends createZodDto(StatsResSchema) {}
+export class FacultyDetailResDTO extends createZodDto(FacultyDetailResSchema) {}
 
 export class StaffPageResDTO extends createZodDto(StaffPageResSchema) {}
 export class UpdateStaffPageBodyDTO extends createZodDto(

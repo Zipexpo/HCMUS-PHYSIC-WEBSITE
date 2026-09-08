@@ -53,6 +53,7 @@ import {
   SyncStaffPageBodyDTO,
   UpdateProjectBodyDTO,
   StatsResDTO,
+  FacultyDetailResDTO,
   UpdateStaffPageBodyDTO,
   UpdatePublicationBodyDTO,
   UpdateScholarProfileBodyDTO,
@@ -470,5 +471,13 @@ export class ScholarController {
   @ZodSerializerDto(StatsResDTO)
   facultyStats() {
     return this.service.stats();
+  }
+
+  /** Dữ liệu thô toàn Khoa (công bố + đề tài) cho trang thống kê — chỉ quản trị. */
+  @Get('stats/faculty/detail')
+  @Roles(RoleName.Admin, RoleName.SuperAdmin)
+  @ZodSerializerDto(FacultyDetailResDTO)
+  facultyDetail() {
+    return this.service.facultyDetail();
   }
 }

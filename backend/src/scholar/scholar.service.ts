@@ -969,6 +969,46 @@ export class ScholarService {
     };
   }
 
+  /**
+   * Dữ liệu thô toàn Khoa cho trang thống kê admin. Trả từng công bố / đề tài với
+   * đúng các trường cần để bên nhận tự lọc (năm, khoảng tháng) và tổng hợp —
+   * không quy đổi giờ, không phân trang (vài trăm dòng). `budget` là BigInt trong
+   * CSDL nên đổi sang Number để JSON hoá được.
+   */
+  async facultyDetail() {
+    const [publications, projects] = await Promise.all([
+      this.prisma.publication.findMany({
+        where: { deletedAt: null },
+        select: {
+          type: true,
+          countYear: true,
+          publishedMonth: true,
+          acceptedMonth: true,
+          status: true,
+          quartile: true,
+          catalogCode: true,
+        },
+      }),
+      this.prisma.researchProject.findMany({
+        select: {
+          status: true,
+          startYear: true,
+          startMonth: true,
+          endYear: true,
+          endMonth: true,
+          budget: true,
+        },
+      }),
+    ]);
+    return {
+      publications,
+      projects: projects.map((p) => ({
+        ...p,
+        budget: p.budget == null ? null : Number(p.budget),
+      })),
+    };
+  }
+
   // ── API tích hợp cho ACADsoom ─────────────────────────────────────────────
   /**
    * CHỈ trả bài đã phân loại và tác giả đã xác nhận. Không trả giờ quy đổi —

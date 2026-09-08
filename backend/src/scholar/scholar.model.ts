@@ -801,6 +801,35 @@ export const StatsResSchema = z.object({
   ),
 });
 
+/**
+ * Dữ liệu THÔ toàn Khoa cho trang thống kê admin — ACADsoom/phys-profile tự lọc
+ * (năm, khoảng tháng) và tổng hợp phía client. Payload nhỏ (vài trăm dòng), nên
+ * trả nguyên còn hơn thêm một endpoint tổng hợp cho mỗi chiều lọc.
+ */
+export const FacultyDetailResSchema = z.object({
+  publications: z.array(
+    z.object({
+      type: z.string(),
+      countYear: z.number().int().nullable(),
+      publishedMonth: z.number().int().nullable(),
+      acceptedMonth: z.number().int().nullable(),
+      status: z.string(),
+      quartile: z.string().nullable(),
+      catalogCode: z.string().nullable(),
+    }),
+  ),
+  projects: z.array(
+    z.object({
+      status: z.string(),
+      startYear: z.number().int().nullable(),
+      startMonth: z.number().int().nullable(),
+      endYear: z.number().int().nullable(),
+      endMonth: z.number().int().nullable(),
+      budget: z.number().nullable(),
+    }),
+  ),
+});
+
 // ── Trang nhân sự trên web Khoa ─────────────────────────────────────────────
 // Giảng viên sửa trang của CHÍNH MÌNH từ app. Không có tham số chỉ định trang
 // khác — quyền chặn ở tầng dữ liệu qua ScholarProfile.staffPageSlug.
