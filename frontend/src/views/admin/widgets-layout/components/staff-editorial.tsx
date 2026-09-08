@@ -309,8 +309,8 @@ function StaffProfileEditorialRender(props: Props) {
       `}</style>
 
       {/* ── Hero ── */}
-      <div className="max-w-7xl mx-auto px-6 sm:px-12 pt-16 md:pt-[10vh] pb-16 md:pb-24 flex flex-col md:flex-row items-center gap-10 md:gap-12">
-        <div className="w-full max-w-sm mx-auto md:max-w-none md:w-5/12 shrink-0 z-10">
+      <div className="max-w-7xl mx-auto px-6 sm:px-12 pt-12 md:pt-16 pb-16 md:pb-24 flex flex-col md:flex-row items-start gap-10 md:gap-12">
+        <div className="w-full max-w-[15rem] sm:max-w-xs mx-auto md:max-w-none md:w-4/12 shrink-0 z-10">
           <div className="aspect-[3/4] w-full shadow-2xl overflow-hidden rounded-tl-[5rem] rounded-bl-[5rem] rounded-tr-xl rounded-br-xl bg-gray-200">
             {photo ? (
               // eslint-disable-next-line @next/next/no-img-element
@@ -339,7 +339,7 @@ function StaffProfileEditorialRender(props: Props) {
             ) : null}
             {tenHienThi ? (
               <h1
-                className="text-3xl md:text-4xl uppercase leading-tight mb-5"
+                className="text-4xl md:text-5xl uppercase leading-tight mb-5"
                 style={{ fontFamily: "var(--font-playfair)" }}
               >
                 {tenHienThi}
