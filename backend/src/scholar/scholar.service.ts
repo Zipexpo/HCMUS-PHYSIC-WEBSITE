@@ -545,7 +545,10 @@ export class ScholarService {
    *
    *   schoolAuthors      — luôn ít nhất bằng số người đã xác nhận, nhưng có thể
    *                        cao hơn nếu bài còn sinh viên/học viên thuộc Trường
-   *                        không có tài khoản. Vì vậy chỉ NÂNG, không hạ.
+   *                        không có tài khoản. Vì vậy chỉ NÂNG, không hạ. KHÔNG
+   *                        sàn lên 1: bài người khai đánh dấu không ai thuộc
+   *                        Trường (schoolAuthors 0, chưa ai xác nhận) phải giữ
+   *                        được 0 — sàn 1 sẽ tính giờ NV2 cho một bài của nơi khác.
    *   mainAuthorAtSchool — true khi có người đã xác nhận giữ vai trò First,
    *                        Corresponding hoặc Last. Người dùng vẫn đặt tay được
    *                        (tác giả chính có thể là người ngoài hệ thống).
@@ -561,7 +564,7 @@ export class ScholarService {
       where: { publicationId, claimStatus: 'CONFIRMED' },
       select: { isFirst: true, isCorresponding: true, isLast: true },
     });
-    const schoolAuthors = Math.max(pub.schoolAuthors, confirmed.length, 1);
+    const schoolAuthors = Math.max(pub.schoolAuthors, confirmed.length);
 
     await this.prisma.publication.update({
       where: { id: publicationId },

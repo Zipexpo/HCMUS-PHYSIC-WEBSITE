@@ -197,6 +197,14 @@ export const ResolvedAuthorSchema = z.object({
    * tính). Lưu ngay trong authorsRaw (JSON) như `isForeign`, không cột/di trú riêng.
    */
   isVnu: z.boolean().nullish(),
+  /**
+   * Tác giả KHÔNG thuộc Trường trên BÀI NÀY (địa chỉ nơi khác lúc công bố, dù nay
+   * có tài khoản Khoa). Trước đây school/double/non_school đều "không isForeign,
+   * không isVnu" nên non_school bị suy nhầm về school lúc nạp → cộng dư. Lưu ngay
+   * trong authorsRaw (JSON) như `isForeign`/`isVnu`, không cột/di trú riêng. Về
+   * NV2 xử lý y hệt isForeign (KHÔNG tính) — chỉ để schoolAuthors đếm đúng.
+   */
+  isNonSchool: z.boolean().nullish(),
 });
 
 export const ResolvedWorkSchema = z.object({
@@ -423,8 +431,10 @@ export const UpdatePublicationBodySchema = z.object({
 
   totalAuthors: z.number().int().min(1).max(2000).optional(),
   /** Kể cả đồng tác giả là sinh viên/học viên thuộc Trường mà không có tài khoản.
-   *  Hệ thống luôn nâng lên ít nhất bằng số tác giả đã xác nhận. */
-  schoolAuthors: z.number().int().min(1).max(2000).optional(),
+   *  Hệ thống luôn nâng lên ít nhất bằng số tác giả đã xác nhận. CHO PHÉP 0: khi
+   *  người khai đánh dấu không tác giả nào thuộc Trường trên bài này (bài của nơi
+   *  làm việc cũ) — sàn min(1) sẽ ép bài đó vẫn tính giờ NV2, đúng lỗi 1b. */
+  schoolAuthors: z.number().int().min(0).max(2000).optional(),
   mainAuthorAtSchool: z.boolean().optional(),
 
   me: MyAuthorshipSchema.partial().optional(),
