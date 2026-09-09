@@ -174,6 +174,8 @@ export class StaffPageService {
       slug,
       layoutId: layout.id,
       photo: asPlain(p.photo),
+      heroLayout: p.heroLayout === 'full' ? 'full' : 'compact',
+      email: asPlain(p.email),
       eyebrow: asText(p.eyebrow),
       eyebrowEn: asEn(p.eyebrow),
       name: nameVi,
@@ -210,6 +212,9 @@ export class StaffPageService {
     const next: Record<string, unknown> = { ...prev };
 
     if (body.photo !== undefined) next.photo = body.photo ?? '';
+    if (body.heroLayout != null) {
+      next.heroLayout = body.heroLayout === 'full' ? 'full' : 'compact';
+    }
     // Tên hiển thị: ghi vào `name` VÀ `nameLines` (một dòng song ngữ) vì trình
     // dựng trang ưu tiên `nameLines`. Trang chỉ hiện một dòng nên gộp là đủ.
     // Bỏ qua khi tên (VI) rỗng để không vô tình xoá mất tên trên trang.
@@ -654,6 +659,7 @@ export class StaffPageService {
         scopusAuthorId: true,
         researcherId: true,
         googleScholarId: true,
+        user: { select: { email: true } },
       },
     });
     const report = { doi: 0, boQua: 0, khongCoTrang: [] as string[] };
@@ -664,6 +670,7 @@ export class StaffPageService {
         scopus: p.scopusAuthorId ?? '',
         googleScholar: p.googleScholarId ?? '',
         researcherId: p.researcherId ?? '',
+        email: p.user?.email ?? '',
       });
       if (changed === null) report.khongCoTrang.push(p.staffPageSlug!);
       else if (changed) {
@@ -694,6 +701,7 @@ export class StaffPageService {
         scopusAuthorId: true,
         researcherId: true,
         googleScholarId: true,
+        user: { select: { email: true } },
       },
     });
     if (!p?.staffPageSlug) return;
@@ -702,6 +710,7 @@ export class StaffPageService {
       scopus: p.scopusAuthorId ?? '',
       googleScholar: p.googleScholarId ?? '',
       researcherId: p.researcherId ?? '',
+      email: p.user?.email ?? '',
     });
     if (changed) {
       await this.cache.clear();
@@ -717,7 +726,10 @@ export class StaffPageService {
    */
   private async writeScholarLinks(
     slug: string,
-    ids: Record<'orcid' | 'scopus' | 'googleScholar' | 'researcherId', string>,
+    ids: Record<
+      'orcid' | 'scopus' | 'googleScholar' | 'researcherId' | 'email',
+      string
+    >,
   ): Promise<boolean | null> {
     const layout = await this.prisma.pageLayout.findFirst({
       where: { slug, deletedAt: null },
@@ -753,7 +765,10 @@ export class StaffPageService {
    */
   private setScholarLinksOnStaffBlocks(
     root: unknown,
-    ids: Record<'orcid' | 'scopus' | 'googleScholar' | 'researcherId', string>,
+    ids: Record<
+      'orcid' | 'scopus' | 'googleScholar' | 'researcherId' | 'email',
+      string
+    >,
   ): { tree: unknown; changed: number } {
     let changed = 0;
     const walk = (n: unknown): unknown => {
@@ -768,6 +783,7 @@ export class StaffPageService {
           'scopus',
           'googleScholar',
           'researcherId',
+          'email',
         ] as const) {
           const val = ids[key];
           if (val && props[key] !== val) {

@@ -909,6 +909,10 @@ export const StaffPageResSchema = z.object({
   slug: z.string(),
   layoutId: z.string(),
   photo: z.string(),
+  /** 'compact' (mặc định) ảnh nhỏ trên điện thoại; 'full' ảnh lớn như cũ. */
+  heroLayout: z.string(),
+  /** Email liên hệ hiện cạnh icon học thuật — tự đồng bộ từ tài khoản. */
+  email: z.string(),
   eyebrow: z.string(),
   eyebrowEn: z.string(),
   name: z.string(),
@@ -934,6 +938,8 @@ export type SyncStaffPageBodyType = z.infer<typeof SyncStaffPageBodySchema>;
 
 export const UpdateStaffPageBodySchema = z.object({
   photo: z.string().max(1000).nullish(),
+  /** Kiểu hero: 'compact' (mặc định, ảnh nhỏ) hoặc 'full' (ảnh lớn). */
+  heroLayout: z.enum(['compact', 'full']).nullish(),
   // Tên hiển thị trên trang (khác tên tài khoản dùng để ghép đơn vị). Song ngữ:
   // ghi vào cả `name` và `nameLines` (một dòng) để trình dựng trang hiện đúng.
   name: z.string().max(300).nullish(),

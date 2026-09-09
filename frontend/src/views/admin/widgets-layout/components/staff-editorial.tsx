@@ -64,6 +64,9 @@ type Props = {
   scopus?: string;
   googleScholar?: string;
   researcherId?: string;
+  email?: string;
+  /** 'compact' (mặc định): ảnh nhỏ, hero gọn trên điện thoại. 'full': ảnh lớn như cũ. */
+  heroLayout?: "compact" | "full";
   researchTitle: LocalizedString;
   research?: Entry[];
   teachingTitle: LocalizedString;
@@ -142,6 +145,21 @@ function StaffProfileEditorialRender(props: Props) {
   const tx = (v: LocalizedString) => t(v, locale) || "";
 
   const photo = resolveMediaUrl(props.photo || "");
+
+  // Hai chế độ hero — khác nhau CHỈ ở cỡ ẢNH trên điện thoại (desktop như nhau,
+  // vì than phiền "ảnh quá to" nằm ở điện thoại). `compact` (mặc định) thu ảnh
+  // ~9rem cho hero gọn còn ~nửa màn; `full` giữ ảnh lớn ~15rem như cũ. Giữ NGUYÊN
+  // bố cục xếp dọc + nội dung tràn hết bề ngang bên dưới, nên trang nào có đoạn
+  // giới thiệu/học vấn DÀI vẫn đọc thoải mái (không bị bó vào cột hẹp).
+  const compact = (props.heroLayout ?? "compact") !== "full";
+  const heroWrapCls = compact
+    ? "max-w-7xl mx-auto px-6 sm:px-12 pt-10 md:pt-16 pb-12 md:pb-24 flex flex-col md:flex-row items-center md:items-start gap-6 md:gap-12"
+    : "max-w-7xl mx-auto px-6 sm:px-12 pt-12 md:pt-16 pb-16 md:pb-24 flex flex-col md:flex-row items-start gap-10 md:gap-12";
+  const photoWrapCls = compact
+    ? "w-full max-w-[9rem] sm:max-w-[11rem] mx-auto md:mx-0 md:max-w-none md:w-4/12 shrink-0 z-10"
+    : "w-full max-w-[15rem] sm:max-w-xs mx-auto md:max-w-none md:w-4/12 shrink-0 z-10";
+  const nameCls = "text-4xl md:text-5xl uppercase leading-tight mb-5";
+
   const lines = (props.nameLines ?? [])
     .map((l) => tx(l.text))
     .filter((s) => s.trim());
@@ -336,8 +354,8 @@ function StaffProfileEditorialRender(props: Props) {
       {/* ── Hero ── Khối ngoài full-bleed CHỈ để mang nền: khối trong bị
           `max-w-7xl` bó lại nên đặt nền lên đó thì hai bên trống. */}
       <div className="staff-hero">
-      <div className="max-w-7xl mx-auto px-6 sm:px-12 pt-12 md:pt-16 pb-16 md:pb-24 flex flex-col md:flex-row items-start gap-10 md:gap-12">
-        <div className="w-full max-w-[15rem] sm:max-w-xs mx-auto md:max-w-none md:w-4/12 shrink-0 z-10">
+      <div className={heroWrapCls}>
+        <div className={photoWrapCls}>
           <div className="aspect-[3/4] w-full shadow-2xl overflow-hidden rounded-tl-[5rem] rounded-bl-[5rem] rounded-tr-xl rounded-br-xl bg-gray-200">
             {photo ? (
               // eslint-disable-next-line @next/next/no-img-element
@@ -366,7 +384,7 @@ function StaffProfileEditorialRender(props: Props) {
             ) : null}
             {tenHienThi ? (
               <h1
-                className="text-4xl md:text-5xl uppercase leading-tight mb-5"
+                className={nameCls}
                 style={{ fontFamily: "var(--font-playfair)" }}
               >
                 {tenHienThi}
@@ -393,21 +411,49 @@ function StaffProfileEditorialRender(props: Props) {
               </div>
             ) : null}
           </div>
-          {scholarLinks.length ? (
-            <div className="mt-5 flex gap-3 items-center">
-              {scholarLinks.map((l) => (
+          {scholarLinks.length || props.email?.trim() ? (
+            <div className="mt-5 flex flex-wrap items-center gap-x-4 gap-y-2">
+              {scholarLinks.length ? (
+                <div className="flex items-center gap-3">
+                  {scholarLinks.map((l) => (
+                    <a
+                      key={l.key}
+                      href={l.href}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      title={l.label}
+                      aria-label={l.label}
+                      className="inline-flex hover:opacity-70 transition-opacity"
+                    >
+                      {l.icon}
+                    </a>
+                  ))}
+                </div>
+              ) : null}
+              {props.email?.trim() ? (
                 <a
-                  key={l.key}
-                  href={l.href}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  title={l.label}
-                  aria-label={l.label}
-                  className="inline-flex hover:opacity-70 transition-opacity"
+                  href={`mailto:${props.email.trim()}`}
+                  title={props.email.trim()}
+                  className="inline-flex items-center gap-1.5 text-xs md:text-sm text-white/90 hover:text-white break-all"
                 >
-                  {l.icon}
+                  <svg
+                    width="16"
+                    height="16"
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="currentColor"
+                    strokeWidth="1.8"
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    aria-hidden="true"
+                    className="shrink-0"
+                  >
+                    <rect x="3" y="5" width="18" height="14" rx="2" />
+                    <path d="m3 7 9 6 9-6" />
+                  </svg>
+                  <span>{props.email.trim()}</span>
                 </a>
-              ))}
+              ) : null}
             </div>
           ) : null}
         </div>
@@ -554,6 +600,8 @@ export const StaffProfileEditorial: ComponentConfig<Props> = {
     scopus: "",
     googleScholar: "",
     researcherId: "",
+    email: "",
+    heroLayout: "compact",
     researchTitle: { vi: "Nghiên cứu", en: "Research" },
     research: [],
     teachingTitle: { vi: "Giảng dạy", en: "Teaching" },
@@ -596,6 +644,15 @@ export const StaffProfileEditorial: ComponentConfig<Props> = {
     scopus: { type: "text", label: "Scopus Author ID" },
     googleScholar: { type: "text", label: "Google Scholar ID" },
     researcherId: { type: "text", label: "ResearcherID (Web of Science)" },
+    email: { type: "text", label: "Email (hiện cạnh icon học thuật)" },
+    heroLayout: {
+      type: "radio",
+      label: "Kiểu hero trên điện thoại",
+      options: [
+        { label: "Gọn (ảnh nhỏ)", value: "compact" },
+        { label: "Lớn (ảnh to)", value: "full" },
+      ],
+    },
     researchTitle: localizedTextField("Tiêu đề cột nghiên cứu"),
     research: {
       type: "array",
