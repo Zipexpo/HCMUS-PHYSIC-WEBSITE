@@ -6,6 +6,7 @@ import { ChatBubble } from "./components/chat-bubble";
 import {
   ContactInfo,
   DepartmentCard,
+  DepartmentStaffAuto,
   Heading,
   IconText,
   ImageTextBlock,
@@ -101,6 +102,7 @@ export const puckConfig: Config = {
       components: [
         "ContactInfo",
         "DepartmentCard",
+        "DepartmentStaffAuto",
         "Heading",
         "IconText",
         "ImageTextBlock",
@@ -194,6 +196,7 @@ export const puckConfig: Config = {
     QuickLinks,
     LanguageSwitcher,
     DepartmentCard,
+    DepartmentStaffAuto,
     SearchOverlay,
     HeroFullScreen,
     StatsCounter,

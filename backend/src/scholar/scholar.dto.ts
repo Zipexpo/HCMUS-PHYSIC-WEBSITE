@@ -36,6 +36,7 @@ import {
   ProjectListResSchema,
   ProjectResSchema,
   StaffPageResSchema,
+  DepartmentStaffResSchema,
   SyncStaffPageBodySchema,
   UpdateProjectBodySchema,
   StatsResSchema,
@@ -103,6 +104,9 @@ export class FacultyDetailResDTO extends createZodDto(FacultyDetailResSchema) {}
 export class FacultyReportResDTO extends createZodDto(FacultyReportResSchema) {}
 
 export class StaffPageResDTO extends createZodDto(StaffPageResSchema) {}
+export class DepartmentStaffResDTO extends createZodDto(
+  DepartmentStaffResSchema,
+) {}
 export class UpdateStaffPageBodyDTO extends createZodDto(
   UpdateStaffPageBodySchema,
 ) {}

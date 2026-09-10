@@ -14,8 +14,10 @@ import {
   UseInterceptors,
 } from '@nestjs/common';
 import { FileInterceptor } from '@nestjs/platform-express';
+import { CacheInterceptor, CacheTTL } from '@nestjs/cache-manager';
 import { diskStorage } from 'multer';
 import { ZodSerializerDto } from 'nestjs-zod';
+import { IsPublic } from '../shared/decorators/auth.decorator';
 import { ActiveUser } from '../shared/decorators/active-user.decorator';
 import { Roles } from '../shared/decorators/roles.decorator';
 import { RoleName } from '../shared/constants/role.constants';
@@ -50,6 +52,7 @@ import {
   ProjectListResDTO,
   ProjectResDTO,
   StaffPageResDTO,
+  DepartmentStaffResDTO,
   SyncStaffPageBodyDTO,
   UpdateProjectBodyDTO,
   StatsResDTO,
@@ -70,6 +73,8 @@ import { PhotoRequiredException } from './scholar.error';
 const UPLOADS_DIR = join(process.cwd(), 'uploads');
 mkdirSync(UPLOADS_DIR, { recursive: true });
 
+const FIVE_MINUTES_MS = 300_000;
+
 /**
  * API của app hồ sơ khoa học (profile.phys.hcmus.edu.vn).
  *
@@ -86,6 +91,19 @@ export class ScholarController {
     private readonly projects: ProjectService,
     private readonly activities: ActivityService,
   ) {}
+
+  // ── Đội ngũ bộ môn (công khai) ────────────────────────────────────────────
+  // Trang danh sách nhân sự lấy đội ngũ MỘT bộ môn từ đây (khối
+  // DepartmentStaffAuto). Không auth — dữ liệu vốn đã công khai trên trang. Nguồn
+  // là các trang cá nhân dưới `{slug}/nhan-su/…`, nên ảnh/tên luôn khớp hồ sơ.
+  @Get('public/department-staff/:slug')
+  @IsPublic()
+  @UseInterceptors(CacheInterceptor)
+  @CacheTTL(FIVE_MINUTES_MS)
+  @ZodSerializerDto(DepartmentStaffResDTO)
+  departmentStaff(@Param('slug') slug: string) {
+    return this.staffPage.departmentStaff(slug);
+  }
 
   // ── Lý lịch khoa học ──────────────────────────────────────────────────────
   @Get('me')
@@ -469,6 +487,21 @@ export class ScholarController {
       emails,
       excludeEmails,
     });
+  }
+
+  /**
+   * Lắp khối "Đội ngũ bộ môn (auto)" vào trang `{bộ-môn}/nhan-su` — thay lưới
+   * ProfileCard dựng tay, GIỮ Navbar/PageHero/Footer của chính bộ môn. `department`
+   * cho một bộ môn, `all` cho cả 8; `dryRun` xem trước. Chỉ quản trị.
+   */
+  @Post('staff-pages/apply-listing')
+  @Roles(RoleName.Admin, RoleName.SuperAdmin)
+  applyListing(
+    @Body('department') department?: string,
+    @Body('all') all?: boolean,
+    @Body('dryRun') dryRun?: boolean,
+  ) {
+    return this.staffPage.applyListingBlock({ department, all, dryRun });
   }
 
   /**

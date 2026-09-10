@@ -2,8 +2,13 @@
 
 import type { ComponentConfig } from "@puckeditor/core";
 import { Image as ImageIcon, Mail, User } from "lucide-react";
+import { usePathname } from "next/navigation";
 import { useEffect, useRef, useState } from "react";
 import { DynamicIcon } from "@/components/admin/icons";
+import {
+  type DeptStaffPerson,
+  departmentStaffApi,
+} from "@/lib/api";
 import { type LocalizedString, t } from "@/lib/i18n";
 import { useLocale } from "@/lib/locale-context";
 import { colorField } from "../fields/color-field";
@@ -943,6 +948,299 @@ function ProfileCardRender({
     </Wrapper>
   );
 }
+
+// ── Đội ngũ bộ môn (tự động) ────────────────────────────────────────────────
+// Lưới người của MỘT bộ môn, tự lấy từ backend (khối này thay lưới ProfileCard
+// dựng tay). Nguồn là các TRANG CÁ NHÂN dưới `{bộ-môn}/nhan-su/…`, nên ảnh · tên ·
+// học vị luôn khớp trang cá nhân — đổi ở phys-profile là danh sách tự cập nhật,
+// không còn phải sửa hai nơi. Bộ môn suy TỰ ĐỘNG từ đường dẫn trang
+// (`/{locale}/{bộ-môn}/nhan-su`); ô "Bộ môn" chỉ để ghi đè khi xem thử.
+
+// Tách học vị khỏi tên để hiện dạng đệm (eyebrow) đồng nhất mọi thẻ, kể cả trang
+// cũ còn dính "TS. …" vào tên. Cùng bảng với staff-editorial.
+const DEPT_HOCVI_RE = /^(gs\s*\.?\s*ts|pgs\s*\.?\s*ts|gs|pgs|ts|ths|cn)\s*\.?\s+/i;
+const DEPT_HOCVI_SHORT: Record<string, string> = {
+  gsts: "GS.TS.",
+  pgsts: "PGS.TS.",
+  gs: "GS.",
+  pgs: "PGS.",
+  ts: "TS.",
+  ths: "ThS.",
+  cn: "CN.",
+};
+function splitHocVi(full: string): { deg: string; name: string } {
+  const s = (full || "").replace(/\s+/g, " ").trim();
+  const m = s.match(DEPT_HOCVI_RE);
+  if (!m) return { deg: "", name: s };
+  const key = m[1].toLowerCase().replace(/[.\s]/g, "");
+  return { deg: DEPT_HOCVI_SHORT[key] ?? "", name: s.slice(m[0].length).trim() };
+}
+
+function deriveDeptSlug(pathname: string, override?: string): string {
+  if (override?.trim()) return override.trim();
+  const segs = (pathname || "").split("/").filter(Boolean);
+  const rel = segs[0] === "vi" || segs[0] === "en" ? segs.slice(1) : segs;
+  const idx = rel.indexOf("nhan-su");
+  return idx > 0 ? rel.slice(0, idx).join("/") : "";
+}
+
+function StaffGridCard({
+  person,
+  locale,
+  isEditing,
+}: {
+  person: DeptStaffPerson;
+  locale: string;
+  isEditing: boolean;
+}) {
+  const [failed, setFailed] = useState(false);
+  const rawName = t(person.name, locale);
+  const eb = t(person.eyebrow, locale).trim();
+  const split = splitHocVi(rawName);
+  // Ưu tiên học vị TÁCH TỪ TÊN (đáng tin hơn): eyebrow trên trang cá nhân lẫn lộn
+  // — có người để "Giảng viên", có người "Thạc sĩ", có người trống. Chỉ dùng
+  // eyebrow khi tên KHÔNG kèm học vị (vd tên đã tách sẵn, học vị nằm ở eyebrow).
+  const deg = split.deg || eb;
+  const name = split.name || rawName;
+  const role = t(person.role, locale);
+  const href = `/${locale}/${person.slug}`;
+  const showImg = !!person.photo && !failed;
+  return (
+    <a
+      href={isEditing ? "#" : href}
+      tabIndex={isEditing ? -1 : undefined}
+      className="group block focus:outline-none"
+    >
+      <div className="relative overflow-hidden rounded-2xl bg-slate-100 dark:bg-[#1a2436] ring-1 ring-slate-200/80 dark:ring-slate-700/60 shadow-sm transition-all duration-300 group-hover:-translate-y-1 group-hover:shadow-xl group-hover:ring-blue-300 dark:group-hover:ring-blue-500/50 group-focus-visible:ring-2 group-focus-visible:ring-blue-500">
+        {showImg ? (
+          <img
+            ref={(el) => {
+              if (el?.complete && el.naturalWidth === 0) setFailed(true);
+            }}
+            src={resolveMediaSrc(person.photo)}
+            alt={name}
+            className="w-full aspect-[3/4] object-cover transition-transform duration-500 group-hover:scale-[1.04]"
+            loading="lazy"
+            decoding="async"
+            onError={() => setFailed(true)}
+          />
+        ) : (
+          <div className="w-full aspect-[3/4] flex items-center justify-center">
+            <User className="w-14 h-14 text-slate-300 dark:text-slate-600" />
+          </div>
+        )}
+        {/* Dải chuyển màu nhẹ dưới đáy ảnh cho chiều sâu, không che mặt. */}
+        <div className="pointer-events-none absolute inset-x-0 bottom-0 h-16 bg-gradient-to-t from-black/20 to-transparent opacity-0 group-hover:opacity-100 transition-opacity" />
+      </div>
+      <div className="mt-3 text-center px-1">
+        {deg && (
+          <p className="text-[11px] font-semibold uppercase tracking-wider text-blue-600/90 dark:text-blue-400">
+            {deg}
+          </p>
+        )}
+        <h3 className="text-[15px] font-bold leading-snug text-slate-800 dark:text-slate-100 group-hover:text-blue-700 dark:group-hover:text-blue-300 transition-colors">
+          {name}
+        </h3>
+        {role && (
+          <p className="text-[12.5px] text-slate-500 dark:text-slate-400 mt-0.5">
+            {role}
+          </p>
+        )}
+      </div>
+    </a>
+  );
+}
+
+function DepartmentStaffAutoRender({
+  title,
+  accentColor,
+  visitingLabel,
+  separateVisiting,
+  departmentSlug,
+  isEditing,
+}: {
+  title: LocalizedString;
+  accentColor: string;
+  visitingLabel: LocalizedString;
+  separateVisiting: boolean;
+  departmentSlug: string;
+  isEditing: boolean;
+}) {
+  const { locale } = useLocale();
+  const pathname = usePathname() ?? "";
+  const slug = deriveDeptSlug(pathname, departmentSlug);
+  const [people, setPeople] = useState<DeptStaffPerson[]>([]);
+  const [status, setStatus] = useState<"loading" | "ready" | "error">(
+    "loading",
+  );
+
+  useEffect(() => {
+    if (!slug) {
+      setPeople([]);
+      setStatus("ready");
+      return;
+    }
+    let alive = true;
+    setStatus("loading");
+    departmentStaffApi
+      .get(slug)
+      .then((res) => {
+        if (!alive) return;
+        setPeople(res.people ?? []);
+        setStatus("ready");
+      })
+      .catch(() => {
+        if (alive) setStatus("error");
+      });
+    return () => {
+      alive = false;
+    };
+  }, [slug]);
+
+  const titleText = t(title, locale);
+  const main = separateVisiting ? people.filter((p) => !p.visiting) : people;
+  const visiting = separateVisiting ? people.filter((p) => p.visiting) : [];
+
+  const grid = (list: DeptStaffPerson[]) => (
+    <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-x-5 gap-y-8 md:gap-x-7 md:gap-y-10">
+      {list.map((p) => (
+        <StaffGridCard
+          key={p.slug}
+          person={p}
+          locale={locale}
+          isEditing={isEditing}
+        />
+      ))}
+    </div>
+  );
+
+  return (
+    <section className="w-full max-w-6xl mx-auto px-6 py-8 md:py-12">
+      {titleText && (
+        <div className="mb-8 text-center">
+          <h2 className="text-2xl md:text-3xl font-extrabold text-slate-800 dark:text-slate-100">
+            {titleText}
+          </h2>
+          <span
+            className="mt-3 block h-1 w-20 mx-auto rounded-full"
+            style={{ backgroundColor: accentColor || "#1e40af" }}
+          />
+        </div>
+      )}
+
+      {!slug ? (
+        <p className="text-center text-sm text-slate-500 dark:text-slate-400 py-10">
+          {isEditing
+            ? "Khối “Đội ngũ bộ môn”: đặt trên trang “…/nhan-su” để tự nhận bộ môn, hoặc nhập slug bộ môn ở ô bên phải để xem thử."
+            : ""}
+        </p>
+      ) : status === "loading" ? (
+        <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-x-5 gap-y-8 md:gap-x-7 md:gap-y-10">
+          {Array.from({ length: 8 }).map((_, i) => (
+            <div key={i} className="animate-pulse">
+              <div className="w-full aspect-[3/4] rounded-2xl bg-slate-200 dark:bg-slate-800" />
+              <div className="mt-3 h-3 w-3/4 mx-auto rounded bg-slate-200 dark:bg-slate-800" />
+              <div className="mt-2 h-3 w-1/2 mx-auto rounded bg-slate-200 dark:bg-slate-800" />
+            </div>
+          ))}
+        </div>
+      ) : status === "error" ? (
+        <p className="text-center text-sm text-slate-500 dark:text-slate-400 py-10">
+          {locale === "en"
+            ? "Unable to load the staff list."
+            : "Không tải được danh sách nhân sự."}
+        </p>
+      ) : people.length === 0 ? (
+        <p className="text-center text-sm text-slate-500 dark:text-slate-400 py-10">
+          {locale === "en" ? "No staff yet." : "Chưa có nhân sự."}
+        </p>
+      ) : (
+        <>
+          {grid(main)}
+          {visiting.length > 0 && (
+            <div className="mt-12">
+              <div className="mb-7 flex items-center gap-4">
+                <span
+                  className="h-px flex-1"
+                  style={{
+                    background:
+                      "linear-gradient(to right, transparent, currentColor)",
+                    color: accentColor || "#1e40af",
+                    opacity: 0.35,
+                  }}
+                />
+                <h3 className="text-sm font-bold uppercase tracking-wider text-slate-600 dark:text-slate-300 whitespace-nowrap">
+                  {t(visitingLabel, locale)}
+                </h3>
+                <span
+                  className="h-px flex-1"
+                  style={{
+                    background:
+                      "linear-gradient(to left, transparent, currentColor)",
+                    color: accentColor || "#1e40af",
+                    opacity: 0.35,
+                  }}
+                />
+              </div>
+              {grid(visiting)}
+            </div>
+          )}
+        </>
+      )}
+    </section>
+  );
+}
+
+export const DepartmentStaffAuto: ComponentConfig<{
+  title: LocalizedString;
+  accentColor: string;
+  visitingLabel: LocalizedString;
+  separateVisiting: boolean;
+  departmentSlug: string;
+}> = {
+  label: "Đội ngũ bộ môn (auto)",
+  defaultProps: {
+    title: { vi: "", en: "" },
+    accentColor: "#1e40af",
+    visitingLabel: { vi: "Cán bộ thỉnh giảng", en: "Visiting Lecturers" },
+    separateVisiting: true,
+    departmentSlug: "",
+  },
+  fields: {
+    title: localizedTextField("Tiêu đề (để trống nếu đã có tiêu đề riêng)"),
+    accentColor: colorField("Màu nhấn"),
+    visitingLabel: localizedTextField("Nhãn nhóm thỉnh giảng"),
+    separateVisiting: {
+      type: "radio",
+      label: "Tách nhóm thỉnh giảng xuống cuối",
+      options: [
+        { label: "Có", value: true },
+        { label: "Không", value: false },
+      ],
+    },
+    departmentSlug: {
+      type: "text",
+      label: "Bộ môn (tự nhận theo trang — chỉ nhập khi xem thử)",
+    },
+  },
+  render: ({
+    title,
+    accentColor,
+    visitingLabel,
+    separateVisiting,
+    departmentSlug,
+    puck,
+  }) => (
+    <DepartmentStaffAutoRender
+      title={title}
+      accentColor={accentColor}
+      visitingLabel={visitingLabel}
+      separateVisiting={separateVisiting !== false}
+      departmentSlug={departmentSlug}
+      isEditing={!!puck?.isEditing}
+    />
+  ),
+};
 
 export const DepartmentCard: ComponentConfig<{
   imageUrl: string;

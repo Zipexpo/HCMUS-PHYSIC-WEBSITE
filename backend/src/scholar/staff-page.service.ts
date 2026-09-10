@@ -11,6 +11,7 @@ import {
   StaffBlockNotFoundException,
 } from './scholar.error';
 import type { UpdateStaffPageBodyType } from './scholar.model';
+import { LISTING_ROSTER } from './listing-roster';
 
 /**
  * Cho giảng viên tự sửa TRANG NHÂN SỰ của chính mình từ app hồ sơ khoa học.
@@ -30,6 +31,18 @@ import type { UpdateStaffPageBodyType } from './scholar.model';
 
 type Localized = { vi?: string; en?: string };
 type PuckNode = { type?: string; props?: Record<string, unknown> };
+
+/** Một người trên trang danh sách đội ngũ (khối `DepartmentStaffAuto`). */
+type DeptPerson = {
+  slug: string;
+  photo: string;
+  name: Localized;
+  eyebrow: Localized;
+  role: Localized;
+  email: string;
+  visiting: boolean;
+};
+type DeptStaffRes = { department: string; people: DeptPerson[] };
 
 const STAFF_TYPES = ['StaffProfileEditorial', 'StaffProfile'];
 
@@ -205,6 +218,318 @@ export class StaffPageService {
       legacyHtml: asText(p.html),
       legacyHtmlEn: asEn(p.html),
     };
+  }
+
+  /**
+   * Đội ngũ MỘT bộ môn cho trang danh sách công khai (khối `DepartmentStaffAuto`).
+   *
+   * NGUỒN DUY NHẤT là các TRANG CÁ NHÂN dưới `{deptSlug}/nhan-su/…`: ảnh · tên ·
+   * học vị luôn khớp trang cá nhân (hết cảnh ảnh denormalized như lưới ProfileCard
+   * tay), người THỈNH GIẢNG (không phải tài khoản) vẫn hiện vì họ CÓ trang, còn tài
+   * khoản rác/trùng tự rụng vì không có trang. Đổi ảnh/tên ở phys-profile là danh
+   * sách tự cập nhật — không còn phải sửa hai nơi.
+   *
+   * Chức vụ + THỨ TỰ lấy từ `LISTING_ROSTER` (hạt giống curated, khớp theo slug rồi
+   * email). Ai có trang nhưng chưa có trong roster thì xếp cuối, chức vụ "Giảng viên".
+   */
+  async departmentStaff(deptSlug: string) {
+    const clean = String(deptSlug || '').replace(/^\/+|\/+$/g, '');
+    if (!clean) return { department: '', people: [] as DeptPerson[] };
+    const cacheKey = `dept-staff:${clean}`;
+    const cached = await this.cache.get<DeptStaffRes>(cacheKey);
+    if (cached) return cached;
+
+    const prefix = `${clean}/nhan-su/`;
+    const pages = await this.prisma.pageLayout.findMany({
+      where: { slug: { startsWith: prefix }, isPublished: true, deletedAt: null },
+      select: { slug: true, puckData: true, publishedPuckData: true },
+    });
+
+    type Raw = DeptPerson & { order: number };
+    const rawPeople: Raw[] = [];
+    for (const pg of pages) {
+      const data = pg.publishedPuckData ?? pg.puckData;
+      const nodes = this.findStaffNodes(data);
+      // ĐÚNG một khối hồ sơ — trang mập mờ thì bỏ để khỏi lấy nhầm người.
+      if (nodes.length !== 1) continue;
+      const p = nodes[0].props ?? {};
+      const rawLines = (p.nameLines ?? []) as Array<Record<string, unknown>>;
+      const joinLines = (pick: (v: unknown) => string) =>
+        rawLines
+          .map((l) => pick(l.text))
+          .filter((s) => s.trim())
+          .join(' ');
+      const nameVi = joinLines(asText) || asText(p.name);
+      const nameEn = joinLines(asEn) || asEn(p.name);
+      if (!nameVi && !nameEn) continue; // trang chưa có tên → bỏ
+      rawPeople.push({
+        slug: pg.slug,
+        photo: asPlain(p.photo),
+        name: { vi: nameVi, en: nameEn },
+        eyebrow: { vi: asText(p.eyebrow), en: asEn(p.eyebrow) },
+        role: { vi: '', en: '' },
+        email: asPlain(p.email),
+        visiting: false,
+        order: 0,
+      });
+    }
+
+    // showOnWeb + email tài khoản (ghép theo staffPageSlug).
+    const slugs = rawPeople.map((r) => r.slug);
+    const profiles = slugs.length
+      ? await this.prisma.scholarProfile.findMany({
+          where: { staffPageSlug: { in: slugs } },
+          select: {
+            staffPageSlug: true,
+            showOnWeb: true,
+            user: { select: { email: true } },
+          },
+        })
+      : [];
+    const profBySlug = new Map(profiles.map((pr) => [pr.staffPageSlug as string, pr]));
+
+    // Roster: chức vụ + thứ tự curated. Tra theo slug trước, email sau.
+    const roster = LISTING_ROSTER[clean] ?? [];
+    const orderBySlug = new Map<string, number>();
+    const orderByEmail = new Map<string, number>();
+    const roleBySlug = new Map<string, Localized>();
+    const roleByEmail = new Map<string, Localized>();
+    roster.forEach((e, i) => {
+      const role = { vi: e.roleVi, en: e.roleEn };
+      if (e.slug && e.slug !== '#') {
+        orderBySlug.set(e.slug, i);
+        roleBySlug.set(e.slug, role);
+      }
+      if (e.email && !orderByEmail.has(e.email)) {
+        orderByEmail.set(e.email, i);
+        roleByEmail.set(e.email, role);
+      }
+    });
+
+    const isVisiting = (vi: string) => /th[ỉi]nh gi[ảa]ng/i.test(vi);
+    const people: Raw[] = [];
+    for (const r of rawPeople) {
+      const prof = profBySlug.get(r.slug);
+      if (prof && prof.showOnWeb === false) continue; // tôn trọng ẩn hồ sơ
+      const acctEmail = prof?.user?.email ?? '';
+      const email = r.email || acctEmail;
+      const role: Localized =
+        roleBySlug.get(r.slug) ??
+        (acctEmail ? roleByEmail.get(acctEmail) : undefined) ??
+        (r.email ? roleByEmail.get(r.email) : undefined) ??
+        { vi: 'Giảng viên', en: 'Lecturer' };
+      const order =
+        orderBySlug.get(r.slug) ??
+        (acctEmail ? orderByEmail.get(acctEmail) : undefined) ??
+        (r.email ? orderByEmail.get(r.email) : undefined) ??
+        1000;
+      people.push({ ...r, email, role, visiting: isVisiting(role.vi ?? ''), order });
+    }
+
+    // Thứ tự roster; ngoài roster xếp cuối theo tên. Thỉnh giảng roster đã đặt cuối.
+    people.sort((a, b) =>
+      a.order !== b.order
+        ? a.order - b.order
+        : (a.name.vi ?? '').localeCompare(b.name.vi ?? '', 'vi'),
+    );
+
+    const result: DeptStaffRes = {
+      department: clean,
+      people: people.map((p) => ({
+        slug: p.slug,
+        photo: p.photo,
+        name: p.name,
+        eyebrow: p.eyebrow,
+        role: p.role,
+        email: p.email,
+        visiting: p.visiting,
+      })),
+    };
+    // Cache ngắn; nguồn đổi (sửa trang cá nhân) đã gọi afterWrite → cache.clear().
+    await this.cache.set(cacheKey, result, 300_000);
+    return result;
+  }
+
+  /** Cây con có chứa khối kiểu `type` không (đệ quy qua mọi mảng/props). */
+  private subtreeHasType(node: unknown, type: string): boolean {
+    let found = false;
+    const walk = (n: unknown) => {
+      if (found) return;
+      if (Array.isArray(n)) return n.forEach(walk);
+      if (!n || typeof n !== 'object') return;
+      if ((n as PuckNode).type === type) {
+        found = true;
+        return;
+      }
+      for (const v of Object.values(n as Record<string, unknown>)) {
+        if (v && typeof v === 'object') walk(v);
+      }
+    };
+    walk(node);
+    return found;
+  }
+
+  /** Node Puck cho khối "Đội ngũ bộ môn (auto)" của MỘT bộ môn. */
+  private makeDeptStaffNode(deptSlug: string): PuckNode {
+    return {
+      type: 'DepartmentStaffAuto',
+      props: {
+        id: `dept-staff-${deptSlug.replace(/[^a-z0-9-]/gi, '-')}`,
+        title: { vi: '', en: '' },
+        accentColor: '#1e40af',
+        visitingLabel: { vi: 'Cán bộ thỉnh giảng', en: 'Visiting Lecturers' },
+        separateVisiting: true,
+        // Ghi rõ bộ môn (không phụ thuộc dò URL) — bền hơn khi render.
+        departmentSlug: deptSlug,
+      },
+    };
+  }
+
+  /**
+   * Thay lưới ProfileCard dựng tay (cả cây con chứa nó) bằng MỘT khối
+   * `DepartmentStaffAuto`, giữ nguyên Navbar/Header · PageHero · Heading · Footer.
+   * Đồng thời chữa phụ đề PageHero cũ/lỗi (không mở đầu bằng "Đội ngũ") về
+   * "Đội ngũ Bộ môn {tên}". Idempotent.
+   */
+  private transformListingContent(
+    data: unknown,
+    deptSlug: string,
+    deptName: string,
+  ): { tree: unknown; changed: boolean } {
+    if (!data || typeof data !== 'object') return { tree: data, changed: false };
+    const obj = data as Record<string, unknown>;
+    const content = obj.content;
+    if (!Array.isArray(content)) return { tree: data, changed: false };
+
+    let changed = false;
+    let hasAuto = false;
+    const out: unknown[] = [];
+    for (const item of content) {
+      const node = item as PuckNode;
+      if (node?.type === 'PageHero' && node.props) {
+        const sub = node.props.subtitle as
+          | { vi?: string; en?: string }
+          | string
+          | undefined;
+        const subVi = typeof sub === 'string' ? sub : (sub?.vi ?? '');
+        if (!/^\s*Đội ngũ/i.test(subVi)) {
+          const subEn = typeof sub === 'object' && sub ? (sub.en ?? '') : '';
+          out.push({
+            ...node,
+            props: {
+              ...node.props,
+              subtitle: {
+                vi: `Đội ngũ Bộ môn ${deptName}`,
+                en: subEn || 'Department Staff',
+              },
+            },
+          });
+          changed = true;
+          continue;
+        }
+        out.push(item);
+        continue;
+      }
+      if (node?.type === 'DepartmentStaffAuto') {
+        hasAuto = true;
+        out.push(item);
+        continue;
+      }
+      // Cây con có lưới ProfileCard → bỏ (khối auto thay thế).
+      if (this.subtreeHasType(node, 'ProfileCard')) {
+        changed = true;
+        continue;
+      }
+      out.push(item);
+    }
+
+    if (!hasAuto) {
+      const auto = this.makeDeptStaffNode(deptSlug);
+      const footerIdx = out.findIndex((n) =>
+        ['Footer', 'FooterBlock'].includes((n as PuckNode)?.type ?? ''),
+      );
+      if (footerIdx >= 0) out.splice(footerIdx, 0, auto);
+      else out.push(auto);
+      changed = true;
+    }
+    return { tree: { ...obj, content: out }, changed };
+  }
+
+  /**
+   * Lắp khối "Đội ngũ bộ môn (auto)" vào trang danh sách `{bộ-môn}/nhan-su` — thay
+   * lưới ProfileCard dựng tay, GIỮ Navbar/Header · PageHero · Heading · Footer của
+   * chính bộ môn đó (nên header/nav mỗi bộ môn không bị đổi). Chỉ quản trị. Ghi cả
+   * puckData lẫn publishedPuckData rồi revalidate. Idempotent.
+   */
+  async applyListingBlock(opts: {
+    department?: string;
+    all?: boolean;
+    dryRun?: boolean;
+  }) {
+    const dryRun = !!opts.dryRun;
+    let deptSlugs: string[];
+    if (opts.all) {
+      const depts = await this.prisma.department.findMany({
+        where: { kind: 'department' },
+        select: { slug: true },
+      });
+      deptSlugs = depts.map((d) => d.slug);
+    } else if (opts.department) {
+      deptSlugs = [opts.department.replace(/^\/+|\/+$/g, '')];
+    } else {
+      deptSlugs = [];
+    }
+
+    const pages: { slug: string; action: string }[] = [];
+    const revalidate: string[] = [];
+    for (const dept of deptSlugs) {
+      const listingSlug = `${dept}/nhan-su`;
+      const layout = await this.prisma.pageLayout.findFirst({
+        where: { slug: listingSlug, deletedAt: null },
+        orderBy: [{ isPublished: 'desc' }, { updatedAt: 'desc' }],
+        select: {
+          id: true,
+          puckData: true,
+          publishedPuckData: true,
+          isPublished: true,
+        },
+      });
+      if (!layout) {
+        pages.push({ slug: listingSlug, action: 'khong-co-trang' });
+        continue;
+      }
+      const deptRow = await this.prisma.department.findUnique({
+        where: { slug: dept },
+        select: { name: true },
+      });
+      const name = deptRow?.name ?? '';
+      const d = this.transformListingContent(layout.puckData, dept, name);
+      const pub = layout.isPublished
+        ? this.transformListingContent(layout.publishedPuckData, dept, name)
+        : { tree: layout.publishedPuckData, changed: false };
+      if (!d.changed && !pub.changed) {
+        pages.push({ slug: listingSlug, action: 'khong-doi' });
+        continue;
+      }
+      if (!dryRun) {
+        await this.prisma.pageLayout.update({
+          where: { id: layout.id },
+          data: {
+            ...(d.changed ? { puckData: d.tree as Prisma.InputJsonValue } : {}),
+            ...(pub.changed
+              ? { publishedPuckData: pub.tree as Prisma.InputJsonValue }
+              : {}),
+          },
+        });
+        revalidate.push(`page:${listingSlug}`);
+      }
+      pages.push({ slug: listingSlug, action: dryRun ? 'se-doi' : 'da-doi' });
+    }
+    if (!dryRun && revalidate.length) {
+      await this.cache.clear();
+      this.publicRevalidate.trigger([...revalidate, 'sitemap']);
+    }
+    return { dryRun, pages };
   }
 
   async update(userId: string, body: UpdateStaffPageBodyType) {

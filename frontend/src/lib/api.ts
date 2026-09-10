@@ -858,6 +858,28 @@ export type PostListPage = {
   totalPages: number;
 };
 
+// ── Đội ngũ bộ môn (khối DepartmentStaffAuto trên trang danh sách nhân sự) ──
+export type DeptStaffLoc = { vi: string; en: string };
+export type DeptStaffPerson = {
+  /** Slug trang cá nhân — link hồ sơ. */
+  slug: string;
+  photo: string;
+  name: DeptStaffLoc;
+  eyebrow: DeptStaffLoc;
+  role: DeptStaffLoc;
+  email: string;
+  visiting: boolean;
+};
+export type DeptStaffRes = { department: string; people: DeptStaffPerson[] };
+
+export const departmentStaffApi = {
+  /** Đội ngũ một bộ môn theo slug (vd "vat-ly-tin-hoc"). Công khai, không auth. */
+  get: (slug: string) =>
+    apiFetch<DeptStaffRes>(
+      `/scholar/public/department-staff/${encodeURIComponent(slug)}`,
+    ),
+};
+
 export const postApi = {
   list: () => authFetch<PostRecord[]>(`/posts`),
   listPaged: (params: {

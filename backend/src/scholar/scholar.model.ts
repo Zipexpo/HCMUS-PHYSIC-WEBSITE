@@ -937,6 +937,31 @@ export const StaffPageResSchema = z.object({
   legacyHtmlEn: z.string(),
 });
 
+/** Ô song ngữ đơn giản cho khối danh sách đội ngũ. */
+const DeptLocalizedSchema = z.object({ vi: z.string(), en: z.string() });
+
+/** Một người trên trang danh sách đội ngũ bộ môn (khối `DepartmentStaffAuto`). */
+export const DepartmentStaffPersonSchema = z.object({
+  /** Slug trang cá nhân — link tới hồ sơ, và khoá ghép ảnh/chức vụ. */
+  slug: z.string(),
+  photo: z.string(),
+  name: DeptLocalizedSchema,
+  /** Học vị (đệm trên tên), song ngữ. */
+  eyebrow: DeptLocalizedSchema,
+  /** Chức vụ hiển thị (Trưởng bộ môn / Giảng viên / Thỉnh giảng…), song ngữ. */
+  role: DeptLocalizedSchema,
+  email: z.string(),
+  /** true = cán bộ thỉnh giảng — trang nhóm riêng ở cuối. */
+  visiting: z.boolean(),
+});
+
+/** Đội ngũ MỘT bộ môn cho khối `DepartmentStaffAuto` (công khai, không auth). */
+export const DepartmentStaffResSchema = z.object({
+  department: z.string(),
+  people: z.array(DepartmentStaffPersonSchema),
+});
+export type DepartmentStaffResType = z.infer<typeof DepartmentStaffResSchema>;
+
 /** Sinh lại danh sách trên trang từ CSDL. Ghi đè hẳn danh sách cũ. */
 export const SyncStaffPageBodySchema = z.object({
   /** Chỉ lấy từ năm này trở đi. Bỏ trống = lấy tất cả. */
