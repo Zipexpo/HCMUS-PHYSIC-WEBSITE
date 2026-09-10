@@ -450,6 +450,26 @@ export class ScholarController {
   }
 
   /**
+   * Tạo trang nhân sự editorial cho người CÓ bộ môn + hồ sơ nhưng CHƯA có trang —
+   * chỉ quản trị. `dryRun` xem trước slug sẽ tạo (không ghi); `limit`/`emails` để
+   * làm mẫu hoặc chọn người. Giảng viên điền nội dung sau qua phys-profile.
+   */
+  @Post('staff-pages/create-missing')
+  @Roles(RoleName.Admin, RoleName.SuperAdmin)
+  createMissingStaffPages(
+    @ActiveUser('userId') userId: string,
+    @Body('dryRun') dryRun?: boolean,
+    @Body('limit') limit?: number,
+    @Body('emails') emails?: string[],
+  ) {
+    return this.staffPage.createMissingStaffPages(userId, {
+      dryRun,
+      limit,
+      emails,
+    });
+  }
+
+  /**
    * NẠP LẦN ĐẦU hồ sơ nhân sự từ ACADsoom (Mục 10.7) — chỉ quản trị, chạy MỘT
    * lượt trước khi đổi web Khoa thành gốc. Cần ACADSOOM_BASE_URL + WEBKHOA_PULL_SECRET.
    */
