@@ -461,11 +461,13 @@ export class ScholarController {
     @Body('dryRun') dryRun?: boolean,
     @Body('limit') limit?: number,
     @Body('emails') emails?: string[],
+    @Body('excludeEmails') excludeEmails?: string[],
   ) {
     return this.staffPage.createMissingStaffPages(userId, {
       dryRun,
       limit,
       emails,
+      excludeEmails,
     });
   }
 

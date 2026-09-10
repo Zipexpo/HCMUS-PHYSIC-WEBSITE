@@ -1090,7 +1090,12 @@ export class StaffPageService {
    */
   async createMissingStaffPages(
     createdBy: string,
-    opts: { dryRun?: boolean; limit?: number; emails?: string[] } = {},
+    opts: {
+      dryRun?: boolean;
+      limit?: number;
+      emails?: string[];
+      excludeEmails?: string[];
+    } = {},
   ) {
     const DEG: Record<string, { prefix: string; abbr: string }> = {
       CN: { prefix: 'CN.', abbr: 'cn' },
@@ -1102,13 +1107,25 @@ export class StaffPageService {
     const emails = opts.emails
       ?.map((e) => e.trim().toLowerCase())
       .filter(Boolean);
+    const exclude = opts.excludeEmails
+      ?.map((e) => e.trim().toLowerCase())
+      .filter(Boolean);
+    const emailFilter =
+      emails?.length || exclude?.length
+        ? {
+            email: {
+              ...(emails?.length ? { in: emails } : {}),
+              ...(exclude?.length ? { notIn: exclude } : {}),
+            },
+          }
+        : {};
     const profiles = await this.prisma.scholarProfile.findMany({
       where: {
         staffPageSlug: null,
         user: {
           isActive: true,
           departmentId: { not: null },
-          ...(emails?.length ? { email: { in: emails } } : {}),
+          ...emailFilter,
         },
       },
       select: {
@@ -1152,16 +1169,17 @@ export class StaffPageService {
       const slugBase = `${u.department.slug}/nhan-su/${
         hv ? hv.abbr + '-' : ''
       }${toSlug(fullName)}`;
-      let slug = slugBase;
-      let k = 1;
-      while (
-        await this.prisma.pageLayout.findFirst({
-          where: { slug, deletedAt: null },
-          select: { id: true },
-        })
-      ) {
-        slug = `${slugBase}-${++k}`;
+      // Slug đã có trang khác → BỎ QUA (không tạo trùng, tuyệt đối không đụng
+      // trang cũ nên không thể xoá ảnh/nội dung ai). Nổi lên report để soi.
+      const trung = await this.prisma.pageLayout.findFirst({
+        where: { slug: slugBase, deletedAt: null },
+        select: { id: true },
+      });
+      if (trung) {
+        boQua.push({ email, lyDo: `slug đã có trang: ${slugBase}` });
+        continue;
       }
+      const slug = slugBase;
       const nameVi = hv ? `${hv.prefix} ${fullName}` : fullName;
       n++;
       if (opts.dryRun) {
