@@ -1,7 +1,7 @@
 "use client";
 
 import type { ComponentConfig } from "@puckeditor/core";
-import { Image as ImageIcon, Mail, User } from "lucide-react";
+import { Image as ImageIcon, Mail, Search, User } from "lucide-react";
 import { usePathname } from "next/navigation";
 import { useEffect, useRef, useState } from "react";
 import { DynamicIcon } from "@/components/admin/icons";
@@ -956,26 +956,6 @@ function ProfileCardRender({
 // không còn phải sửa hai nơi. Bộ môn suy TỰ ĐỘNG từ đường dẫn trang
 // (`/{locale}/{bộ-môn}/nhan-su`); ô "Bộ môn" chỉ để ghi đè khi xem thử.
 
-// Tách học vị khỏi tên để hiện dạng đệm (eyebrow) đồng nhất mọi thẻ, kể cả trang
-// cũ còn dính "TS. …" vào tên. Cùng bảng với staff-editorial.
-const DEPT_HOCVI_RE = /^(gs\s*\.?\s*ts|pgs\s*\.?\s*ts|gs|pgs|ts|ths|cn)\s*\.?\s+/i;
-const DEPT_HOCVI_SHORT: Record<string, string> = {
-  gsts: "GS.TS.",
-  pgsts: "PGS.TS.",
-  gs: "GS.",
-  pgs: "PGS.",
-  ts: "TS.",
-  ths: "ThS.",
-  cn: "CN.",
-};
-function splitHocVi(full: string): { deg: string; name: string } {
-  const s = (full || "").replace(/\s+/g, " ").trim();
-  const m = s.match(DEPT_HOCVI_RE);
-  if (!m) return { deg: "", name: s };
-  const key = m[1].toLowerCase().replace(/[.\s]/g, "");
-  return { deg: DEPT_HOCVI_SHORT[key] ?? "", name: s.slice(m[0].length).trim() };
-}
-
 function deriveDeptSlug(pathname: string, override?: string): string {
   if (override?.trim()) return override.trim();
   const segs = (pathname || "").split("/").filter(Boolean);
@@ -984,6 +964,55 @@ function deriveDeptSlug(pathname: string, override?: string): string {
   return idx > 0 ? rel.slice(0, idx).join("/") : "";
 }
 
+// Bỏ dấu tiếng Việt để tìm kiếm không phân biệt dấu.
+const deaccent = (s: string) =>
+  (s || "")
+    .normalize("NFD")
+    .replace(/\p{Diacritic}/gu, "")
+    .replace(/đ/g, "d")
+    .replace(/Đ/g, "D")
+    .toLowerCase();
+
+const profileLabel = (locale: string) =>
+  locale === "en" ? "View profile" : "Xem hồ sơ";
+
+function StaffPhoto({
+  photo,
+  alt,
+  className,
+  iconClass = "w-12 h-12",
+}: {
+  photo: string;
+  alt: string;
+  className?: string;
+  iconClass?: string;
+}) {
+  const [failed, setFailed] = useState(false);
+  const show = !!photo && !failed;
+  return show ? (
+    <img
+      ref={(el) => {
+        if (el?.complete && el.naturalWidth === 0) setFailed(true);
+      }}
+      src={resolveMediaSrc(photo)}
+      alt={alt}
+      className={className}
+      loading="lazy"
+      decoding="async"
+      onError={() => setFailed(true)}
+    />
+  ) : (
+    <div
+      className={`${className ?? ""} flex items-center justify-center bg-slate-100 dark:bg-[#1a2436]`}
+    >
+      <User className={`${iconClass} text-slate-300 dark:text-slate-600`} />
+    </div>
+  );
+}
+
+// Thẻ giảng viên chính — lưới 3 cột. Ảnh + học vị + tên + chức vụ + email; hover
+// hiện nút "Xem hồ sơ →". Cả khối là `group`; link hồ sơ và mailto là hai thẻ <a>
+// RIÊNG (không lồng nhau) cho HTML hợp lệ.
 function StaffGridCard({
   person,
   locale,
@@ -993,56 +1022,166 @@ function StaffGridCard({
   locale: string;
   isEditing: boolean;
 }) {
-  const [failed, setFailed] = useState(false);
-  const rawName = t(person.name, locale);
-  const eb = t(person.eyebrow, locale).trim();
-  const split = splitHocVi(rawName);
-  // Ưu tiên học vị TÁCH TỪ TÊN (đáng tin hơn): eyebrow trên trang cá nhân lẫn lộn
-  // — có người để "Giảng viên", có người "Thạc sĩ", có người trống. Chỉ dùng
-  // eyebrow khi tên KHÔNG kèm học vị (vd tên đã tách sẵn, học vị nằm ở eyebrow).
-  const deg = split.deg || eb;
-  const name = split.name || rawName;
+  const name = t(person.name, locale);
+  const deg = t(person.eyebrow, locale).trim();
   const role = t(person.role, locale);
-  const href = `/${locale}/${person.slug}`;
-  const showImg = !!person.photo && !failed;
+  const href = isEditing ? "#" : `/${locale}/${person.slug}`;
   return (
-    <a
-      href={isEditing ? "#" : href}
-      tabIndex={isEditing ? -1 : undefined}
-      className="group block focus:outline-none"
-    >
-      <div className="relative overflow-hidden rounded-2xl bg-slate-100 dark:bg-[#1a2436] ring-1 ring-slate-200/80 dark:ring-slate-700/60 shadow-sm transition-all duration-300 group-hover:-translate-y-1 group-hover:shadow-xl group-hover:ring-blue-300 dark:group-hover:ring-blue-500/50 group-focus-visible:ring-2 group-focus-visible:ring-blue-500">
-        {showImg ? (
-          <img
-            ref={(el) => {
-              if (el?.complete && el.naturalWidth === 0) setFailed(true);
-            }}
-            src={resolveMediaSrc(person.photo)}
+    <div className="group flex flex-col">
+      <a
+        href={href}
+        tabIndex={isEditing ? -1 : undefined}
+        className="block focus:outline-none"
+      >
+        <div className="relative overflow-hidden rounded-2xl ring-1 ring-slate-200/80 dark:ring-slate-700/60 shadow-sm transition-all duration-300 group-hover:-translate-y-1 group-hover:shadow-xl group-hover:ring-blue-300 dark:group-hover:ring-blue-500/50 group-focus-visible:ring-2 group-focus-visible:ring-blue-500">
+          <StaffPhoto
+            photo={person.photo}
             alt={name}
             className="w-full aspect-[3/4] object-cover transition-transform duration-500 group-hover:scale-[1.04]"
-            loading="lazy"
-            decoding="async"
-            onError={() => setFailed(true)}
+            iconClass="w-14 h-14"
           />
-        ) : (
-          <div className="w-full aspect-[3/4] flex items-center justify-center">
-            <User className="w-14 h-14 text-slate-300 dark:text-slate-600" />
+          <div className="pointer-events-none absolute inset-0 flex items-end justify-center bg-gradient-to-t from-black/60 via-black/5 to-transparent opacity-0 group-hover:opacity-100 transition-opacity duration-300">
+            <span className="mb-4 inline-flex items-center gap-1 rounded-full bg-white/95 px-3.5 py-1.5 text-[12px] font-semibold text-blue-700 shadow-md">
+              {profileLabel(locale)} <span aria-hidden>→</span>
+            </span>
           </div>
-        )}
-        {/* Dải chuyển màu nhẹ dưới đáy ảnh cho chiều sâu, không che mặt. */}
-        <div className="pointer-events-none absolute inset-x-0 bottom-0 h-16 bg-gradient-to-t from-black/20 to-transparent opacity-0 group-hover:opacity-100 transition-opacity" />
-      </div>
-      <div className="mt-3 text-center px-1">
+        </div>
+        <div className="mt-3 text-center px-1">
+          {deg && (
+            <p className="text-[11.5px] font-semibold tracking-wide text-blue-600/90 dark:text-blue-400">
+              {deg}
+            </p>
+          )}
+          <h3 className="text-[15px] font-bold leading-snug text-slate-800 dark:text-slate-100 group-hover:text-blue-700 dark:group-hover:text-blue-300 transition-colors">
+            {name}
+          </h3>
+          {role && (
+            <p className="text-[12.5px] text-slate-500 dark:text-slate-400 mt-0.5">
+              {role}
+            </p>
+          )}
+        </div>
+      </a>
+      {person.email && (
+        <a
+          href={isEditing ? "#" : `mailto:${person.email}`}
+          tabIndex={isEditing ? -1 : undefined}
+          className="mt-1 inline-flex items-center justify-center gap-1 text-[11px] text-slate-400 dark:text-slate-500 hover:text-blue-600 hover:underline break-all px-1"
+        >
+          <Mail className="w-3 h-3 shrink-0" />
+          {person.email}
+        </a>
+      )}
+    </div>
+  );
+}
+
+// Thẻ Ban chủ nhiệm — nằm ngang, nổi bật hơn (ảnh trái, thông tin phải).
+function LeaderCard({
+  person,
+  locale,
+  isEditing,
+  accent,
+}: {
+  person: DeptStaffPerson;
+  locale: string;
+  isEditing: boolean;
+  accent: string;
+}) {
+  const name = t(person.name, locale);
+  const deg = t(person.eyebrow, locale).trim();
+  const role = t(person.role, locale);
+  const href = isEditing ? "#" : `/${locale}/${person.slug}`;
+  return (
+    <div className="group flex gap-4 sm:gap-5 rounded-2xl border border-slate-200/80 dark:border-slate-700/60 bg-white dark:bg-[#141d2e] p-4 shadow-sm transition-all duration-300 hover:shadow-lg hover:border-blue-300 dark:hover:border-blue-500/50">
+      <a href={href} tabIndex={isEditing ? -1 : undefined} className="shrink-0">
+        <StaffPhoto
+          photo={person.photo}
+          alt={name}
+          className="w-24 h-32 sm:w-28 sm:h-36 object-cover rounded-xl"
+          iconClass="w-10 h-10"
+        />
+      </a>
+      <div className="flex min-w-0 flex-col justify-center">
         {deg && (
-          <p className="text-[11px] font-semibold uppercase tracking-wider text-blue-600/90 dark:text-blue-400">
+          <p className="text-[12px] font-semibold tracking-wide text-blue-600/90 dark:text-blue-400">
             {deg}
           </p>
         )}
-        <h3 className="text-[15px] font-bold leading-snug text-slate-800 dark:text-slate-100 group-hover:text-blue-700 dark:group-hover:text-blue-300 transition-colors">
+        <a
+          href={href}
+          tabIndex={isEditing ? -1 : undefined}
+          className="focus:outline-none"
+        >
+          <h3 className="text-lg sm:text-xl font-bold leading-snug text-slate-800 dark:text-slate-100 group-hover:text-blue-700 dark:group-hover:text-blue-300 transition-colors">
+            {name}
+          </h3>
+        </a>
+        <p
+          className="mt-0.5 text-sm font-semibold"
+          style={{ color: accent }}
+        >
+          {role}
+        </p>
+        {person.email && (
+          <a
+            href={isEditing ? "#" : `mailto:${person.email}`}
+            tabIndex={isEditing ? -1 : undefined}
+            className="mt-2 inline-flex items-center gap-1.5 text-[12.5px] text-slate-500 dark:text-slate-400 hover:text-blue-600 hover:underline break-all"
+          >
+            <Mail className="w-3.5 h-3.5 shrink-0" />
+            {person.email}
+          </a>
+        )}
+        <a
+          href={href}
+          tabIndex={isEditing ? -1 : undefined}
+          className="mt-2 inline-flex items-center gap-1 text-[12.5px] font-semibold text-blue-700 dark:text-blue-300 hover:gap-2 transition-all"
+        >
+          {profileLabel(locale)} <span aria-hidden>→</span>
+        </a>
+      </div>
+    </div>
+  );
+}
+
+// Thẻ thỉnh giảng — gọn, nằm ngang, ảnh nhỏ. Không chiếm chỗ bằng giảng viên chính.
+function VisitingCard({
+  person,
+  locale,
+  isEditing,
+}: {
+  person: DeptStaffPerson;
+  locale: string;
+  isEditing: boolean;
+}) {
+  const name = t(person.name, locale);
+  const deg = t(person.eyebrow, locale).trim();
+  const role = t(person.role, locale);
+  const href = isEditing ? "#" : `/${locale}/${person.slug}`;
+  return (
+    <a
+      href={href}
+      tabIndex={isEditing ? -1 : undefined}
+      className="group flex items-center gap-3 rounded-xl border border-slate-200/70 dark:border-slate-700/50 bg-white dark:bg-[#141d2e] p-2.5 pr-4 transition-all duration-300 hover:shadow-md hover:border-blue-300 dark:hover:border-blue-500/50 focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-500"
+    >
+      <StaffPhoto
+        photo={person.photo}
+        alt={name}
+        className="w-14 h-14 shrink-0 object-cover object-top rounded-lg"
+        iconClass="w-7 h-7"
+      />
+      <div className="min-w-0">
+        <p className="text-[13.5px] font-bold leading-snug text-slate-800 dark:text-slate-100 group-hover:text-blue-700 dark:group-hover:text-blue-300 transition-colors">
+          {deg && (
+            <span className="font-semibold text-blue-600/90 dark:text-blue-400">
+              {deg}{" "}
+            </span>
+          )}
           {name}
-        </h3>
+        </p>
         {role && (
-          <p className="text-[12.5px] text-slate-500 dark:text-slate-400 mt-0.5">
+          <p className="text-[12px] text-slate-500 dark:text-slate-400">
             {role}
           </p>
         )}
@@ -1055,7 +1194,8 @@ function DepartmentStaffAutoRender({
   title,
   accentColor,
   visitingLabel,
-  separateVisiting,
+  showHero,
+  heroEyebrow,
   departmentSlug,
   isEditing,
 }: {
@@ -1063,16 +1203,22 @@ function DepartmentStaffAutoRender({
   accentColor: string;
   visitingLabel: LocalizedString;
   separateVisiting: boolean;
+  showHero: boolean;
+  heroEyebrow: LocalizedString;
   departmentSlug: string;
   isEditing: boolean;
 }) {
   const { locale } = useLocale();
+  const en = locale === "en";
   const pathname = usePathname() ?? "";
   const slug = deriveDeptSlug(pathname, departmentSlug);
   const [people, setPeople] = useState<DeptStaffPerson[]>([]);
+  const [deptName, setDeptName] = useState("");
   const [status, setStatus] = useState<"loading" | "ready" | "error">(
     "loading",
   );
+  const [tab, setTab] = useState("all");
+  const [query, setQuery] = useState("");
 
   useEffect(() => {
     if (!slug) {
@@ -1087,6 +1233,7 @@ function DepartmentStaffAutoRender({
       .then((res) => {
         if (!alive) return;
         setPeople(res.people ?? []);
+        setDeptName(res.departmentName ?? "");
         setStatus("ready");
       })
       .catch(() => {
@@ -1097,36 +1244,133 @@ function DepartmentStaffAutoRender({
     };
   }, [slug]);
 
+  const accent = accentColor || "#1e40af";
   const titleText = t(title, locale);
-  const main = separateVisiting ? people.filter((p) => !p.visiting) : people;
-  const visiting = separateVisiting ? people.filter((p) => p.visiting) : [];
+  // Tiêu đề hero: ưu tiên ô `title` (song ngữ, apply-listing chép từ Heading cũ);
+  // trống thì dựng từ tên bộ môn (backend trả về).
+  const heroTitle =
+    titleText ||
+    (deptName ? (en ? `${deptName} Department` : `Đội ngũ Bộ môn ${deptName}`) : "");
+  const heroEyebrowText = t(heroEyebrow, locale) || (en ? "Staff" : "Nhân sự");
 
-  const grid = (list: DeptStaffPerson[]) => (
-    <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-x-5 gap-y-8 md:gap-x-7 md:gap-y-10">
-      {list.map((p) => (
-        <StaffGridCard
-          key={p.slug}
-          person={p}
-          locale={locale}
-          isEditing={isEditing}
-        />
-      ))}
+  const cat = (c: string) => people.filter((p) => p.category === c);
+  const leaders = cat("lanh-dao");
+  const lecturers = cat("giang-vien");
+  const admins = cat("giao-vu");
+  const visiting = cat("thinh-giang");
+  const mainStaff = people.filter(
+    (p) => p.category === "giang-vien" || p.category === "giao-vu",
+  );
+
+  const matchQ = (p: DeptStaffPerson) => {
+    const q = deaccent(query.trim());
+    if (!q) return true;
+    return (
+      deaccent(t(p.name, locale)).includes(q) ||
+      deaccent(t(p.role, locale)).includes(q)
+    );
+  };
+  const f = (list: DeptStaffPerson[]) => list.filter(matchQ);
+
+  const TABS = [
+    { k: "all", label: en ? "All" : "Tất cả", n: people.length },
+    { k: "lanh-dao", label: en ? "Leadership" : "Ban chủ nhiệm", n: leaders.length },
+    { k: "giang-vien", label: en ? "Lecturers" : "Giảng viên", n: lecturers.length },
+    { k: "giao-vu", label: en ? "Academic Admin" : "Giáo vụ", n: admins.length },
+    { k: "thinh-giang", label: en ? "Visiting" : "Thỉnh giảng", n: visiting.length },
+  ].filter((c) => c.k === "all" || c.n > 0);
+
+  const statBits = [
+    { n: leaders.length, label: en ? "Leadership" : "Ban chủ nhiệm" },
+    { n: lecturers.length, label: en ? "Lecturers" : "Giảng viên" },
+    { n: admins.length, label: en ? "Academic Admin" : "Giáo vụ" },
+    { n: visiting.length, label: en ? "Visiting" : "Thỉnh giảng" },
+  ].filter((b) => b.n > 0);
+
+  const mainList =
+    tab === "all"
+      ? mainStaff
+      : tab === "giang-vien"
+        ? lecturers
+        : tab === "giao-vu"
+          ? admins
+          : [];
+  const vLeaders = tab === "all" || tab === "lanh-dao" ? f(leaders) : [];
+  const vMain = f(mainList);
+  const vVisiting = tab === "all" || tab === "thinh-giang" ? f(visiting) : [];
+  const totalVisible = vLeaders.length + vMain.length + vVisiting.length;
+
+  const divider = (label: string, count: number) => (
+    <div className="mb-6 flex items-center gap-3">
+      <h3 className="text-[15px] font-bold uppercase tracking-wide text-slate-700 dark:text-slate-200 whitespace-nowrap">
+        {label}
+      </h3>
+      <span
+        className="text-[11px] font-bold text-white rounded-full px-2 py-0.5 leading-none"
+        style={{ backgroundColor: accent }}
+      >
+        {count}
+      </span>
+      <span className="h-px flex-1 bg-slate-200 dark:bg-slate-700" />
     </div>
   );
 
   return (
     <section className="w-full max-w-6xl mx-auto px-6 py-8 md:py-12">
-      {titleText && (
-        <div className="mb-8 text-center">
+      {showHero && slug ? (
+        <div
+          className="relative overflow-hidden rounded-3xl mb-9 px-6 py-12 md:py-16 text-center text-white"
+          style={{
+            background: `linear-gradient(135deg, ${accent} 0%, #0c2340 55%, #071320 100%)`,
+          }}
+        >
+          {/* Hoạ tiết chấm mờ cho chiều sâu, không phá chữ. */}
+          <div
+            className="pointer-events-none absolute inset-0 opacity-[0.10]"
+            style={{
+              backgroundImage:
+                "radial-gradient(circle at 1px 1px, #fff 1px, transparent 0)",
+              backgroundSize: "22px 22px",
+            }}
+            aria-hidden="true"
+          />
+          <div className="relative mx-auto max-w-3xl">
+            {heroEyebrowText && (
+              <p className="text-[11px] md:text-xs font-semibold uppercase tracking-[0.25em] text-white/70">
+                {heroEyebrowText}
+              </p>
+            )}
+            <h1 className="mt-2 text-2xl md:text-4xl font-extrabold tracking-tight drop-shadow-[0_2px_8px_rgba(0,0,0,0.35)]">
+              {heroTitle}
+            </h1>
+            {people.length > 0 && (
+              <div className="mt-6 flex flex-wrap items-center justify-center gap-2 md:gap-2.5">
+                <span className="rounded-full bg-white/20 px-3.5 py-1.5 text-[13px] font-semibold backdrop-blur-sm">
+                  {people.length} {en ? "staff" : "nhân sự"}
+                </span>
+                {statBits.map((b) => (
+                  <span
+                    key={b.label}
+                    className="rounded-full bg-white/10 px-3 py-1.5 text-[12.5px] backdrop-blur-sm"
+                  >
+                    <span className="font-bold">{b.n}</span> {b.label}
+                  </span>
+                ))}
+              </div>
+            )}
+          </div>
+        </div>
+      ) : titleText ? (
+        <div className="mb-6 text-center">
           <h2 className="text-2xl md:text-3xl font-extrabold text-slate-800 dark:text-slate-100">
             {titleText}
           </h2>
           <span
             className="mt-3 block h-1 w-20 mx-auto rounded-full"
-            style={{ backgroundColor: accentColor || "#1e40af" }}
+            style={{ backgroundColor: accent }}
           />
         </div>
-      )}
+      ) : null}
 
       {!slug ? (
         <p className="text-center text-sm text-slate-500 dark:text-slate-400 py-10">
@@ -1135,8 +1379,8 @@ function DepartmentStaffAutoRender({
             : ""}
         </p>
       ) : status === "loading" ? (
-        <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-x-5 gap-y-8 md:gap-x-7 md:gap-y-10">
-          {Array.from({ length: 8 }).map((_, i) => (
+        <div className="grid grid-cols-2 gap-x-5 gap-y-8 sm:grid-cols-3 md:gap-x-7 md:gap-y-10">
+          {Array.from({ length: 6 }).map((_, i) => (
             <div key={i} className="animate-pulse">
               <div className="w-full aspect-[3/4] rounded-2xl bg-slate-200 dark:bg-slate-800" />
               <div className="mt-3 h-3 w-3/4 mx-auto rounded bg-slate-200 dark:bg-slate-800" />
@@ -1146,44 +1390,142 @@ function DepartmentStaffAutoRender({
         </div>
       ) : status === "error" ? (
         <p className="text-center text-sm text-slate-500 dark:text-slate-400 py-10">
-          {locale === "en"
+          {en
             ? "Unable to load the staff list."
             : "Không tải được danh sách nhân sự."}
         </p>
       ) : people.length === 0 ? (
         <p className="text-center text-sm text-slate-500 dark:text-slate-400 py-10">
-          {locale === "en" ? "No staff yet." : "Chưa có nhân sự."}
+          {en ? "No staff yet." : "Chưa có nhân sự."}
         </p>
       ) : (
         <>
-          {grid(main)}
-          {visiting.length > 0 && (
-            <div className="mt-12">
-              <div className="mb-7 flex items-center gap-4">
-                <span
-                  className="h-px flex-1"
-                  style={{
-                    background:
-                      "linear-gradient(to right, transparent, currentColor)",
-                    color: accentColor || "#1e40af",
-                    opacity: 0.35,
-                  }}
-                />
-                <h3 className="text-sm font-bold uppercase tracking-wider text-slate-600 dark:text-slate-300 whitespace-nowrap">
-                  {t(visitingLabel, locale)}
-                </h3>
-                <span
-                  className="h-px flex-1"
-                  style={{
-                    background:
-                      "linear-gradient(to left, transparent, currentColor)",
-                    color: accentColor || "#1e40af",
-                    opacity: 0.35,
-                  }}
-                />
-              </div>
-              {grid(visiting)}
+          {/* Số liệu ĐỘNG — khi có hero thì số liệu đã nằm trong hero, khỏi lặp. */}
+          {!showHero && (
+            <p className="text-center text-[13.5px] text-slate-500 dark:text-slate-400 mb-6">
+              <span className="font-bold text-slate-700 dark:text-slate-200">
+                {people.length}
+              </span>{" "}
+              {en ? "staff" : "nhân sự"}
+              {statBits.map((b) => (
+                <span key={b.label}>
+                  {" · "}
+                  <span className="font-semibold text-slate-600 dark:text-slate-300">
+                    {b.n}
+                  </span>{" "}
+                  {b.label}
+                </span>
+              ))}
+            </p>
+          )}
+
+          {/* Thanh lọc + ô tìm kiếm */}
+          <div className="mb-9 flex flex-col gap-3 sm:flex-row sm:items-center">
+            <div className="flex flex-wrap gap-2">
+              {TABS.map((c) => {
+                const active = tab === c.k;
+                return (
+                  <button
+                    key={c.k}
+                    type="button"
+                    onClick={() => setTab(c.k)}
+                    className={`inline-flex items-center gap-1.5 rounded-full px-3.5 py-1.5 text-[13px] font-semibold transition-colors ${
+                      active
+                        ? "text-white shadow-sm"
+                        : "bg-slate-100 text-slate-600 hover:bg-slate-200 dark:bg-slate-800 dark:text-slate-300 dark:hover:bg-slate-700"
+                    }`}
+                    style={active ? { backgroundColor: accent } : undefined}
+                  >
+                    {c.label}
+                    <span
+                      className={`text-[11px] ${active ? "text-white/80" : "text-slate-400"}`}
+                    >
+                      {c.n}
+                    </span>
+                  </button>
+                );
+              })}
             </div>
+            <div className="relative sm:ml-auto sm:w-64">
+              <Search className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
+              <input
+                value={query}
+                onChange={(e) => setQuery(e.target.value)}
+                placeholder={en ? "Search by name…" : "Tìm theo tên…"}
+                className="w-full rounded-full border border-slate-200 bg-white pl-9 pr-3 py-2 text-[13px] text-slate-700 placeholder:text-slate-400 focus:border-blue-400 focus:outline-none focus:ring-2 focus:ring-blue-500/30 dark:border-slate-700 dark:bg-[#141d2e] dark:text-slate-200"
+              />
+            </div>
+          </div>
+
+          {/* Ban chủ nhiệm — nổi bật, nằm ngang */}
+          {vLeaders.length > 0 && (
+            <div className="mb-12">
+              {divider(en ? "Board of Management" : "Ban chủ nhiệm", vLeaders.length)}
+              <div className="grid gap-4 sm:grid-cols-2 sm:gap-5">
+                {vLeaders.map((p) => (
+                  <LeaderCard
+                    key={p.slug}
+                    person={p}
+                    locale={locale}
+                    isEditing={isEditing}
+                    accent={accent}
+                  />
+                ))}
+              </div>
+            </div>
+          )}
+
+          {/* Giảng viên & nhân sự — lưới 3 cột */}
+          {vMain.length > 0 && (
+            <div className="mb-12">
+              {divider(
+                tab === "giao-vu"
+                  ? en
+                    ? "Academic Admin"
+                    : "Giáo vụ"
+                  : en
+                    ? "Faculty & staff"
+                    : "Giảng viên & nhân sự Bộ môn",
+                vMain.length,
+              )}
+              <div className="grid grid-cols-2 gap-x-5 gap-y-8 sm:grid-cols-3 md:gap-x-7 md:gap-y-10">
+                {vMain.map((p) => (
+                  <StaffGridCard
+                    key={p.slug}
+                    person={p}
+                    locale={locale}
+                    isEditing={isEditing}
+                  />
+                ))}
+              </div>
+            </div>
+          )}
+
+          {/* Thỉnh giảng — section riêng, thẻ gọn */}
+          {vVisiting.length > 0 && (
+            <div className="mb-2">
+              {divider(
+                t(visitingLabel, locale) ||
+                  (en ? "Visiting lecturers" : "Giảng viên thỉnh giảng"),
+                vVisiting.length,
+              )}
+              <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+                {vVisiting.map((p) => (
+                  <VisitingCard
+                    key={p.slug}
+                    person={p}
+                    locale={locale}
+                    isEditing={isEditing}
+                  />
+                ))}
+              </div>
+            </div>
+          )}
+
+          {totalVisible === 0 && (
+            <p className="text-center text-sm text-slate-500 dark:text-slate-400 py-10">
+              {en ? "No matching staff." : "Không tìm thấy nhân sự phù hợp."}
+            </p>
           )}
         </>
       )}
@@ -1196,6 +1538,8 @@ export const DepartmentStaffAuto: ComponentConfig<{
   accentColor: string;
   visitingLabel: LocalizedString;
   separateVisiting: boolean;
+  showHero: boolean;
+  heroEyebrow: LocalizedString;
   departmentSlug: string;
 }> = {
   label: "Đội ngũ bộ môn (auto)",
@@ -1204,10 +1548,12 @@ export const DepartmentStaffAuto: ComponentConfig<{
     accentColor: "#1e40af",
     visitingLabel: { vi: "Cán bộ thỉnh giảng", en: "Visiting Lecturers" },
     separateVisiting: true,
+    showHero: true,
+    heroEyebrow: { vi: "Nhân sự", en: "Staff" },
     departmentSlug: "",
   },
   fields: {
-    title: localizedTextField("Tiêu đề (để trống nếu đã có tiêu đề riêng)"),
+    title: localizedTextField("Tiêu đề (hero) — để trống thì lấy tên bộ môn"),
     accentColor: colorField("Màu nhấn"),
     visitingLabel: localizedTextField("Nhãn nhóm thỉnh giảng"),
     separateVisiting: {
@@ -1218,6 +1564,15 @@ export const DepartmentStaffAuto: ComponentConfig<{
         { label: "Không", value: false },
       ],
     },
+    showHero: {
+      type: "radio",
+      label: "Hiện hero (banner tên bộ môn + số liệu)",
+      options: [
+        { label: "Có", value: true },
+        { label: "Không", value: false },
+      ],
+    },
+    heroEyebrow: localizedTextField("Chữ đệm hero (trên tiêu đề)"),
     departmentSlug: {
       type: "text",
       label: "Bộ môn (tự nhận theo trang — chỉ nhập khi xem thử)",
@@ -1228,6 +1583,8 @@ export const DepartmentStaffAuto: ComponentConfig<{
     accentColor,
     visitingLabel,
     separateVisiting,
+    showHero,
+    heroEyebrow,
     departmentSlug,
     puck,
   }) => (
@@ -1236,6 +1593,8 @@ export const DepartmentStaffAuto: ComponentConfig<{
       accentColor={accentColor}
       visitingLabel={visitingLabel}
       separateVisiting={separateVisiting !== false}
+      showHero={showHero !== false}
+      heroEyebrow={heroEyebrow}
       departmentSlug={departmentSlug}
       isEditing={!!puck?.isEditing}
     />

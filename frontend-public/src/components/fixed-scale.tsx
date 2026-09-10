@@ -24,7 +24,10 @@ const useIsoLayoutEffect =
  */
 const DESIGN = 1280;
 const MIN_VW = 1024;
-const MAX_ZOOM = 1.6;
+// Trần BỀ RỘNG hiển thị: trên mức này KHÔNG phóng to thêm mà căn giữa (chừa lề hai
+// bên). Nếu không có trần, màn 1920 sẽ phóng 1.5× → chữ/ảnh "quá bự"; 1500px là mức
+// đọc thoải mái, rộng hơn chỉ thừa chỗ chứ không cần chữ lớn hơn.
+const MAX_W = 1500;
 
 export function FixedScale({ children }: { children: ReactNode }) {
   const [zoom, setZoom] = useState<number | null>(null);
@@ -40,8 +43,11 @@ export function FixedScale({ children }: { children: ReactNode }) {
         setZoom(null);
         return;
       }
-      const avail = document.documentElement.clientWidth || window.innerWidth;
-      setZoom(Math.min(MAX_ZOOM, avail / DESIGN));
+      // Chia theo clientWidth (không tính thanh cuộn dọc), nhưng KHÔNG vượt trần
+      // MAX_W: trên 1500px thì giữ nguyên cỡ 1500 và căn giữa, khỏi phóng quá to.
+      const client = document.documentElement.clientWidth || window.innerWidth;
+      const avail = Math.min(client, MAX_W);
+      setZoom(avail / DESIGN);
     };
     apply();
     window.addEventListener("resize", apply);

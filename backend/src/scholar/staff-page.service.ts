@@ -41,8 +41,144 @@ type DeptPerson = {
   role: Localized;
   email: string;
   visiting: boolean;
+  /** Nhóm lọc: lanh-dao · giang-vien · giao-vu · thinh-giang. */
+  category: string;
 };
-type DeptStaffRes = { department: string; people: DeptPerson[] };
+type DeptStaffRes = {
+  department: string;
+  departmentName: string;
+  people: DeptPerson[];
+};
+
+// ── Chuẩn hoá học vị + tên cho trang danh sách đội ngũ ──────────────────────
+// Học vị hiển thị RẤT lộn xộn trên từng trang (name/eyebrow nhập/migrate tay:
+// "ThS."·"Thạc sĩ"·"THS."·"GVC.ThS." và EN "MsC."·"MSc."·"PhD."·"Dr."·"Assoc.
+// Prof."). Quy về MỘT khoá rồi ra dạng CHUẨN song ngữ — ưu tiên `User.degree`
+// (dữ liệu có cấu trúc, sạch) rồi mới đoán từ chữ. Nhờ đó VI và EN đồng nhất.
+const DEGREE_VI: Record<string, string> = {
+  gs: 'GS.TS.',
+  pgs: 'PGS.TS.',
+  ts: 'TS.',
+  ths: 'ThS.',
+  cn: 'CN.',
+  ks: 'KS.',
+};
+const DEGREE_EN: Record<string, string> = {
+  gs: 'Prof.',
+  pgs: 'Assoc. Prof.',
+  ts: 'PhD',
+  ths: 'MSc',
+  cn: 'BSc',
+  ks: 'Eng.',
+};
+
+/** Khoá học vị từ `User.degree` (giá trị sạch: GS·PGS·TS·ThS·CN·KS). */
+const degreeKeyFromUser = (d?: string | null): string => {
+  const k = (d ?? '').toLowerCase().replace(/[.\s]/g, '');
+  return k in DEGREE_VI ? k : '';
+};
+
+/** Đoán khoá học vị từ chuỗi hiển thị (VI hoặc EN). PGS xét trước GS, TS trước ThS. */
+const degreeKeyFromText = (s: string): string => {
+  const x = ` ${s} `;
+  if (/phó\s*giáo\s*sư|\bpgs\b|assoc\.?\s*prof/i.test(x)) return 'pgs';
+  if (/giáo\s*sư|\bgs\b|\bprof\.?\b/i.test(x)) return 'gs';
+  if (/tiến\s*sĩ|\bts\b|\bph\.?\s*d\b|\bdr\.?\b/i.test(x)) return 'ts';
+  if (/thạc\s*sĩ|\bth\.?s\b|\bm\.?\s*sc\b/i.test(x)) return 'ths';
+  if (/cử\s*nhân|\bcn\b|\bb\.?\s*sc\b/i.test(x)) return 'cn';
+  if (/kỹ\s*sư|\bks\b|\beng\.?\b/i.test(x)) return 'ks';
+  return '';
+};
+
+/** Bỏ cụm học vị/ngạch dính đầu tên (VI + EN), bỏ dấu phẩy, gom khoảng trắng. */
+const stripDegreePrefix = (s: string): string => {
+  const re =
+    /^\s*(?:(?:gs|pgs|ts|th\.?s|cn|ks|gvcc|gvch|gvc|ncs|prof|assoc|dr|ph\.?d|m\.?sc|b\.?sc|eng)\b\.?[\s.,]*)+/i;
+  const out = s
+    .replace(re, '')
+    .replace(/,\s*/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+  return out || s.replace(/,\s*/g, ' ').trim();
+};
+
+/** TÊN IN HOA toàn bộ (dữ liệu cũ) → về dạng tên riêng (mỗi từ hoa chữ đầu). */
+const fixNameCase = (s: string): string => {
+  const letters = s.replace(/[^\p{L}]/gu, '');
+  if (letters && letters === letters.toUpperCase()) {
+    return s
+      .toLowerCase()
+      .replace(
+        /(^|[\s.\-'])(\p{L})/gu,
+        (_m, p: string, ch: string) => p + ch.toUpperCase(),
+      );
+  }
+  return s;
+};
+
+/** Tên sạch: bỏ học vị đầu, sửa in hoa. Rỗng thì trả nguyên (khỏi mất tên). */
+const cleanPersonName = (s: string): string => {
+  if (!s) return s;
+  return fixNameCase(stripDegreePrefix(s)) || s;
+};
+
+// Suy CHỨC VỤ hiển thị từ dữ liệu có cấu trúc trong DB (nguồn "có hết" như cô nói):
+// chức vụ quản lý (positionKey) > thỉnh giảng (employmentType) > NGẠCH (rank).
+// Roster (curated) chỉ đè các vai ĐẶC BIỆT (Trưởng/Phó bộ môn, Giáo vụ, Thỉnh
+// giảng) mà DB không diễn đạt gọn; còn lại lấy theo ngạch cho ĐÚNG (vd CV = Chuyên
+// viên, TrG = Trợ giảng, GVC = Giảng viên chính) thay vì mặc định "Giảng viên".
+const POSITION_ROLE: Record<string, Localized> = {
+  truong_khoa: { vi: 'Trưởng khoa', en: 'Dean' },
+  pho_truong_khoa: { vi: 'Phó Trưởng khoa', en: 'Vice Dean' },
+  truong_bo_mon: { vi: 'Trưởng bộ môn', en: 'Head of Department' },
+  pho_truong_bo_mon: { vi: 'Phó bộ môn', en: 'Deputy Head' },
+  truong_ptn: { vi: 'Trưởng phòng thí nghiệm', en: 'Head of Laboratory' },
+};
+const RANK_ROLE: Record<string, Localized> = {
+  gv: { vi: 'Giảng viên', en: 'Lecturer' },
+  gvc: { vi: 'Giảng viên chính', en: 'Senior Lecturer' },
+  gvcc: { vi: 'Giảng viên cao cấp', en: 'Principal Lecturer' },
+  cv: { vi: 'Chuyên viên', en: 'Specialist' },
+  trg: { vi: 'Trợ giảng', en: 'Teaching Assistant' },
+  ncv: { vi: 'Nghiên cứu viên', en: 'Researcher' },
+  ncvc: { vi: 'Nghiên cứu viên chính', en: 'Senior Researcher' },
+};
+const roleFromDb = (
+  u?: {
+    rank?: string | null;
+    positionKey?: string | null;
+    employmentType?: string | null;
+  } | null,
+): Localized | null => {
+  if (!u) return null;
+  const pk = (u.positionKey ?? '').toLowerCase().trim();
+  if (pk && POSITION_ROLE[pk]) return POSITION_ROLE[pk];
+  if ((u.employmentType ?? '').toLowerCase().trim() === 'thinh_giang') {
+    return { vi: 'Thỉnh giảng', en: 'Visiting Lecturer' };
+  }
+  const rk = (u.rank ?? '').toLowerCase().trim();
+  if (rk && RANK_ROLE[rk]) return RANK_ROLE[rk];
+  return null;
+};
+
+/** Vai ĐẶC BIỆT mà roster curated được ưu tiên hơn DB (leadership/giáo vụ/thỉnh giảng). */
+const isSpecialRole = (vi: string): boolean =>
+  /trưởng|phó|giáo vụ|thỉnh giảng|chủ nhiệm/i.test(vi ?? '');
+
+/** Nhóm lọc từ chức vụ (VI) + cờ thỉnh giảng — cho thanh lọc trên trang. */
+const categoryOf = (roleVi: string, visiting: boolean): string => {
+  if (visiting) return 'thinh-giang';
+  const r = (roleVi ?? '').toLowerCase();
+  if (
+    /trưởng bộ môn|phó bộ môn|trưởng khoa|phó\s*(trưởng\s*)?khoa|ban chủ nhiệm|trưởng phòng thí nghiệm|trưởng ptn/.test(
+      r,
+    )
+  ) {
+    return 'lanh-dao';
+  }
+  if (/giáo vụ|giáo\s*vụ/.test(r)) return 'giao-vu';
+  return 'giang-vien';
+};
 
 const STAFF_TYPES = ['StaffProfileEditorial', 'StaffProfile'];
 
@@ -189,6 +325,8 @@ export class StaffPageService {
       layoutId: layout.id,
       photo: asPlain(p.photo),
       heroLayout: p.heroLayout === 'full' ? 'full' : 'compact',
+      /** Nền hero: mã màu hex (giảng viên chọn) · URL ảnh (admin) · rỗng = tối mặc định. */
+      heroBg: asPlain(p.heroBg),
       email: asPlain(p.email),
       eyebrow: asText(p.eyebrow),
       eyebrowEn: asEn(p.eyebrow),
@@ -234,10 +372,18 @@ export class StaffPageService {
    */
   async departmentStaff(deptSlug: string) {
     const clean = String(deptSlug || '').replace(/^\/+|\/+$/g, '');
-    if (!clean) return { department: '', people: [] as DeptPerson[] };
+    if (!clean) {
+      return { department: '', departmentName: '', people: [] as DeptPerson[] };
+    }
     const cacheKey = `dept-staff:${clean}`;
     const cached = await this.cache.get<DeptStaffRes>(cacheKey);
     if (cached) return cached;
+
+    const dept = await this.prisma.department.findUnique({
+      where: { slug: clean },
+      select: { name: true },
+    });
+    const departmentName = dept?.name ?? '';
 
     const prefix = `${clean}/nhan-su/`;
     const pages = await this.prisma.pageLayout.findMany({
@@ -270,6 +416,7 @@ export class StaffPageService {
         role: { vi: '', en: '' },
         email: asPlain(p.email),
         visiting: false,
+        category: 'giang-vien',
         order: 0,
       });
     }
@@ -282,7 +429,15 @@ export class StaffPageService {
           select: {
             staffPageSlug: true,
             showOnWeb: true,
-            user: { select: { email: true } },
+            user: {
+              select: {
+                email: true,
+                degree: true,
+                rank: true,
+                positionKey: true,
+                employmentType: true,
+              },
+            },
           },
         })
       : [];
@@ -313,17 +468,52 @@ export class StaffPageService {
       if (prof && prof.showOnWeb === false) continue; // tôn trọng ẩn hồ sơ
       const acctEmail = prof?.user?.email ?? '';
       const email = r.email || acctEmail;
-      const role: Localized =
+      const rosterRole =
         roleBySlug.get(r.slug) ??
         (acctEmail ? roleByEmail.get(acctEmail) : undefined) ??
-        (r.email ? roleByEmail.get(r.email) : undefined) ??
+        (r.email ? roleByEmail.get(r.email) : undefined);
+      const dbRole = roleFromDb(prof?.user);
+      // Roster ĐẶC BIỆT (Trưởng/Phó BM · Giáo vụ · Thỉnh giảng) đè DB; còn lại lấy
+      // theo NGẠCH trong DB (Chuyên viên/Trợ giảng/GV chính…) cho đúng, rồi mới lùi
+      // về roster chung, cuối cùng mặc định "Giảng viên".
+      const role: Localized =
+        (rosterRole && isSpecialRole(rosterRole.vi ?? '')
+          ? rosterRole
+          : undefined) ??
+        dbRole ??
+        rosterRole ??
         { vi: 'Giảng viên', en: 'Lecturer' };
       const order =
         orderBySlug.get(r.slug) ??
         (acctEmail ? orderByEmail.get(acctEmail) : undefined) ??
         (r.email ? orderByEmail.get(r.email) : undefined) ??
         1000;
-      people.push({ ...r, email, role, visiting: isVisiting(role.vi ?? ''), order });
+      // Học vị CHUẨN song ngữ: User.degree (sạch) trước, rồi đoán từ eyebrow/tên.
+      const degKey =
+        degreeKeyFromUser(prof?.user?.degree) ||
+        degreeKeyFromText(r.eyebrow.vi ?? '') ||
+        degreeKeyFromText(r.eyebrow.en ?? '') ||
+        degreeKeyFromText((r.name.vi ?? '').slice(0, 18)) ||
+        degreeKeyFromText((r.name.en ?? '').slice(0, 18));
+      const eyebrow: Localized = {
+        vi: DEGREE_VI[degKey] ?? '',
+        en: DEGREE_EN[degKey] ?? '',
+      };
+      const name: Localized = {
+        vi: cleanPersonName(r.name.vi ?? ''),
+        en: cleanPersonName(r.name.en ?? ''),
+      };
+      const visiting = isVisiting(role.vi ?? '');
+      people.push({
+        ...r,
+        name,
+        eyebrow,
+        email,
+        role,
+        visiting,
+        category: categoryOf(role.vi ?? '', visiting),
+        order,
+      });
     }
 
     // Thứ tự roster; ngoài roster xếp cuối theo tên. Thỉnh giảng roster đã đặt cuối.
@@ -335,6 +525,7 @@ export class StaffPageService {
 
     const result: DeptStaffRes = {
       department: clean,
+      departmentName,
       people: people.map((p) => ({
         slug: p.slug,
         photo: p.photo,
@@ -343,6 +534,7 @@ export class StaffPageService {
         role: p.role,
         email: p.email,
         visiting: p.visiting,
+        category: p.category,
       })),
     };
     // Cache ngắn; nguồn đổi (sửa trang cá nhân) đã gọi afterWrite → cache.clear().
@@ -370,26 +562,36 @@ export class StaffPageService {
   }
 
   /** Node Puck cho khối "Đội ngũ bộ môn (auto)" của MỘT bộ môn. */
-  private makeDeptStaffNode(deptSlug: string): PuckNode {
+  private makeDeptStaffNode(deptSlug: string, title?: unknown): PuckNode {
     return {
       type: 'DepartmentStaffAuto',
       props: {
         id: `dept-staff-${deptSlug.replace(/[^a-z0-9-]/gi, '-')}`,
-        title: { vi: '', en: '' },
+        title: title ?? { vi: '', en: '' },
         accentColor: '#1e40af',
         visitingLabel: { vi: 'Cán bộ thỉnh giảng', en: 'Visiting Lecturers' },
         separateVisiting: true,
+        showHero: true,
+        heroEyebrow: { vi: 'Nhân sự', en: 'Staff' },
         // Ghi rõ bộ môn (không phụ thuộc dò URL) — bền hơn khi render.
         departmentSlug: deptSlug,
       },
     };
   }
 
+  private isEmptyLoc(v: unknown): boolean {
+    if (!v) return true;
+    if (typeof v === 'string') return v.trim() === '';
+    const l = v as { vi?: string; en?: string };
+    return !((l.vi ?? '').trim() || (l.en ?? '').trim());
+  }
+
   /**
-   * Thay lưới ProfileCard dựng tay (cả cây con chứa nó) bằng MỘT khối
-   * `DepartmentStaffAuto`, giữ nguyên Navbar/Header · PageHero · Heading · Footer.
-   * Đồng thời chữa phụ đề PageHero cũ/lỗi (không mở đầu bằng "Đội ngũ") về
-   * "Đội ngũ Bộ môn {tên}". Idempotent.
+   * Thay lưới ProfileCard dựng tay bằng MỘT khối `DepartmentStaffAuto` CÓ HERO
+   * riêng (banner tên bộ môn + số liệu động). GỠ `PageHero` + `Heading` (tiêu đề)
+   * cũ vì hero giờ nằm TRONG khối — chuyển chữ song ngữ của Heading (rồi tới phụ đề
+   * PageHero) vào ô `title` của khối để khỏi mất bản Anh/Việt. GIỮ Navbar/Footer
+   * của bộ môn. Idempotent.
    */
   private transformListingContent(
     data: unknown,
@@ -401,38 +603,56 @@ export class StaffPageService {
     const content = obj.content;
     if (!Array.isArray(content)) return { tree: data, changed: false };
 
+    // Lượt 1: thu tiêu đề hero — Heading (song ngữ, giàu nhất) > phụ đề PageHero >
+    // dựng từ tên bộ môn.
+    let headingText: unknown;
+    let heroSubtitle: unknown;
+    for (const item of content) {
+      const node = item as PuckNode;
+      if (node?.type === 'Heading' && node.props && headingText === undefined) {
+        headingText = node.props.text;
+      }
+      if (
+        node?.type === 'PageHero' &&
+        node.props &&
+        heroSubtitle === undefined
+      ) {
+        heroSubtitle = node.props.subtitle;
+      }
+    }
+    const finalTitle: unknown =
+      (!this.isEmptyLoc(headingText) && headingText) ||
+      (!this.isEmptyLoc(heroSubtitle) && heroSubtitle) ||
+      (deptName ? { vi: `Đội ngũ Bộ môn ${deptName}`, en: '' } : undefined);
+
     let changed = false;
     let hasAuto = false;
+    let removedHeading = false;
     const out: unknown[] = [];
     for (const item of content) {
       const node = item as PuckNode;
-      if (node?.type === 'PageHero' && node.props) {
-        const sub = node.props.subtitle as
-          | { vi?: string; en?: string }
-          | string
-          | undefined;
-        const subVi = typeof sub === 'string' ? sub : (sub?.vi ?? '');
-        if (!/^\s*Đội ngũ/i.test(subVi)) {
-          const subEn = typeof sub === 'object' && sub ? (sub.en ?? '') : '';
-          out.push({
-            ...node,
-            props: {
-              ...node.props,
-              subtitle: {
-                vi: `Đội ngũ Bộ môn ${deptName}`,
-                en: subEn || 'Department Staff',
-              },
-            },
-          });
-          changed = true;
-          continue;
-        }
-        out.push(item);
+      // PageHero: bỏ hẳn — hero giờ nằm TRONG khối (tránh 2 hero chồng nhau).
+      if (node?.type === 'PageHero') {
+        changed = true;
         continue;
       }
-      if (node?.type === 'DepartmentStaffAuto') {
+      // Heading ĐẦU TIÊN (tiêu đề trang): bỏ — đã chuyển vào hero. Heading khác giữ.
+      if (node?.type === 'Heading' && !removedHeading) {
+        removedHeading = true;
+        changed = true;
+        continue;
+      }
+      if (node?.type === 'DepartmentStaffAuto' && node.props) {
         hasAuto = true;
-        out.push(item);
+        const props: Record<string, unknown> = { ...node.props };
+        if (this.isEmptyLoc(props.title) && finalTitle) props.title = finalTitle;
+        if (props.showHero === undefined) props.showHero = true;
+        if (props.heroEyebrow === undefined) {
+          props.heroEyebrow = { vi: 'Nhân sự', en: 'Staff' };
+        }
+        if (!props.departmentSlug) props.departmentSlug = deptSlug;
+        if (JSON.stringify(props) !== JSON.stringify(node.props)) changed = true;
+        out.push({ ...node, props });
         continue;
       }
       // Cây con có lưới ProfileCard → bỏ (khối auto thay thế).
@@ -444,7 +664,7 @@ export class StaffPageService {
     }
 
     if (!hasAuto) {
-      const auto = this.makeDeptStaffNode(deptSlug);
+      const auto = this.makeDeptStaffNode(deptSlug, finalTitle);
       const footerIdx = out.findIndex((n) =>
         ['Footer', 'FooterBlock'].includes((n as PuckNode)?.type ?? ''),
       );
@@ -538,6 +758,9 @@ export class StaffPageService {
     const next: Record<string, unknown> = { ...prev };
 
     if (body.photo !== undefined) next.photo = body.photo ?? '';
+    // Nền hero giảng viên tự chọn: mã màu hex, hoặc rỗng để về nền tối mặc định.
+    // (Admin vẫn có thể đặt URL ẢNH nền qua trình soạn thảo Puck — cùng prop.)
+    if (body.heroBg !== undefined) next.heroBg = body.heroBg ?? '';
     if (body.heroLayout != null) {
       next.heroLayout = body.heroLayout === 'full' ? 'full' : 'compact';
     }

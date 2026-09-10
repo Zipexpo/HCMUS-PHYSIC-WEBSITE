@@ -869,8 +869,14 @@ export type DeptStaffPerson = {
   role: DeptStaffLoc;
   email: string;
   visiting: boolean;
+  /** Nhóm lọc: lanh-dao · giang-vien · giao-vu · thinh-giang. */
+  category: string;
 };
-export type DeptStaffRes = { department: string; people: DeptStaffPerson[] };
+export type DeptStaffRes = {
+  department: string;
+  departmentName: string;
+  people: DeptStaffPerson[];
+};
 
 export const departmentStaffApi = {
   /** Đội ngũ một bộ môn theo slug (vd "vat-ly-tin-hoc"). Công khai, không auth. */

@@ -920,6 +920,8 @@ export const StaffPageResSchema = z.object({
   photo: z.string(),
   /** 'compact' (mặc định) ảnh nhỏ trên điện thoại; 'full' ảnh lớn như cũ. */
   heroLayout: z.string(),
+  /** Nền hero: mã màu hex (giảng viên chọn) · URL ảnh (admin) · rỗng = tối mặc định. */
+  heroBg: z.string(),
   /** Email liên hệ hiện cạnh icon học thuật — tự đồng bộ từ tài khoản. */
   email: z.string(),
   eyebrow: z.string(),
@@ -953,11 +955,15 @@ export const DepartmentStaffPersonSchema = z.object({
   email: z.string(),
   /** true = cán bộ thỉnh giảng — trang nhóm riêng ở cuối. */
   visiting: z.boolean(),
+  /** Nhóm lọc: lanh-dao · giang-vien · giao-vu · thinh-giang. */
+  category: z.string(),
 });
 
 /** Đội ngũ MỘT bộ môn cho khối `DepartmentStaffAuto` (công khai, không auth). */
 export const DepartmentStaffResSchema = z.object({
   department: z.string(),
+  /** Tên hiển thị bộ môn (cho hero) — vd "Vật lý Tin học". */
+  departmentName: z.string(),
   people: z.array(DepartmentStaffPersonSchema),
 });
 export type DepartmentStaffResType = z.infer<typeof DepartmentStaffResSchema>;
@@ -972,6 +978,8 @@ export type SyncStaffPageBodyType = z.infer<typeof SyncStaffPageBodySchema>;
 
 export const UpdateStaffPageBodySchema = z.object({
   photo: z.string().max(1000).nullish(),
+  /** Nền hero: mã màu hex (vd "#0c2340") hoặc rỗng để về nền tối mặc định. */
+  heroBg: z.string().max(1000).nullish(),
   /** Kiểu hero: 'compact' (mặc định, ảnh nhỏ) hoặc 'full' (ảnh lớn). */
   heroLayout: z.enum(['compact', 'full']).nullish(),
   // Tên hiển thị trên trang (khác tên tài khoản dùng để ghép đơn vị). Song ngữ:

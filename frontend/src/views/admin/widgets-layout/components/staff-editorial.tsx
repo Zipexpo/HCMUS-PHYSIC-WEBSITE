@@ -224,7 +224,11 @@ function StaffProfileEditorialRender(props: Props) {
 
   // Nền hero: có ảnh nền thì phủ màn INK mờ (0.72) lên ảnh để chữ blend vẫn đọc
   // được; không có ảnh thì giữ nguyên nền INK đặc như cũ (byte-for-byte).
-  const heroBg = resolveMediaUrl(props.heroBg || "");
+  // `heroBg` mang MỘT trong ba: mã màu hex (#rgb/#rrggbb… — giảng viên tự chọn ở
+  // phys-profile), URL ảnh nền (admin đặt), hoặc rỗng = nền tối INK mặc định.
+  const heroBgRaw = (props.heroBg || "").trim();
+  const heroIsColor = /^#([0-9a-f]{3,4}|[0-9a-f]{6}|[0-9a-f]{8})$/i.test(heroBgRaw);
+  const heroBg = heroIsColor ? "" : resolveMediaUrl(heroBgRaw);
   const heroVeil = inkVeil(0.72);
   // Nền tối phủ ĐÚNG vùng hero, và vùng hero cao bao nhiêu thì nó cao bấy nhiêu.
   //
@@ -241,13 +245,17 @@ function StaffProfileEditorialRender(props: Props) {
   //
   // Nên bỏ hẳn ngưỡng: đặt nền lên CHÍNH khối hero. Hero cao bao nhiêu thì nền
   // đúng bấy nhiêu, ở mọi chiều rộng, mọi độ dài nội dung.
-  const heroBgCss = heroBg
-    ? `background-color: ${INK};
+  const heroBgCss = heroIsColor
+    ? // Màu đơn sắc giảng viên chọn. Chữ hero dùng `mix-blend-mode: difference`
+      // nên tự đảo cho tương phản trên mọi màu (đậm đọc đẹp nhất).
+      `background-color: ${heroBgRaw};`
+    : heroBg
+      ? `background-color: ${INK};
           background-image: linear-gradient(${heroVeil}, ${heroVeil}), url("${heroBg}");
           background-size: auto, cover;
           background-position: center, center top;
           background-repeat: no-repeat, no-repeat;`
-    : `background-color: ${INK};`;
+      : `background-color: ${INK};`;
 
   // Hồ sơ học thuật: mỗi ID có giá trị thì hiện một icon-link màu thương hiệu.
   // Đặt NGOÀI vùng `blend` để logo giữ đúng màu, không bị phép trừ màu đảo.
