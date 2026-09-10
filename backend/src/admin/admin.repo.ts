@@ -11,8 +11,29 @@ const ADMIN_WHERE: Prisma.UserWhereInput = {
   role: { in: ['SUPER_ADMIN', 'ADMIN'] },
 };
 const STAFF_WHERE: Prisma.UserWhereInput = { role: 'LECTURER' };
-const whereFor = (kind: StaffKind): Prisma.UserWhereInput =>
-  kind === 'staff' ? STAFF_WHERE : ADMIN_WHERE;
+
+// Tìm kiếm: tách theo từ, MỖI từ phải khớp tên/họ/email/MSCB (không phân biệt hoa
+// thường). AND các từ → gõ "Huỳnh Tuấn" khớp người có họ "Huỳnh" + tên "Tuấn" dù
+// tên nằm ở hai cột. (Không bỏ dấu — admin gõ tiếng Việt có dấu là khớp.)
+const searchWhere = (search?: string): Prisma.UserWhereInput => {
+  const tokens = (search ?? '').trim().split(/\s+/).filter(Boolean);
+  if (!tokens.length) return {};
+  return {
+    AND: tokens.map((tok) => ({
+      OR: [
+        { firstName: { contains: tok, mode: 'insensitive' as const } },
+        { lastName: { contains: tok, mode: 'insensitive' as const } },
+        { email: { contains: tok, mode: 'insensitive' as const } },
+        { teacherId: { contains: tok, mode: 'insensitive' as const } },
+      ],
+    })),
+  };
+};
+
+const whereFor = (kind: StaffKind, search?: string): Prisma.UserWhereInput => ({
+  ...(kind === 'staff' ? STAFF_WHERE : ADMIN_WHERE),
+  ...searchWhere(search),
+});
 
 const STAFF_SELECT = {
   id: true,
@@ -40,9 +61,9 @@ const STAFF_SELECT = {
 export class AdminRepository {
   constructor(private readonly prisma: PrismaService) {}
 
-  listPaged(kind: StaffKind, skip: number, take: number) {
+  listPaged(kind: StaffKind, skip: number, take: number, search?: string) {
     return this.prisma.user.findMany({
-      where: whereFor(kind),
+      where: whereFor(kind, search),
       orderBy: [{ createdAt: 'desc' }],
       skip,
       take,
@@ -50,8 +71,8 @@ export class AdminRepository {
     });
   }
 
-  count(kind: StaffKind) {
-    return this.prisma.user.count({ where: whereFor(kind) });
+  count(kind: StaffKind, search?: string) {
+    return this.prisma.user.count({ where: whereFor(kind, search) });
   }
 
   countActiveSince(kind: StaffKind, since: Date) {

@@ -219,7 +219,7 @@ export const adminApi = {
       units: StaffUnit[];
     }>(`/admins${buildQuery(params)}`);
   },
-  listStaff(params: { page?: number; pageSize?: number } = {}) {
+  listStaff(params: { page?: number; pageSize?: number; search?: string } = {}) {
     return authFetch<{
       items: AdminListItem[];
       total: number;

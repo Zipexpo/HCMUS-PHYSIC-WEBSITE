@@ -78,10 +78,21 @@ export function StaffListView() {
   const router = useRouter();
   const queryClient = useQueryClient();
   const [page, setPage] = useState(1);
+  const [search, setSearch] = useState("");
+  const [searchQ, setSearchQ] = useState("");
   const [menuOpenId, setMenuOpenId] = useState<string | null>(null);
   const [editTarget, setEditTarget] = useState<AdminListItem | null>(null);
   const [createOpen, setCreateOpen] = useState(false);
   const menuTriggerRef = useRef<HTMLButtonElement | null>(null);
+
+  // Chống giật: đợi 300ms sau khi gõ mới gọi API; đổi từ khoá thì về trang 1.
+  useEffect(() => {
+    const id = setTimeout(() => {
+      setSearchQ(search.trim());
+      setPage(1);
+    }, 300);
+    return () => clearTimeout(id);
+  }, [search]);
 
   const { data: profile } = useQuery({
     queryKey: ["AUTH", "PROFILE"],
@@ -95,8 +106,13 @@ export function StaffListView() {
   }, [profile, router]);
 
   const { data, isLoading } = useQuery({
-    queryKey: ["STAFF", { page, pageSize: PAGE_SIZE }],
-    queryFn: () => adminApi.listStaff({ page, pageSize: PAGE_SIZE }),
+    queryKey: ["STAFF", { page, pageSize: PAGE_SIZE, search: searchQ }],
+    queryFn: () =>
+      adminApi.listStaff({
+        page,
+        pageSize: PAGE_SIZE,
+        search: searchQ || undefined,
+      }),
     enabled: isFacultyWide(profile?.role, profile?.departmentId),
   });
 
@@ -178,7 +194,30 @@ export function StaffListView() {
           />
         </div>
 
-        <div className="mt-6 bg-white dark:bg-[#101622] border border-slate-200 dark:border-slate-800 rounded-xl overflow-hidden">
+        <div className="mt-6 relative max-w-sm">
+          <svg
+            className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth="2"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+            aria-hidden="true"
+          >
+            <circle cx="11" cy="11" r="7" />
+            <path d="m21 21-4.3-4.3" />
+          </svg>
+          <input
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+            placeholder="Tìm theo tên, email, MSCB…"
+            aria-label="Tìm cán bộ"
+            className="w-full rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-[#101622] pl-9 pr-3 py-2 text-sm text-slate-800 dark:text-slate-100 placeholder:text-slate-400 focus:border-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-900/10 dark:focus:ring-slate-100/10"
+          />
+        </div>
+
+        <div className="mt-4 bg-white dark:bg-[#101622] border border-slate-200 dark:border-slate-800 rounded-xl overflow-hidden">
           <div className="grid grid-cols-[3fr_2fr_1fr_1.5fr_0.5fr] gap-4 px-6 py-3 text-[11px] font-semibold uppercase tracking-wider text-slate-500 dark:text-slate-400 bg-slate-50 dark:bg-[#0e1422] border-b border-slate-200 dark:border-slate-800">
             <div>Cán bộ</div>
             <div>Đơn vị</div>
@@ -193,7 +232,9 @@ export function StaffListView() {
             </p>
           ) : items.length === 0 ? (
             <p className="text-center px-6 py-10 text-sm text-slate-500 dark:text-slate-400">
-              Chưa có cán bộ nào. Bấm "Tạo cán bộ" để thêm.
+              {searchQ
+                ? `Không tìm thấy cán bộ khớp “${searchQ}”.`
+                : 'Chưa có cán bộ nào. Bấm "Tạo cán bộ" để thêm.'}
             </p>
           ) : (
             <ul>

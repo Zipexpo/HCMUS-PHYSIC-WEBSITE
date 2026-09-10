@@ -32,12 +32,14 @@ export class AdminService {
   }
 
   private async listByKind(kind: StaffKind, query: AdminListQueryType) {
-    const { page, pageSize } = query;
+    const { page, pageSize, search } = query;
     const skip = (page - 1) * pageSize;
     const activeSince = new Date(Date.now() - ACTIVE_WINDOW_MS);
     const [items, total, activeNow, units] = await Promise.all([
-      this.adminRepository.listPaged(kind, skip, pageSize),
-      this.adminRepository.count(kind),
+      // `total` bám theo tìm kiếm để phân trang đúng; `activeNow` là thống kê
+      // tổng nên KHÔNG lọc theo từ khoá.
+      this.adminRepository.listPaged(kind, skip, pageSize, search),
+      this.adminRepository.count(kind, search),
       this.adminRepository.countActiveSince(kind, activeSince),
       this.adminRepository.listUnits(),
     ]);

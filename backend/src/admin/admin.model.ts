@@ -3,6 +3,8 @@ import { z } from 'zod';
 export const AdminListQuerySchema = z.object({
   page: z.coerce.number().int().min(1).default(1),
   pageSize: z.coerce.number().int().min(1).max(100).default(20),
+  /** Tìm theo tên · họ · email · MSCB (nhiều từ, không phân biệt hoa thường). */
+  search: z.string().trim().max(120).optional(),
 });
 
 export type AdminListQueryType = z.infer<typeof AdminListQuerySchema>;

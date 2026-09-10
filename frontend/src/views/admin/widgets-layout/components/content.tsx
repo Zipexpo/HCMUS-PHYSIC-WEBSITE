@@ -1093,16 +1093,33 @@ function LeaderCard({
   const role = t(person.role, locale);
   const href = isEditing ? "#" : `/${locale}/${person.slug}`;
   return (
-    <div className="group flex gap-4 sm:gap-5 rounded-2xl border border-slate-200/80 dark:border-slate-700/60 bg-white dark:bg-[#141d2e] p-4 shadow-sm transition-all duration-300 hover:shadow-lg hover:border-blue-300 dark:hover:border-blue-500/50">
-      <a href={href} tabIndex={isEditing ? -1 : undefined} className="shrink-0">
-        <StaffPhoto
-          photo={person.photo}
-          alt={name}
-          className="w-24 h-32 sm:w-28 sm:h-36 object-cover rounded-xl"
-          iconClass="w-10 h-10"
-        />
+    <div className="group relative flex flex-col overflow-hidden rounded-2xl border border-slate-200/80 dark:border-slate-700/60 bg-white dark:bg-[#141d2e] shadow-sm transition-all duration-300 hover:-translate-y-1 hover:shadow-xl">
+      {/* Thanh nhấn trên đầu — đánh dấu "nổi bật" cho ban chủ nhiệm. */}
+      <span
+        className="absolute inset-x-0 top-0 z-10 h-1.5"
+        style={{ background: accent }}
+        aria-hidden="true"
+      />
+      <a
+        href={href}
+        tabIndex={isEditing ? -1 : undefined}
+        className="block focus:outline-none"
+      >
+        <div className="relative overflow-hidden">
+          <StaffPhoto
+            photo={person.photo}
+            alt={name}
+            className="w-full aspect-[3/4] object-cover transition-transform duration-500 group-hover:scale-[1.03]"
+            iconClass="w-16 h-16"
+          />
+          <div className="pointer-events-none absolute inset-0 flex items-end justify-center bg-gradient-to-t from-black/55 via-black/5 to-transparent opacity-0 group-hover:opacity-100 transition-opacity duration-300">
+            <span className="mb-4 inline-flex items-center gap-1 rounded-full bg-white/95 px-4 py-1.5 text-[12.5px] font-semibold text-blue-700 shadow-md">
+              {profileLabel(locale)} <span aria-hidden>→</span>
+            </span>
+          </div>
+        </div>
       </a>
-      <div className="flex min-w-0 flex-col justify-center">
+      <div className="flex flex-col items-center p-4 text-center">
         {deg && (
           <p className="text-[12px] font-semibold tracking-wide text-blue-600/90 dark:text-blue-400">
             {deg}
@@ -1117,10 +1134,7 @@ function LeaderCard({
             {name}
           </h3>
         </a>
-        <p
-          className="mt-0.5 text-sm font-semibold"
-          style={{ color: accent }}
-        >
+        <p className="mt-0.5 text-sm font-semibold" style={{ color: accent }}>
           {role}
         </p>
         {person.email && (
@@ -1133,13 +1147,6 @@ function LeaderCard({
             {person.email}
           </a>
         )}
-        <a
-          href={href}
-          tabIndex={isEditing ? -1 : undefined}
-          className="mt-2 inline-flex items-center gap-1 text-[12.5px] font-semibold text-blue-700 dark:text-blue-300 hover:gap-2 transition-all"
-        >
-          {profileLabel(locale)} <span aria-hidden>→</span>
-        </a>
       </div>
     </div>
   );
@@ -1316,17 +1323,18 @@ function DepartmentStaffAutoRender({
   );
 
   return (
-    <section className="w-full max-w-6xl mx-auto px-6 py-8 md:py-12">
-      {showHero && slug ? (
+    <div className="w-full">
+      {/* Hero TRÀN VIỀN (full-bleed) như banner đầu trang — không phải hộp bo góc
+          lơ lửng. Nền gradient trải hết ngang, nội dung căn giữa. */}
+      {showHero && slug && (
         <div
-          className="relative overflow-hidden rounded-3xl mb-9 px-6 py-12 md:py-16 text-center text-white"
+          className="relative w-full overflow-hidden text-white"
           style={{
-            background: `linear-gradient(135deg, ${accent} 0%, #0c2340 55%, #071320 100%)`,
+            background: `linear-gradient(135deg, ${accent} 0%, #0c2340 58%, #06101c 100%)`,
           }}
         >
-          {/* Hoạ tiết chấm mờ cho chiều sâu, không phá chữ. */}
           <div
-            className="pointer-events-none absolute inset-0 opacity-[0.10]"
+            className="pointer-events-none absolute inset-0 opacity-[0.08]"
             style={{
               backgroundImage:
                 "radial-gradient(circle at 1px 1px, #fff 1px, transparent 0)",
@@ -1334,18 +1342,24 @@ function DepartmentStaffAutoRender({
             }}
             aria-hidden="true"
           />
-          <div className="relative mx-auto max-w-3xl">
+          {/* Vệt sáng nhẹ góc trên trái cho chiều sâu. */}
+          <div
+            className="pointer-events-none absolute -top-24 -left-20 h-72 w-72 rounded-full opacity-25 blur-3xl"
+            style={{ background: accent }}
+            aria-hidden="true"
+          />
+          <div className="relative mx-auto max-w-4xl px-6 py-14 md:py-20 text-center">
             {heroEyebrowText && (
-              <p className="text-[11px] md:text-xs font-semibold uppercase tracking-[0.25em] text-white/70">
+              <p className="text-[11px] md:text-xs font-semibold uppercase tracking-[0.28em] text-white/70">
                 {heroEyebrowText}
               </p>
             )}
-            <h1 className="mt-2 text-2xl md:text-4xl font-extrabold tracking-tight drop-shadow-[0_2px_8px_rgba(0,0,0,0.35)]">
+            <h1 className="mt-2.5 text-3xl md:text-[2.6rem] md:leading-[1.15] font-extrabold tracking-tight drop-shadow-[0_2px_10px_rgba(0,0,0,0.35)]">
               {heroTitle}
             </h1>
             {people.length > 0 && (
-              <div className="mt-6 flex flex-wrap items-center justify-center gap-2 md:gap-2.5">
-                <span className="rounded-full bg-white/20 px-3.5 py-1.5 text-[13px] font-semibold backdrop-blur-sm">
+              <div className="mt-7 flex flex-wrap items-center justify-center gap-2 md:gap-2.5">
+                <span className="rounded-full bg-white/20 px-3.5 py-1.5 text-[13px] font-semibold ring-1 ring-white/15 backdrop-blur-sm">
                   {people.length} {en ? "staff" : "nhân sự"}
                 </span>
                 {statBits.map((b) => (
@@ -1360,17 +1374,20 @@ function DepartmentStaffAutoRender({
             )}
           </div>
         </div>
-      ) : titleText ? (
-        <div className="mb-6 text-center">
-          <h2 className="text-2xl md:text-3xl font-extrabold text-slate-800 dark:text-slate-100">
-            {titleText}
-          </h2>
-          <span
-            className="mt-3 block h-1 w-20 mx-auto rounded-full"
-            style={{ backgroundColor: accent }}
-          />
-        </div>
-      ) : null}
+      )}
+
+      <section className="w-full max-w-6xl mx-auto px-6 pb-12 pt-8 md:pt-10">
+        {!showHero && titleText && (
+          <div className="mb-6 text-center">
+            <h2 className="text-2xl md:text-3xl font-extrabold text-slate-800 dark:text-slate-100">
+              {titleText}
+            </h2>
+            <span
+              className="mt-3 block h-1 w-20 mx-auto rounded-full"
+              style={{ backgroundColor: accent }}
+            />
+          </div>
+        )}
 
       {!slug ? (
         <p className="text-center text-sm text-slate-500 dark:text-slate-400 py-10">
@@ -1461,7 +1478,8 @@ function DepartmentStaffAutoRender({
           {vLeaders.length > 0 && (
             <div className="mb-12">
               {divider(en ? "Board of Management" : "Ban chủ nhiệm", vLeaders.length)}
-              <div className="grid gap-4 sm:grid-cols-2 sm:gap-5">
+              {/* Căn giữa, 2 thẻ lớn — nổi bật hơn lưới giảng viên. */}
+              <div className="grid gap-5 sm:grid-cols-2 sm:gap-6 max-w-3xl mx-auto">
                 {vLeaders.map((p) => (
                   <LeaderCard
                     key={p.slug}
@@ -1488,7 +1506,7 @@ function DepartmentStaffAutoRender({
                     : "Giảng viên & nhân sự Bộ môn",
                 vMain.length,
               )}
-              <div className="grid grid-cols-2 gap-x-5 gap-y-8 sm:grid-cols-3 md:gap-x-7 md:gap-y-10">
+              <div className="grid grid-cols-2 gap-x-5 gap-y-8 sm:grid-cols-3 lg:grid-cols-4 md:gap-x-6 md:gap-y-9">
                 {vMain.map((p) => (
                   <StaffGridCard
                     key={p.slug}
@@ -1529,7 +1547,8 @@ function DepartmentStaffAutoRender({
           )}
         </>
       )}
-    </section>
+      </section>
+    </div>
   );
 }
 
