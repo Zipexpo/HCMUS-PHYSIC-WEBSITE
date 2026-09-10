@@ -389,6 +389,9 @@ export const CreatePublicationBodySchema = z.object({
    *  của bài, kể cả ngoài Trường). Giao diện vốn đã gửi, trước đây bị Zod bỏ. */
   externalAuthors: z.array(ExternalAuthorSchema).max(2000).default([]),
   totalAuthors: z.number().int().min(1).max(2000).optional(),
+  /** SỐ tác giả thuộc Trường — cho phép 0 (mục 1b: bài không ai thuộc Trường).
+   *  Thiếu trong schema này thì Zod bỏ số app gửi → mọi bài về mặc định 1. */
+  schoolAuthors: z.number().int().min(0).max(2000).optional(),
 
   // ── Phân loại Phụ lục 2, chọn NGAY lúc khai ──────────────────────────────
   // Bắt quay lại lần hai nghĩa là nhiều người sẽ không quay lại, mà chưa phân
@@ -551,6 +554,12 @@ export const IntegrationPublicationResSchema = z.object({
       isFirst: z.boolean(),
       isCorresponding: z.boolean(),
       isLast: z.boolean(),
+      /**
+       * Người được hỏi CÓ ghi địa chỉ Trường trên bài này không (câu hỏi theo
+       * từng cặp người × bài — ca A/B/C). `true`=có · `false`=không (ACADsoom cho
+       * 0 giờ) · `null`=chưa xác định (vị trí -1 / chưa khai → tính như cũ).
+       */
+      authorAtSchool: z.boolean().nullable(),
 
       email: z.string().nullable(),
       /** Bản ghi này KHÔNG còn được tính nữa (xoá / rút phân loại / rút xác nhận). */

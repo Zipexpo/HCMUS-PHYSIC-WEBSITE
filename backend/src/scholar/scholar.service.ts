@@ -455,6 +455,10 @@ export class ScholarService {
         source: w.source || 'manual',
         raw: (w as { raw?: unknown }).raw as Prisma.InputJsonValue,
         totalAuthors: body.totalAuthors ?? Math.max(1, w.authors?.length ?? 1),
+        // App gửi số tác giả THUỘC Trường (0 khi không ai thuộc — mục 1b). Không
+        // ghi thì mặc định Prisma = 1, và recount `max(1, …)` xoá mất số 0. `?? 1`
+        // chỉ để phòng path không gửi trường này.
+        schoolAuthors: body.schoolAuthors ?? 1,
         // Phân loại chọn ngay lúc khai. Để trống vẫn lưu được, chỉ là bài đó
         // chưa lọt vào API tích hợp nên chưa tính KPI.
         catalogCode: body.catalogCode ?? null,
@@ -566,22 +570,40 @@ export class ScholarService {
   private async recount(publicationId: string) {
     const pub = await this.prisma.publication.findUnique({
       where: { id: publicationId },
-      select: { schoolAuthors: true, totalAuthors: true },
+      select: { schoolAuthors: true, totalAuthors: true, authorsRaw: true },
     });
     if (!pub) return;
 
     const confirmed = await this.prisma.publicationAuthor.findMany({
       where: { publicationId, claimStatus: 'CONFIRMED' },
-      select: { isFirst: true, isCorresponding: true, isLast: true },
+      select: {
+        isFirst: true,
+        isCorresponding: true,
+        isLast: true,
+        authorIndex: true,
+      },
     });
-    const schoolAuthors = Math.max(pub.schoolAuthors, confirmed.length);
+
+    // Tác giả đã xác nhận nhưng GHI ĐỊA CHỈ NGOÀI TRƯỜNG trên bài này
+    // (`isNonSchool` ở `authorsRaw[authorIndex]`) KHÔNG phải "tác giả thuộc
+    // Trường". Tính họ vào cận dưới sẽ đẩy `schoolAuthors = 0` (mục 1b) lên 1 →
+    // xoá sạch ý người khai (ngay ở đường tạo, hoặc lần xác nhận kế ở đường sửa).
+    const raw = Array.isArray(pub.authorsRaw)
+      ? (pub.authorsRaw as Array<Record<string, unknown>>)
+      : [];
+    const ngoaiTruong = (idx: number) =>
+      idx >= 0 && !!raw[idx] && raw[idx].isNonSchool === true;
+    const thuocTruong = confirmed.filter((a) => !ngoaiTruong(a.authorIndex));
+
+    const schoolAuthors = Math.max(pub.schoolAuthors, thuocTruong.length);
 
     await this.prisma.publication.update({
       where: { id: publicationId },
       data: {
         schoolAuthors,
         totalAuthors: Math.max(pub.totalAuthors, schoolAuthors),
-        mainAuthorAtSchool: confirmed.some(
+        // Tác giả chính THUỘC TRƯỜNG (loại người ghi địa chỉ ngoài).
+        mainAuthorAtSchool: thuocTruong.some(
           (a) => a.isFirst || a.isCorresponding || a.isLast,
         ),
       },
@@ -1227,6 +1249,22 @@ export class ScholarService {
 
     const mapped = rows.map((r) => {
       const p = r.publication;
+      // Người ĐƯỢC HỎI có ghi địa chỉ Trường trên CHÍNH bài này không — câu hỏi
+      // theo từng cặp (người × bài) mà 4 con số của cả bài không trả lời được (ca
+      // A/B/C). Lấy từ `authorsRaw[authorIndex].isNonSchool`:
+      //   true  = có ghi địa chỉ Trường   → false = KHÔNG   → null = chưa xác định
+      // ACADsoom hiểu 3 trạng thái: false → 0 giờ, null → tính như cũ.
+      const raw = Array.isArray(p.authorsRaw)
+        ? (p.authorsRaw as Array<Record<string, unknown>>)
+        : [];
+      const nguoiDuocHoi =
+        r.authorIndex != null && r.authorIndex >= 0 ? raw[r.authorIndex] : null;
+      const authorAtSchool =
+        nguoiDuocHoi && typeof nguoiDuocHoi === 'object'
+          ? nguoiDuocHoi.isNonSchool === true
+            ? false
+            : true
+          : null;
       return {
         changedAt: laterOf(r.updatedAt, p.updatedAt),
         item: {
@@ -1282,6 +1320,8 @@ export class ScholarService {
           isFirst: r.isFirst,
           isCorresponding: r.isCorresponding,
           isLast: r.isLast,
+          // Người được hỏi có ghi địa chỉ Trường trên bài này (3 trạng thái).
+          authorAtSchool,
           email: r.user?.email ?? null,
           // Ba đường dẫn tới "thôi không tính nữa", gộp thành một cờ để bên nhận
           // khỏi phải tự suy luận: xoá bài, rút phân loại, rút xác nhận.
