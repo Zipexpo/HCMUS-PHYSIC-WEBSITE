@@ -107,4 +107,18 @@ export class AdminService {
     await this.adminRepository.setPassword(id, hashed);
     return { message: 'Password reset' };
   }
+
+  // ── Thư viện ảnh nền hero ───────────────────────────────────────────────────
+  listHeroBackgrounds() {
+    return this.adminRepository.listHeroBackgrounds();
+  }
+
+  addHeroBackground(url: string, name: string | null, createdBy?: string) {
+    return this.adminRepository.addHeroBackground({ url, name, createdBy });
+  }
+
+  async removeHeroBackground(id: string) {
+    await this.adminRepository.deleteHeroBackground(id);
+    return { message: 'Đã xoá ảnh nền' };
+  }
 }

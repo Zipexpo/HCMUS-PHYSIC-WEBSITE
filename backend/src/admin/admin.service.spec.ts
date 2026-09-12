@@ -21,6 +21,9 @@ const makeRepoMock = (): RepoMock => ({
   setPassword: vi.fn(),
   findByEmail: vi.fn(),
   createStaff: vi.fn(),
+  listHeroBackgrounds: vi.fn(),
+  addHeroBackground: vi.fn(),
+  deleteHeroBackground: vi.fn(),
 });
 
 const sampleAdmin = {
@@ -69,7 +72,9 @@ describe('AdminService mutations', () => {
 
       const result = await service.list({ page: 2, pageSize: 5 });
 
-      expect(repo.listPaged).toHaveBeenCalledWith('admin', 5, 5);
+      // Không gõ từ khoá thì `search` vẫn đi xuống repo, là undefined — repo tự
+      // bỏ qua. Assert đủ 4 tham số để lần sau đổi chữ ký là test biết ngay.
+      expect(repo.listPaged).toHaveBeenCalledWith('admin', 5, 5, undefined);
       expect(result).toEqual({
         items: [sampleAdmin],
         total: 3,
@@ -78,6 +83,26 @@ describe('AdminService mutations', () => {
         pageSize: 5,
         units: [{ id: 'u1', name: 'BM A' }],
       });
+    });
+
+    // Từ khoá phải xuống CẢ `listPaged` LẪN `count`. Thiếu ở `count` thì tổng số
+    // trang vẫn tính theo danh sách CHƯA lọc: người dùng bấm sang trang sau thấy
+    // trống mà không hiểu vì sao. Còn `countActiveSince` cố ý KHÔNG lọc — đó là
+    // thống kê tổng "đang hoạt động", không phải số khớp từ khoá.
+    it('đưa từ khoá xuống listPaged + count, KHÔNG lọc activeNow', async () => {
+      repo.listPaged.mockResolvedValue([sampleAdmin]);
+      repo.count.mockResolvedValue(1);
+      repo.countActiveSince.mockResolvedValue(7);
+      repo.listUnits.mockResolvedValue([]);
+
+      await service.listStaff({ page: 1, pageSize: 10, search: 'thịnh' });
+
+      expect(repo.listPaged).toHaveBeenCalledWith('staff', 0, 10, 'thịnh');
+      expect(repo.count).toHaveBeenCalledWith('staff', 'thịnh');
+      expect(repo.countActiveSince).toHaveBeenCalledWith(
+        'staff',
+        expect.any(Date),
+      );
     });
   });
 

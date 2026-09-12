@@ -7,7 +7,9 @@ import { useEffect, useId, useRef, useState } from "react";
 import { toast } from "react-toastify";
 import { UserIcon } from "@/components/admin/icons";
 import { authApi, mediaApi, resolveMediaUrl } from "@/lib/api";
+import { isFacultyWide } from "@/lib/department";
 import { MediaPickerModal } from "@/views/admin/widgets-layout/fields/media-picker-modal";
+import { HeroBackgroundsManager } from "./hero-backgrounds-manager";
 
 type ProfileState = {
   firstName: string;
@@ -301,6 +303,11 @@ export function SettingsView() {
             </button>
           </div>
         </form>
+
+        {isFacultyWide(
+          profileQuery.data?.role,
+          profileQuery.data?.departmentId,
+        ) && <HeroBackgroundsManager />}
       </div>
 
       {showMediaPicker && (

@@ -160,4 +160,31 @@ export class AdminRepository {
       select: { id: true, email: true },
     });
   }
+
+  // ── Thư viện ảnh nền hero (admin quản, giảng viên chọn ở phys-profile) ──────
+  listHeroBackgrounds() {
+    return this.prisma.heroBackground.findMany({
+      orderBy: [{ sortOrder: 'asc' }, { createdAt: 'asc' }],
+      select: { id: true, url: true, name: true, sortOrder: true },
+    });
+  }
+
+  addHeroBackground(data: {
+    url: string;
+    name?: string | null;
+    createdBy?: string | null;
+  }) {
+    return this.prisma.heroBackground.create({
+      data: {
+        url: data.url,
+        name: data.name ?? null,
+        createdBy: data.createdBy ?? null,
+      },
+      select: { id: true, url: true, name: true, sortOrder: true },
+    });
+  }
+
+  deleteHeroBackground(id: string) {
+    return this.prisma.heroBackground.delete({ where: { id } });
+  }
 }

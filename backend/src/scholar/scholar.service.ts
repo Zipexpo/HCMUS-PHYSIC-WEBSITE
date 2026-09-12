@@ -225,7 +225,6 @@ export class ScholarService {
     return this.getProfile(userId);
   }
 
-
   /**
    * Thay CẢ danh sách học vấn.
    *
@@ -431,53 +430,95 @@ export class ScholarService {
     const publishedYear = body.publishedYear ?? w.publishedYear ?? null;
     const acceptedYear = body.acceptedYear ?? w.acceptedYear ?? null;
 
-    const created = await this.prisma.publication.create({
-      data: {
-        doi,
-        arxivId: w.arxivId ?? null,
-        isbn: w.isbn ?? null,
-        issn: w.issn ?? null,
-        type: w.type || 'journal-article',
-        title: w.title,
-        containerTitle: w.containerTitle ?? null,
-        volume: w.volume ?? null,
-        issue: w.issue ?? null,
-        pages: w.pages ?? null,
-        publisher: w.publisher ?? null,
-        url: w.url ?? null,
-        status: body.status,
-        publishedYear,
-        publishedMonth: body.publishedMonth ?? w.publishedMonth ?? null,
-        acceptedYear,
-        acceptedMonth: body.acceptedMonth ?? w.acceptedMonth ?? null,
-        countYear: resolveCountYear({ publishedYear, acceptedYear }),
-        authorsRaw,
-        source: w.source || 'manual',
-        raw: (w as { raw?: unknown }).raw as Prisma.InputJsonValue,
-        totalAuthors: body.totalAuthors ?? Math.max(1, w.authors?.length ?? 1),
-        // App gửi số tác giả THUỘC Trường (0 khi không ai thuộc — mục 1b). Không
-        // ghi thì mặc định Prisma = 1, và recount `max(1, …)` xoá mất số 0. `?? 1`
-        // chỉ để phòng path không gửi trường này.
-        schoolAuthors: body.schoolAuthors ?? 1,
-        // Phân loại chọn ngay lúc khai. Để trống vẫn lưu được, chỉ là bài đó
-        // chưa lọt vào API tích hợp nên chưa tính KPI.
-        catalogCode: body.catalogCode ?? null,
-        quartile: body.quartile ?? null,
-        classifiedBy: body.catalogCode ? userId : null,
-        classifiedAt: body.catalogCode ? new Date() : null,
-        satellite: body.satellite ?? false,
-        reprint: body.reprint ?? false,
-        fromProject: body.fromProject ?? false,
-        stage: body.stage ?? 0,
-        // TỔNG tác giả chính NGOÀI Trường — đếm lúc khai; integrationList cộng vào
-        // mainAuthorsAtSchool (đếm sống) để ra mainAuthors. recount() không đụng cột này.
-        externalMainAuthors: (body.externalAuthors ?? []).filter(
-          (a) => a.isFirst || a.isCorresponding || a.isLast,
-        ).length,
-        createdBy: userId,
-      },
-      select: { id: true },
-    });
+    const pubData: Prisma.PublicationUncheckedCreateInput = {
+      doi,
+      arxivId: w.arxivId ?? null,
+      isbn: w.isbn ?? null,
+      issn: w.issn ?? null,
+      type: w.type || 'journal-article',
+      title: w.title,
+      containerTitle: w.containerTitle ?? null,
+      volume: w.volume ?? null,
+      issue: w.issue ?? null,
+      pages: w.pages ?? null,
+      publisher: w.publisher ?? null,
+      url: w.url ?? null,
+      status: body.status,
+      publishedYear,
+      publishedMonth: body.publishedMonth ?? w.publishedMonth ?? null,
+      acceptedYear,
+      acceptedMonth: body.acceptedMonth ?? w.acceptedMonth ?? null,
+      countYear: resolveCountYear({ publishedYear, acceptedYear }),
+      authorsRaw,
+      source: w.source || 'manual',
+      raw: (w as { raw?: unknown }).raw as Prisma.InputJsonValue,
+      totalAuthors: body.totalAuthors ?? Math.max(1, w.authors?.length ?? 1),
+      // App gửi số tác giả THUỘC Trường (0 khi không ai thuộc — mục 1b). Không
+      // ghi thì mặc định Prisma = 1, và recount `max(1, …)` xoá mất số 0. `?? 1`
+      // chỉ để phòng path không gửi trường này.
+      schoolAuthors: body.schoolAuthors ?? 1,
+      // Phân loại chọn ngay lúc khai. Để trống vẫn lưu được, chỉ là bài đó
+      // chưa lọt vào API tích hợp nên chưa tính KPI.
+      catalogCode: body.catalogCode ?? null,
+      quartile: body.quartile ?? null,
+      classifiedBy: body.catalogCode ? userId : null,
+      classifiedAt: body.catalogCode ? new Date() : null,
+      satellite: body.satellite ?? false,
+      reprint: body.reprint ?? false,
+      fromProject: body.fromProject ?? false,
+      stage: body.stage ?? 0,
+      // TỔNG tác giả chính NGOÀI Trường — đếm lúc khai; integrationList cộng vào
+      // mainAuthorsAtSchool (đếm sống) để ra mainAuthors. recount() không đụng cột này.
+      externalMainAuthors: (body.externalAuthors ?? []).filter(
+        (a) => a.isFirst || a.isCorresponding || a.isLast,
+      ).length,
+      createdBy: userId,
+    };
+
+    // Hồi sinh dòng cùng DOI đã XOÁ MỀM thay vì insert bản mới. Unique index trên
+    // `doi` GỒM cả dòng đã xoá mềm, nên khai lại một bài từng bị xoá sẽ đụng ràng
+    // buộc và văng 500 (đúng lỗi người dùng gặp). Ghi đè toàn bộ dữ liệu mới lên
+    // dòng cũ, dựng lại danh sách tác giả từ đầu — kết quả như một lần khai mới,
+    // giữ nguyên id nên không đụng khoá ngoài nào.
+    if (doi) {
+      const dead = await this.prisma.publication.findFirst({
+        where: { doi, deletedAt: { not: null } },
+        select: { id: true },
+      });
+      if (dead) {
+        await this.prisma.publicationAuthor.deleteMany({
+          where: { publicationId: dead.id },
+        });
+        await this.prisma.publication.update({
+          where: { id: dead.id },
+          data: { ...pubData, deletedAt: null },
+        });
+        await this.attachSelf(dead.id, userId, body);
+        await this.invite(dead.id, userId, body.coAuthorUserIds ?? []);
+        await this.recount(dead.id);
+        this.bus.emit('publication.changed', {
+          id: dead.id,
+          userIds: [userId, ...(body.coAuthorUserIds ?? [])],
+        });
+        return this.findOne(dead.id, userId);
+      }
+    }
+
+    const created = await this.prisma.publication
+      .create({ data: pubData, select: { id: true } })
+      .catch((e: unknown) => {
+        // Chốt an toàn: nếu VẪN đụng unique DOI (đua giữa hai lần khai cùng lúc,
+        // hoặc dữ liệu lạ) thì báo tử tế thay vì để Prisma ném thành 500.
+        if (
+          e instanceof Prisma.PrismaClientKnownRequestError &&
+          e.code === 'P2002'
+        ) {
+          throw new BadRequestException(
+            'Công bố có cùng DOI/mã định danh đã tồn tại trong hệ thống.',
+          );
+        }
+        throw e;
+      });
 
     await this.attachSelf(created.id, userId, body);
     await this.invite(created.id, userId, body.coAuthorUserIds ?? []);
@@ -1046,8 +1087,9 @@ export class ScholarService {
    * giả / chủ nhiệm / thành viên để bên nhận chỉ việc trải ra bảng Excel.
    */
   async facultyReport() {
-    const vietName = (u?: { firstName: string | null; lastName: string | null } | null) =>
-      u ? [u.lastName, u.firstName].filter(Boolean).join(' ').trim() : '';
+    const vietName = (
+      u?: { firstName: string | null; lastName: string | null } | null,
+    ) => (u ? [u.lastName, u.firstName].filter(Boolean).join(' ').trim() : '');
 
     const [pubs, projects] = await Promise.all([
       this.prisma.publication.findMany({
@@ -1144,7 +1186,9 @@ export class ScholarService {
       projects: projects.map((pr) => {
         const lead = pr.members.find((m) => m.role === 'LEAD');
         const memberNames = pr.members
-          .map((m) => (m.user ? vietName(m.user) : (m.externalName ?? '')).trim())
+          .map((m) =>
+            (m.user ? vietName(m.user) : (m.externalName ?? '')).trim(),
+          )
           .filter(Boolean);
         return {
           decisionNo: pr.decisionNo,
@@ -1154,7 +1198,11 @@ export class ScholarService {
           startMonth: pr.startMonth,
           endYear: pr.endYear,
           endMonth: pr.endMonth,
-          leadName: lead ? (lead.user ? vietName(lead.user) : (lead.externalName ?? '')) : '',
+          leadName: lead
+            ? lead.user
+              ? vietName(lead.user)
+              : (lead.externalName ?? '')
+            : '',
           memberNames,
           memberCount: pr.members.length,
         };
@@ -1306,9 +1354,8 @@ export class ScholarService {
           // TỔNG tác giả chính CỦA BÀI = (chính thuộc Trường, đếm sống) + (chính
           // NGOÀI Trường, lưu lúc khai). Đây mới là mẫu số thật của phần 1/3 (mục 1).
           mainAuthors:
-            p.authors.filter(
-              (a) => a.isFirst || a.isCorresponding || a.isLast,
-            ).length + (p.externalMainAuthors ?? 0),
+            p.authors.filter((a) => a.isFirst || a.isCorresponding || a.isLast)
+              .length + (p.externalMainAuthors ?? 0),
           isMainAuthor: r.isFirst || r.isCorresponding || r.isLast,
           sharePercent: r.sharePercent,
 
@@ -1513,7 +1560,9 @@ export class ScholarService {
     physoomId?: string | null;
     teacherId?: string | null;
   }) {
-    const email = String(data.email || '').trim().toLowerCase();
+    const email = String(data.email || '')
+      .trim()
+      .toLowerCase();
     if (!email) throw new BadRequestException('Thiếu email');
 
     // Physoom gửi `name` nguyên khối; nếu không tách sẵn first/last thì đặt cả

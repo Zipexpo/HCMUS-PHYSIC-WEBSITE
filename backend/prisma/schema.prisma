@@ -868,6 +868,19 @@ model AIConfig {
   @@index([isActive])
 }
 
+/// Thư viện ẢNH NỀN HERO cho trang cá nhân — admin quản (thêm/xoá), giảng viên
+/// chọn ở phys-profile. `url` là đường dẫn ảnh trong kho media.
+model HeroBackground {
+  id        String   @id @default(cuid())
+  url       String
+  name      String?
+  sortOrder Int      @default(0)
+  createdBy String?
+  createdAt DateTime @default(now())
+
+  @@index([sortOrder])
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Hồ sơ khoa học — xem docs/ho-so-khoa-hoc.md
 //

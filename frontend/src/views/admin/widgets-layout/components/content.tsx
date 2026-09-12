@@ -1620,6 +1620,309 @@ export const DepartmentStaffAuto: ComponentConfig<{
   ),
 };
 
+// ── Đội ngũ TOÀN KHOA (auto) ────────────────────────────────────────────────
+// Gộp người MỌI bộ môn (gọi lại endpoint per-bộ-môn cho 8 slug), NHÓM theo bộ
+// môn, lọc cơ hữu (`!visiting`) / thỉnh giảng (`visiting`). Cho 2 trang cấp Khoa
+// (/giang-vien-co-huu, /giang-vien-thinh-giang). Tái dùng endpoint + thẻ sẵn có.
+const FACULTY_DEPT_SLUGS = [
+  "vat-ly-tin-hoc",
+  "vat-ly-ung-dung",
+  "vat-ly-chat-ran",
+  "vat-ly-dien-tu",
+  "vat-ly-hat-nhan",
+  "vat-ly-dia-cau",
+  "vat-ly-ly-thuyet",
+  "vat-ly-hai-duong",
+  // Cán bộ Văn phòng Khoa (chuyên viên/giáo vụ) cũng là nhân sự cơ hữu của Khoa —
+  // xếp sau các bộ môn học thuật. Trang thỉnh giảng tự bỏ qua (họ không visiting).
+  "van-phong-khoa",
+];
+
+type FacultyGroup = { slug: string; name: string; people: DeptStaffPerson[] };
+
+function FacultyStaffAutoRender({
+  facultyType,
+  title,
+  heroEyebrow,
+  accentColor,
+  isEditing,
+}: {
+  facultyType: "co-huu" | "thinh-giang";
+  title: LocalizedString;
+  heroEyebrow: LocalizedString;
+  accentColor: string;
+  isEditing: boolean;
+}) {
+  const { locale } = useLocale();
+  const en = locale === "en";
+  const [groups, setGroups] = useState<FacultyGroup[]>([]);
+  const [status, setStatus] = useState<"loading" | "ready" | "error">(
+    "loading",
+  );
+  const [query, setQuery] = useState("");
+
+  useEffect(() => {
+    let alive = true;
+    setStatus("loading");
+    Promise.all(
+      FACULTY_DEPT_SLUGS.map((slug) =>
+        departmentStaffApi.get(slug).catch(() => null),
+      ),
+    )
+      .then((results) => {
+        if (!alive) return;
+        const visiting = facultyType === "thinh-giang";
+        const g: FacultyGroup[] = [];
+        for (const r of results) {
+          if (!r) continue;
+          const people = (r.people || []).filter(
+            (p) => p.visiting === visiting,
+          );
+          if (people.length > 0) {
+            g.push({ slug: r.department, name: r.departmentName, people });
+          }
+        }
+        setGroups(g);
+        setStatus("ready");
+      })
+      .catch(() => {
+        if (alive) setStatus("error");
+      });
+    return () => {
+      alive = false;
+    };
+  }, [facultyType]);
+
+  const accent = accentColor || "#1e40af";
+  const visitingMode = facultyType === "thinh-giang";
+  const heroTitle =
+    t(title, locale) ||
+    (visitingMode
+      ? en
+        ? "Visiting Lecturers"
+        : "Giảng viên thỉnh giảng"
+      : en
+        ? "Faculty Lecturers"
+        : "Giảng viên cơ hữu");
+  const heroEyebrowText =
+    t(heroEyebrow, locale) ||
+    (en ? "Faculty of Physics" : "Khoa Vật lý – Vật lý Kỹ thuật");
+
+  const matchQ = (p: DeptStaffPerson) => {
+    const q = deaccent(query.trim());
+    if (!q) return true;
+    return (
+      deaccent(t(p.name, locale)).includes(q) ||
+      deaccent(t(p.role, locale)).includes(q)
+    );
+  };
+  const visible = groups
+    .map((g) => ({ ...g, people: g.people.filter(matchQ) }))
+    .filter((g) => g.people.length > 0);
+  const total = groups.reduce((s, g) => s + g.people.length, 0);
+  // Ban lãnh đạo Khoa: gom người có chức vụ CẤP KHOA (Trưởng/Phó khoa) từ mọi bộ
+  // môn, hiển thị bằng chức vụ Khoa (không phải chức vụ bộ môn) và xếp LÊN ĐẦU —
+  // Trưởng khoa trước, Phó khoa sau. Họ vẫn xuất hiện trong bộ môn của mình bên
+  // dưới (giữ đúng đầu người của bộ môn). Trang thỉnh giảng không có (lãnh đạo là
+  // cơ hữu nên đã bị lọc khỏi `groups`).
+  const facLeaders = groups
+    .flatMap((g) => g.people)
+    .filter((p) => p.facultyRole)
+    .map((p) => ({ ...p, role: p.facultyRole! }))
+    .filter(matchQ)
+    .sort(
+      (a, b) =>
+        (/phó/i.test(a.role.vi) ? 1 : 0) - (/phó/i.test(b.role.vi) ? 1 : 0),
+    );
+
+  return (
+    <div className="w-full">
+      <div
+        className="relative w-full overflow-hidden text-white"
+        style={{
+          background: `linear-gradient(135deg, ${accent} 0%, #0c2340 58%, #06101c 100%)`,
+        }}
+      >
+        <div
+          className="pointer-events-none absolute inset-0 opacity-[0.08]"
+          style={{
+            backgroundImage:
+              "radial-gradient(circle at 1px 1px, #fff 1px, transparent 0)",
+            backgroundSize: "22px 22px",
+          }}
+          aria-hidden="true"
+        />
+        <div className="relative mx-auto max-w-4xl px-6 py-14 md:py-20 text-center">
+          <p className="text-[11px] md:text-xs font-semibold uppercase tracking-[0.28em] text-white/70">
+            {heroEyebrowText}
+          </p>
+          <h1 className="mt-2.5 text-3xl md:text-[2.6rem] md:leading-[1.15] font-extrabold tracking-tight drop-shadow-[0_2px_10px_rgba(0,0,0,0.35)]">
+            {heroTitle}
+          </h1>
+          {total > 0 && (
+            <div className="mt-7 flex flex-wrap items-center justify-center gap-2 md:gap-2.5">
+              <span className="rounded-full bg-white/20 px-3.5 py-1.5 text-[13px] font-semibold ring-1 ring-white/15 backdrop-blur-sm">
+                {total} {en ? "people" : "người"}
+              </span>
+              <span className="rounded-full bg-white/10 px-3 py-1.5 text-[12.5px] backdrop-blur-sm">
+                <span className="font-bold">{groups.length}</span>{" "}
+                {en ? "units" : "đơn vị"}
+              </span>
+            </div>
+          )}
+        </div>
+      </div>
+
+      <section className="w-full max-w-6xl mx-auto px-6 pb-12 pt-8 md:pt-10">
+        {status === "loading" ? (
+          <p className="text-center text-sm text-slate-500 dark:text-slate-400 py-10">
+            {en ? "Loading…" : "Đang tải…"}
+          </p>
+        ) : status === "error" ? (
+          <p className="text-center text-sm text-slate-500 dark:text-slate-400 py-10">
+            {en ? "Unable to load." : "Không tải được danh sách."}
+          </p>
+        ) : total === 0 ? (
+          <p className="text-center text-sm text-slate-500 dark:text-slate-400 py-10">
+            {en ? "No staff yet." : "Chưa có nhân sự."}
+          </p>
+        ) : (
+          <>
+            <div className="mb-9 flex justify-center sm:justify-end">
+              <div className="relative w-full sm:w-64">
+                <Search className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
+                <input
+                  value={query}
+                  onChange={(e) => setQuery(e.target.value)}
+                  placeholder={en ? "Search by name…" : "Tìm theo tên…"}
+                  className="w-full rounded-full border border-slate-200 bg-white pl-9 pr-3 py-2 text-[13px] text-slate-700 placeholder:text-slate-400 focus:border-blue-400 focus:outline-none focus:ring-2 focus:ring-blue-500/30 dark:border-slate-700 dark:bg-[#141d2e] dark:text-slate-200"
+                />
+              </div>
+            </div>
+
+            {/* Ban lãnh đạo Khoa — nổi bật, đặt TRƯỚC các bộ môn */}
+            {!visitingMode && facLeaders.length > 0 && (
+              <div className="mb-14">
+                <div className="mb-6 flex items-center gap-3">
+                  <h2 className="text-[17px] font-bold text-slate-800 dark:text-slate-100 whitespace-nowrap">
+                    {en ? "Faculty Board" : "Ban lãnh đạo Khoa"}
+                  </h2>
+                  <span
+                    className="text-[11px] font-bold text-white rounded-full px-2 py-0.5 leading-none"
+                    style={{ backgroundColor: accent }}
+                  >
+                    {facLeaders.length}
+                  </span>
+                  <span className="h-px flex-1 bg-slate-200 dark:bg-slate-700" />
+                </div>
+                <div className="grid gap-5 sm:grid-cols-2 lg:grid-cols-3 sm:gap-6 max-w-4xl mx-auto">
+                  {facLeaders.map((p) => (
+                    <LeaderCard
+                      key={p.slug}
+                      person={p}
+                      locale={locale}
+                      isEditing={isEditing}
+                      accent={accent}
+                    />
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {visible.map((g) => (
+              <div key={g.slug} className="mb-12">
+                <div className="mb-6 flex items-center gap-3">
+                  <h2 className="text-[17px] font-bold text-slate-800 dark:text-slate-100 whitespace-nowrap">
+                    {g.name}
+                  </h2>
+                  <span
+                    className="text-[11px] font-bold text-white rounded-full px-2 py-0.5 leading-none"
+                    style={{ backgroundColor: accent }}
+                  >
+                    {g.people.length}
+                  </span>
+                  <span className="h-px flex-1 bg-slate-200 dark:bg-slate-700" />
+                </div>
+                {visitingMode ? (
+                  <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+                    {g.people.map((p) => (
+                      <VisitingCard
+                        key={p.slug}
+                        person={p}
+                        locale={locale}
+                        isEditing={isEditing}
+                      />
+                    ))}
+                  </div>
+                ) : (
+                  <div className="grid grid-cols-2 gap-x-5 gap-y-8 sm:grid-cols-3 lg:grid-cols-4 md:gap-x-6 md:gap-y-9">
+                    {g.people.map((p) => (
+                      <StaffGridCard
+                        key={p.slug}
+                        person={p}
+                        locale={locale}
+                        isEditing={isEditing}
+                      />
+                    ))}
+                  </div>
+                )}
+              </div>
+            ))}
+
+            {visible.length === 0 && (
+              <p className="text-center text-sm text-slate-500 dark:text-slate-400 py-10">
+                {en
+                  ? "No matching staff."
+                  : "Không tìm thấy nhân sự phù hợp."}
+              </p>
+            )}
+          </>
+        )}
+      </section>
+    </div>
+  );
+}
+
+export const FacultyStaffAuto: ComponentConfig<{
+  facultyType: "co-huu" | "thinh-giang";
+  title: LocalizedString;
+  heroEyebrow: LocalizedString;
+  accentColor: string;
+}> = {
+  label: "Đội ngũ toàn Khoa (auto)",
+  defaultProps: {
+    facultyType: "co-huu",
+    title: { vi: "", en: "" },
+    heroEyebrow: {
+      vi: "Khoa Vật lý – Vật lý Kỹ thuật",
+      en: "Faculty of Physics",
+    },
+    accentColor: "#1e40af",
+  },
+  fields: {
+    facultyType: {
+      type: "radio",
+      label: "Loại danh sách",
+      options: [
+        { label: "Cơ hữu", value: "co-huu" },
+        { label: "Thỉnh giảng", value: "thinh-giang" },
+      ],
+    },
+    title: localizedTextField("Tiêu đề hero (trống = mặc định theo loại)"),
+    heroEyebrow: localizedTextField("Chữ đệm hero"),
+    accentColor: colorField("Màu nhấn"),
+  },
+  render: ({ facultyType, title, heroEyebrow, accentColor, puck }) => (
+    <FacultyStaffAutoRender
+      facultyType={facultyType === "thinh-giang" ? "thinh-giang" : "co-huu"}
+      title={title}
+      heroEyebrow={heroEyebrow}
+      accentColor={accentColor}
+      isEditing={!!puck?.isEditing}
+    />
+  ),
+};
+
 export const DepartmentCard: ComponentConfig<{
   imageUrl: string;
   title: LocalizedString;

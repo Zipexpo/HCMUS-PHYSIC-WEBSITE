@@ -43,6 +43,12 @@ type DeptPerson = {
   visiting: boolean;
   /** Nhóm lọc: lanh-dao · giang-vien · giao-vu · thinh-giang. */
   category: string;
+  /**
+   * Chức vụ cấp KHOA (Trưởng/Phó khoa) suy từ `positionKey`, ĐỘC LẬP với `role`
+   * hiển thị theo bộ môn — để trang cấp Khoa gom riêng mục "Ban lãnh đạo Khoa".
+   * null với người không giữ chức vụ Khoa.
+   */
+  facultyRole?: Localized | null;
 };
 type DeptStaffRes = {
   department: string;
@@ -504,6 +510,14 @@ export class StaffPageService {
         en: cleanPersonName(r.name.en ?? ''),
       };
       const visiting = isVisiting(role.vi ?? '');
+      // Chức vụ cấp KHOA suy thẳng từ positionKey — giữ NGUYÊN dù `role` hiển thị
+      // theo bộ môn (VD Trưởng khoa cũng là Trưởng bộ môn thì thẻ bộ môn ghi
+      // "Trưởng bộ môn", còn đây vẫn nhận ra để xếp lên "Ban lãnh đạo Khoa").
+      const pk = (prof?.user?.positionKey ?? '').toLowerCase().trim();
+      const facultyRole: Localized | null =
+        pk === 'truong_khoa' || pk === 'pho_truong_khoa'
+          ? POSITION_ROLE[pk]
+          : null;
       people.push({
         ...r,
         name,
@@ -513,6 +527,7 @@ export class StaffPageService {
         visiting,
         category: categoryOf(role.vi ?? '', visiting),
         order,
+        facultyRole,
       });
     }
 
@@ -744,6 +759,296 @@ export class StaffPageService {
         revalidate.push(`page:${listingSlug}`);
       }
       pages.push({ slug: listingSlug, action: dryRun ? 'se-doi' : 'da-doi' });
+    }
+    if (!dryRun && revalidate.length) {
+      await this.cache.clear();
+      this.publicRevalidate.trigger([...revalidate, 'sitemap']);
+    }
+    return { dryRun, pages };
+  }
+
+  /** Trích props của khối `Navbar` đầu tiên trong một puckData (deep clone). */
+  private navbarPropsFrom(data: unknown): Record<string, unknown> | null {
+    if (!data || typeof data !== 'object') return null;
+    const content = (data as Record<string, unknown>).content;
+    if (!Array.isArray(content)) return null;
+    for (const item of content) {
+      const node = item as PuckNode;
+      if (node?.type === 'Navbar' && node.props) {
+        return JSON.parse(JSON.stringify(node.props)) as Record<string, unknown>;
+      }
+    }
+    return null;
+  }
+
+  /**
+   * Navbar RIÊNG của bộ môn để chép sang trang nhân sự. Ưu tiên trang giới thiệu
+   * rồi trang chủ bộ môn (đều mang Navbar bộ môn); không có thì quét các trang
+   * khác của bộ môn tìm khối Navbar đầu tiên. Trả null nếu bộ môn chưa có Navbar.
+   */
+  private async findDeptNavbarProps(
+    deptSlug: string,
+  ): Promise<Record<string, unknown> | null> {
+    for (const slug of [`${deptSlug}/gioi-thieu`, deptSlug]) {
+      const row = await this.prisma.pageLayout.findFirst({
+        where: { slug, deletedAt: null },
+        orderBy: [{ isPublished: 'desc' }, { updatedAt: 'desc' }],
+        select: { puckData: true, publishedPuckData: true },
+      });
+      const nav =
+        this.navbarPropsFrom(row?.publishedPuckData) ??
+        this.navbarPropsFrom(row?.puckData);
+      if (nav) return nav;
+    }
+    const rows = await this.prisma.pageLayout.findMany({
+      where: { deletedAt: null, slug: { startsWith: `${deptSlug}/` } },
+      orderBy: [{ isPublished: 'desc' }, { updatedAt: 'desc' }],
+      select: { puckData: true, publishedPuckData: true },
+      take: 40,
+    });
+    for (const r of rows) {
+      const nav =
+        this.navbarPropsFrom(r.publishedPuckData) ??
+        this.navbarPropsFrom(r.puckData);
+      if (nav) return nav;
+    }
+    return null;
+  }
+
+  /**
+   * Thay MỌI khối `Header` (nav Khoa đồng bộ tập trung) bằng `Navbar` RIÊNG của
+   * bộ môn. Giữ `id` của Header cũ cho ổn định. Idempotent: không có Header thì
+   * không đổi (trang vốn đã dùng Navbar bộ môn được bỏ qua).
+   */
+  private replaceHeaderWithNavbar(
+    data: unknown,
+    navbarProps: Record<string, unknown>,
+  ): { tree: unknown; changed: boolean } {
+    if (!data || typeof data !== 'object') return { tree: data, changed: false };
+    const obj = data as Record<string, unknown>;
+    const content = obj.content;
+    if (!Array.isArray(content)) return { tree: data, changed: false };
+    let changed = false;
+    const out = content.map((item) => {
+      const node = item as PuckNode;
+      if (node?.type !== 'Header') return item;
+      changed = true;
+      const id =
+        (node.props?.id as string) ??
+        (navbarProps.id as string) ??
+        `hdr-${Math.random().toString(36).slice(2, 8)}`;
+      return {
+        type: 'Navbar',
+        props: {
+          ...(JSON.parse(JSON.stringify(navbarProps)) as Record<
+            string,
+            unknown
+          >),
+          id,
+        },
+      };
+    });
+    return changed
+      ? { tree: { ...obj, content: out }, changed }
+      : { tree: data, changed: false };
+  }
+
+  /**
+   * Thay khối `Header` (nav Khoa) bằng Navbar RIÊNG của bộ môn trên trang
+   * `{bộ-môn}/nhan-su` VÀ mọi hồ sơ cá nhân `{bộ-môn}/nhan-su/{người}` — để nav
+   * của trang nhân sự khớp trang giới thiệu của chính bộ môn đó. `department` cho
+   * một bộ môn, `all` cho cả 8; `dryRun` xem trước. Chỉ quản trị. Ghi cả puckData
+   * lẫn publishedPuckData rồi revalidate. Idempotent.
+   */
+  async applyDeptNav(opts: {
+    department?: string;
+    all?: boolean;
+    dryRun?: boolean;
+  }) {
+    const dryRun = !!opts.dryRun;
+    let deptSlugs: string[];
+    if (opts.all) {
+      const depts = await this.prisma.department.findMany({
+        where: { kind: 'department' },
+        select: { slug: true },
+      });
+      deptSlugs = depts.map((d) => d.slug);
+    } else if (opts.department) {
+      deptSlugs = [opts.department.replace(/^\/+|\/+$/g, '')];
+    } else {
+      deptSlugs = [];
+    }
+
+    const pages: { slug: string; action: string }[] = [];
+    const revalidate: string[] = [];
+    for (const dept of deptSlugs) {
+      const navbar = await this.findDeptNavbarProps(dept);
+      if (!navbar) {
+        pages.push({ slug: `${dept}/nhan-su`, action: 'khong-co-navbar-mau' });
+        continue;
+      }
+      const targets = await this.prisma.pageLayout.findMany({
+        where: {
+          deletedAt: null,
+          OR: [
+            { slug: `${dept}/nhan-su` },
+            { slug: { startsWith: `${dept}/nhan-su/` } },
+          ],
+        },
+        select: {
+          id: true,
+          slug: true,
+          puckData: true,
+          publishedPuckData: true,
+          isPublished: true,
+        },
+      });
+      for (const layout of targets) {
+        const d = this.replaceHeaderWithNavbar(layout.puckData, navbar);
+        const pub = layout.isPublished
+          ? this.replaceHeaderWithNavbar(layout.publishedPuckData, navbar)
+          : { tree: layout.publishedPuckData, changed: false };
+        if (!d.changed && !pub.changed) {
+          pages.push({ slug: layout.slug, action: 'khong-doi' });
+          continue;
+        }
+        if (!dryRun) {
+          await this.prisma.pageLayout.update({
+            where: { id: layout.id },
+            data: {
+              ...(d.changed
+                ? { puckData: d.tree as Prisma.InputJsonValue }
+                : {}),
+              ...(pub.changed
+                ? { publishedPuckData: pub.tree as Prisma.InputJsonValue }
+                : {}),
+            },
+          });
+          revalidate.push(`page:${layout.slug}`);
+        }
+        pages.push({ slug: layout.slug, action: dryRun ? 'se-doi' : 'da-doi' });
+      }
+    }
+    if (!dryRun && revalidate.length) {
+      await this.cache.clear();
+      this.publicRevalidate.trigger([...revalidate, 'sitemap']);
+    }
+    return { dryRun, pages };
+  }
+
+  /** Node khối "Đội ngũ toàn Khoa" cho trang cơ hữu / thỉnh giảng. */
+  private makeFacultyStaffNode(type: 'co-huu' | 'thinh-giang'): PuckNode {
+    return {
+      type: 'FacultyStaffAuto',
+      props: {
+        id: `faculty-staff-${type}`,
+        facultyType: type,
+        title: { vi: '', en: '' },
+        heroEyebrow: {
+          vi: 'Khoa Vật lý – Vật lý Kỹ thuật',
+          en: 'Faculty of Physics',
+        },
+        accentColor: '#1e40af',
+      },
+    };
+  }
+
+  /** Thay `LegacyPageBody`/PageHero/Heading bằng MỘT khối `FacultyStaffAuto`, giữ
+   *  Header/Navbar + Footer. Idempotent. */
+  private transformFacultyContent(
+    data: unknown,
+    type: 'co-huu' | 'thinh-giang',
+  ): { tree: unknown; changed: boolean } {
+    if (!data || typeof data !== 'object') return { tree: data, changed: false };
+    const obj = data as Record<string, unknown>;
+    const content = obj.content;
+    if (!Array.isArray(content)) return { tree: data, changed: false };
+    const DROP = ['PageHero', 'Heading', 'LegacyPageBody'];
+    let changed = false;
+    let hasNode = false;
+    const out: unknown[] = [];
+    for (const item of content) {
+      const node = item as PuckNode;
+      if (node?.type && DROP.includes(node.type)) {
+        changed = true;
+        continue;
+      }
+      if (node?.type === 'FacultyStaffAuto' && node.props) {
+        hasNode = true;
+        const props: Record<string, unknown> = { ...node.props };
+        if (props.facultyType !== type) {
+          props.facultyType = type;
+          changed = true;
+        }
+        out.push({ ...node, props });
+        continue;
+      }
+      if (this.subtreeHasType(node, 'ProfileCard')) {
+        changed = true;
+        continue;
+      }
+      out.push(item);
+    }
+    if (!hasNode) {
+      const n = this.makeFacultyStaffNode(type);
+      const footerIdx = out.findIndex((x) =>
+        ['Footer', 'FooterBlock'].includes((x as PuckNode)?.type ?? ''),
+      );
+      if (footerIdx >= 0) out.splice(footerIdx, 0, n);
+      else out.push(n);
+      changed = true;
+    }
+    return { tree: { ...obj, content: out }, changed };
+  }
+
+  /**
+   * Lắp khối "Đội ngũ toàn Khoa" vào 2 trang cấp Khoa (giang-vien-co-huu /
+   * giang-vien-thinh-giang) — thay HTML cũ (LegacyPageBody). Chỉ quản trị.
+   */
+  async applyFacultyPages(opts: { dryRun?: boolean }) {
+    const dryRun = !!opts.dryRun;
+    const targets: { slug: string; type: 'co-huu' | 'thinh-giang' }[] = [
+      { slug: 'giang-vien-co-huu', type: 'co-huu' },
+      { slug: 'giang-vien-thinh-giang', type: 'thinh-giang' },
+    ];
+    const pages: { slug: string; action: string }[] = [];
+    const revalidate: string[] = [];
+    for (const t of targets) {
+      const layout = await this.prisma.pageLayout.findFirst({
+        where: { slug: t.slug, deletedAt: null },
+        orderBy: [{ isPublished: 'desc' }, { updatedAt: 'desc' }],
+        select: {
+          id: true,
+          puckData: true,
+          publishedPuckData: true,
+          isPublished: true,
+        },
+      });
+      if (!layout) {
+        pages.push({ slug: t.slug, action: 'khong-co-trang' });
+        continue;
+      }
+      const d = this.transformFacultyContent(layout.puckData, t.type);
+      const pub = layout.isPublished
+        ? this.transformFacultyContent(layout.publishedPuckData, t.type)
+        : { tree: layout.publishedPuckData, changed: false };
+      if (!d.changed && !pub.changed) {
+        pages.push({ slug: t.slug, action: 'khong-doi' });
+        continue;
+      }
+      if (!dryRun) {
+        await this.prisma.pageLayout.update({
+          where: { id: layout.id },
+          data: {
+            ...(d.changed ? { puckData: d.tree as Prisma.InputJsonValue } : {}),
+            ...(pub.changed
+              ? { publishedPuckData: pub.tree as Prisma.InputJsonValue }
+              : {}),
+          },
+        });
+        revalidate.push(`page:${t.slug}`);
+      }
+      pages.push({ slug: t.slug, action: dryRun ? 'se-doi' : 'da-doi' });
     }
     if (!dryRun && revalidate.length) {
       await this.cache.clear();

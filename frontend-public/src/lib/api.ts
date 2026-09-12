@@ -210,6 +210,8 @@ export type DeptStaffPerson = {
   visiting: boolean;
   /** Nhóm lọc: lanh-dao · giang-vien · giao-vu · thinh-giang. */
   category: string;
+  /** Chức vụ cấp Khoa (Trưởng/Phó khoa) nếu có — trang cấp Khoa gom "Ban lãnh đạo". */
+  facultyRole?: DeptStaffLoc | null;
 };
 export type DeptStaffRes = {
   department: string;

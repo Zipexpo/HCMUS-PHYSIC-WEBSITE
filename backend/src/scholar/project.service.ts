@@ -52,7 +52,10 @@ export function soThang(
   const dau = startYear * 12 + (startMonth - 1);
   const cuoi = endYear * 12 + (endMonth - 1);
   if (cuoi < dau) return null;
-  return cuoi - dau + 1;
+  // HIỆU SỐ (span), KHÔNG cộng 1: 2/2025→2/2026 = 12 (đúng một năm), 1/2025→
+  // 12/2025 = 11, cùng tháng = 0. Trước đây +1 (đếm cả hai đầu mút) nên 2/25→2/26
+  // ra 13 — lệch dư một tháng.
+  return cuoi - dau;
 }
 
 @Injectable()
@@ -217,7 +220,7 @@ export class ProjectService {
       org?: string | null;
       role?: 'LEAD' | 'SECRETARY' | 'MEMBER';
       sharePercent?: number | null;
-      studentType?: 'cao_hoc' | 'ncs' | null;
+      studentType?: 'sinh_vien' | 'cao_hoc' | 'ncs' | null;
     }>,
   ) {
     const sach = people.filter((p) => p.name.trim());
@@ -246,7 +249,7 @@ export class ProjectService {
       userId: string;
       role?: 'LEAD' | 'SECRETARY' | 'MEMBER';
       sharePercent?: number | null;
-      studentType?: 'cao_hoc' | 'ncs' | null;
+      studentType?: 'sinh_vien' | 'cao_hoc' | 'ncs' | null;
     }>,
   ) {
     // Khử trùng theo userId: gắn tên một người hai lần là lỗi của người khai,
@@ -373,8 +376,39 @@ export class ProjectService {
       }
     }
 
-    if (body.externalMembers?.length) {
-      await this.addExternals(id, body.externalMembers);
+    if (body.externalMembers !== undefined) {
+      // THAY TOÀN BỘ thành viên ngoài theo danh sách gửi lên — không chỉ thêm.
+      //
+      // `addExternals` (dùng lúc TẠO) chỉ createMany. Gọi nó ở bước CẬP NHẬT thì
+      // mỗi lần lưu lại nhân đôi người cũ: giao diện gửi lại cả danh sách (kể cả
+      // người đã có) nên lần lưu thứ n để lại n bản của mỗi người — thổi phồng
+      // mẫu số chia giờ NCKH mà không ai thấy. Người ngoài không có tài khoản
+      // (userId = null) nên không có công bố/giờ riêng, chỉ là đầu người để chia
+      // phần; xoá rồi tạo lại là an toàn, và nhờ vậy còn SỬA được tên/đơn vị lẫn
+      // XOÁ bớt người — thứ mà kiểu chỉ-thêm không làm được.
+      const externs = body.externalMembers.filter((p) => p.name?.trim());
+      await this.prisma.$transaction([
+        this.prisma.projectMember.deleteMany({
+          where: { projectId: id, userId: null },
+        }),
+        ...(externs.length
+          ? [
+              this.prisma.projectMember.createMany({
+                data: externs.map((p) => ({
+                  projectId: id,
+                  userId: null,
+                  externalName: p.name.trim(),
+                  externalOrg: p.org?.trim() || null,
+                  sharePercent: p.sharePercent ?? null,
+                  studentType: p.studentType ?? null,
+                  role: p.role ?? ('MEMBER' as const),
+                  claimStatus: 'CONFIRMED' as const,
+                  respondedAt: new Date(),
+                })),
+              }),
+            ]
+          : []),
+      ]);
     }
 
     if (body.mySharePercent !== undefined && body.mySharePercent !== null) {
@@ -646,7 +680,14 @@ export class ProjectService {
           startMonth: p.startMonth,
           endYear: p.endYear,
           endMonth: p.endMonth,
-          months: p.months,
+          // Suy lại số tháng từ mốc ngay lúc gửi, không tin giá trị đã lưu: đề
+          // tài tạo trước khi đổi sang quy ước SPAN còn giữ `months` kiểu cũ
+          // (cộng cả hai đầu, dư một tháng) trong CSDL. Suy lại thì đề tài cũ
+          // lẫn mới đều gửi cùng một thước, khớp cách ACADsoom cắt tháng theo
+          // năm học (nửa mở). Thiếu mốc thì mới lùi về số đã lưu / nhập tay.
+          months:
+            soThang(p.startYear, p.startMonth, p.endYear, p.endMonth) ??
+            p.months,
           role: r.role,
           isLead: r.role === 'LEAD',
           sharePercent: r.sharePercent,

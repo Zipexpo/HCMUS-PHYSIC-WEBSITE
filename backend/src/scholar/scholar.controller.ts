@@ -505,6 +505,32 @@ export class ScholarController {
   }
 
   /**
+   * Lắp khối "Đội ngũ toàn Khoa" vào 2 trang cấp Khoa (cơ hữu / thỉnh giảng) —
+   * thay HTML cũ. Chỉ quản trị.
+   */
+  @Post('staff-pages/apply-faculty')
+  @Roles(RoleName.Admin, RoleName.SuperAdmin)
+  applyFaculty(@Body('dryRun') dryRun?: boolean) {
+    return this.staffPage.applyFacultyPages({ dryRun });
+  }
+
+  /**
+   * Thay khối `Header` (nav Khoa) bằng Navbar RIÊNG của bộ môn trên trang
+   * `{bộ-môn}/nhan-su` và mọi hồ sơ cá nhân dưới đó — để nav trang nhân sự khớp
+   * trang giới thiệu của bộ môn. `department` cho một bộ môn, `all` cho cả 8;
+   * `dryRun` xem trước. Chỉ quản trị.
+   */
+  @Post('staff-pages/apply-dept-nav')
+  @Roles(RoleName.Admin, RoleName.SuperAdmin)
+  applyDeptNav(
+    @Body('department') department?: string,
+    @Body('all') all?: boolean,
+    @Body('dryRun') dryRun?: boolean,
+  ) {
+    return this.staffPage.applyDeptNav({ department, all, dryRun });
+  }
+
+  /**
    * NẠP LẦN ĐẦU hồ sơ nhân sự từ ACADsoom (Mục 10.7) — chỉ quản trị, chạy MỘT
    * lượt trước khi đổi web Khoa thành gốc. Cần ACADSOOM_BASE_URL + WEBKHOA_PULL_SECRET.
    */

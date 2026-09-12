@@ -208,6 +208,13 @@ export type StaffCreate = {
   positionTo?: string | null;
 };
 
+export type HeroBackground = {
+  id: string;
+  url: string;
+  name: string | null;
+  sortOrder: number;
+};
+
 export const adminApi = {
   list(params: { page?: number; pageSize?: number } = {}) {
     return authFetch<{
@@ -233,6 +240,21 @@ export const adminApi = {
     return authFetch<AdminListItem>(`/admins/staff`, {
       method: "POST",
       body: JSON.stringify(body),
+    });
+  },
+  // ── Thư viện ảnh nền hero ────────────────────────────────────────────────
+  listHeroBackgrounds() {
+    return authFetch<HeroBackground[]>(`/admins/hero-backgrounds`);
+  },
+  addHeroBackground(body: { url: string; name?: string }) {
+    return authFetch<HeroBackground>(`/admins/hero-backgrounds`, {
+      method: "POST",
+      body: JSON.stringify(body),
+    });
+  },
+  removeHeroBackground(id: string) {
+    return authFetch<{ message: string }>(`/admins/hero-backgrounds/${id}`, {
+      method: "DELETE",
     });
   },
   suspend(id: string) {
@@ -871,6 +893,8 @@ export type DeptStaffPerson = {
   visiting: boolean;
   /** Nhóm lọc: lanh-dao · giang-vien · giao-vu · thinh-giang. */
   category: string;
+  /** Chức vụ cấp Khoa (Trưởng/Phó khoa) nếu có — trang cấp Khoa gom "Ban lãnh đạo". */
+  facultyRole?: DeptStaffLoc | null;
 };
 export type DeptStaffRes = {
   department: string;

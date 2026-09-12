@@ -100,3 +100,20 @@ export const AdminMessageResSchema = z.object({
 });
 
 export type AdminMessageResType = z.infer<typeof AdminMessageResSchema>;
+
+// ── Thư viện ảnh nền hero ─────────────────────────────────────────────────────
+export const HeroBackgroundSchema = z.object({
+  id: z.string(),
+  url: z.string(),
+  name: z.string().nullable(),
+  sortOrder: z.number().int(),
+});
+export const HeroBackgroundListResSchema = z.array(HeroBackgroundSchema);
+
+export const AddHeroBackgroundBodySchema = z.object({
+  url: z.string().min(1).max(1000),
+  name: z.string().max(200).optional(),
+});
+export type AddHeroBackgroundBodyType = z.infer<
+  typeof AddHeroBackgroundBodySchema
+>;

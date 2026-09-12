@@ -37,12 +37,13 @@ export const EDUCATION_SOURCES = ['SELF', 'STAFF_PAGE'] as const;
 const OptionalText = (max: number) => z.string().max(max).nullish();
 
 /**
- * Diện học viên sau đại học của MỘT đồng tác giả / thành viên nhiệm vụ — CHỈ để
- * GHI NHẬN cho thống kê về sau. KHÔNG dùng vào bất kỳ phép quy đổi giờ / điểm /
- * KPI nào (giờ do ACADsoom tính, và kênh tích hợp KHÔNG phát trường này). Khác
- * `GRAD_STUDY_LEVELS` vốn là bậc CHÍNH CHỦ đang theo học, khai ở hồ sơ của mình.
+ * Diện người học của MỘT đồng tác giả / thành viên nhiệm vụ — sinh viên, học
+ * viên cao học hay nghiên cứu sinh. CHỈ để GHI NHẬN cho thống kê về sau. KHÔNG
+ * dùng vào bất kỳ phép quy đổi giờ / điểm / KPI nào (giờ do ACADsoom tính, và
+ * kênh tích hợp KHÔNG phát trường này). Khác `GRAD_STUDY_LEVELS` vốn là bậc
+ * CHÍNH CHỦ đang theo học, khai ở hồ sơ của mình.
  */
-export const STUDENT_TYPES = ['cao_hoc', 'ncs'] as const;
+export const STUDENT_TYPES = ['sinh_vien', 'cao_hoc', 'ncs'] as const;
 const StudentTypeField = z.enum(STUDENT_TYPES).nullish();
 
 // ── Lý lịch khoa học ────────────────────────────────────────────────────────
@@ -957,6 +958,8 @@ export const DepartmentStaffPersonSchema = z.object({
   visiting: z.boolean(),
   /** Nhóm lọc: lanh-dao · giang-vien · giao-vu · thinh-giang. */
   category: z.string(),
+  /** Chức vụ cấp KHOA (Trưởng/Phó khoa) nếu có — trang cấp Khoa gom "Ban lãnh đạo". */
+  facultyRole: DeptLocalizedSchema.nullish(),
 });
 
 /** Đội ngũ MỘT bộ môn cho khối `DepartmentStaffAuto` (công khai, không auth). */
