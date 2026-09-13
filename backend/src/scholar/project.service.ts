@@ -3,9 +3,12 @@ import { Prisma } from '../generated/prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { EventBusService } from '../shared/services/event-bus.service';
 import { laterOf, pageBySince } from './integration-cursor';
+import { duocQuanLy, vaiTroLucTao, vaiTroSauKhiSua } from './project-roles';
 import {
+  LastLeadLeavingException,
   NotAProjectMemberException,
   NotProjectLeadException,
+  ProjectNeedsLeadException,
   ProjectNotFoundException,
   ShareOverflowException,
 } from './scholar.error';
@@ -87,6 +90,9 @@ export class ProjectService {
       myClaimStatus: mine?.claimStatus ?? null,
       mySharePercent: mine?.sharePercent ?? null,
       myShowOnWeb: mine?.showOnWeb ?? true,
+      // Ai bấm Sửa được — CÙNG hàm với chốt chặn ở update()/remove(), để nút
+      // trên giao diện không nói khác máy chủ.
+      canEdit: duocQuanLy(userId, row.createdBy, row.members),
       members: row.members.map((m: any) => ({
         id: m.id,
         userId: m.userId,
@@ -155,6 +161,11 @@ export class ProjectService {
   }
 
   async create(userId: string, body: CreateProjectBodyType) {
+    // Danh sách phải có CHỦ NHIỆM — xem project-roles.ts. Kiểm TRƯỚC khi ghi:
+    // tạo xong mới báo thì đề tài thiếu chủ nhiệm đã nằm trong cơ sở dữ liệu.
+    if (!vaiTroLucTao(userId, body).includes('LEAD')) {
+      throw ProjectNeedsLeadException;
+    }
     const created = await this.prisma.researchProject.create({
       data: {
         code: body.code ?? null,
@@ -285,15 +296,26 @@ export class ProjectService {
     // quy đổi của nhiệm vụ cho từng thành viên". Để mọi thành viên sửa được kinh
     // phí hay thời gian là để mỗi người tự đổi mẫu số giờ của cả nhóm.
     //
-    // Ngoại lệ DUY NHẤT: `myShowOnWeb` — hiện đề tài trên trang nhân sự của
-    // CHÍNH MÌNH hay không là việc riêng của từng người, chủ nhiệm không quyết
-    // thay được.
+    // Hai ngoại lệ:
+    //   · `myShowOnWeb` — hiện đề tài trên trang nhân sự của CHÍNH MÌNH hay không
+    //     là việc riêng của từng người, chủ nhiệm không quyết thay được.
+    //   · NGƯỜI KHAI đề tài, khi đề tài chưa có chủ nhiệm nào có tài khoản đã
+    //     xác nhận — không thì đề tài kẹt, không ai sửa được. Xem duocQuanLy.
     const chiDoiHienThi =
       body.myShowOnWeb !== undefined &&
       Object.keys(body).every((k) => k === 'myShowOnWeb');
 
     if (chiDoiHienThi) await this.assertMember(id, userId);
-    else await this.assertLead(id, userId);
+    else {
+      const hienCo = await this.assertQuanLy(id, userId);
+      // Sửa xong vẫn phải còn CHỦ NHIỆM — xem project-roles.ts. Tính trên danh
+      // sách SAU khi áp lượt sửa này (tự hạ mình, đổi vai người khác, thay danh
+      // sách người ngoài), và kiểm trước MỌI lệnh ghi bên dưới — không thì hỏng
+      // giữa chừng.
+      if (!vaiTroSauKhiSua(hienCo, userId, body).includes('LEAD')) {
+        throw ProjectNeedsLeadException;
+      }
+    }
     const cur = await this.prisma.researchProject.findUnique({
       where: { id },
       select: {
@@ -352,7 +374,9 @@ export class ProjectService {
     // tổng ở đây chứ không kiểm từng dòng: chia một chiếc bánh thì phải nhìn cả
     // chiếc — và chiếc bánh gồm CẢ người ngoài hệ thống.
     if (body.memberUpdates?.length) {
-      const tong = body.memberUpdates.reduce(
+      // Cộng cả người trong Khoa MỜI THÊM ở lượt này: họ chưa có dòng nên đi
+      // `members` chứ không đi memberUpdates, nhưng vẫn là một phần của bánh.
+      const tong = [...body.memberUpdates, ...(body.members ?? [])].reduce(
         (t, m) => t + (m.sharePercent ?? 0),
         0,
       );
@@ -439,7 +463,8 @@ export class ProjectService {
   async remove(userId: string, id: string) {
     await this.assertMember(id, userId);
     // Rút TÊN MÌNH ra thì ai cũng làm được. Nhưng xoá HẲN đề tài — trường hợp
-    // không còn ai khác — là xoá dữ liệu chung, nên chỉ chủ nhiệm.
+    // không còn ai khác — là xoá dữ liệu chung, nên chỉ người quản lý đề tài:
+    // chủ nhiệm, hoặc người khai khi chưa có chủ nhiệm nào xác nhận.
     const others = await this.prisma.projectMember.count({
       where: {
         projectId: id,
@@ -448,12 +473,30 @@ export class ProjectService {
       },
     });
     if (others > 0) {
+      // Chủ nhiệm DUY NHẤT rút tên thì danh sách hết chủ nhiệm — trái luật lúc
+      // khai (project-roles.ts).
+      // Người KHÔNG phải chủ nhiệm thì rời lúc nào cũng được, kể cả khỏi đề tài
+      // vốn đã thiếu chủ nhiệm: đó không phải lỗi của họ.
+      const hienCo = await this.prisma.projectMember.findMany({
+        where: { projectId: id },
+        select: { userId: true, role: true, claimStatus: true },
+      });
+      const toiLaChuNhiem = hienCo.some(
+        (m) => m.userId === userId && m.role === 'LEAD',
+      );
+      const conChuNhiemKhac = hienCo.some(
+        (m) =>
+          m.userId !== userId &&
+          m.claimStatus !== 'REJECTED' &&
+          m.role === 'LEAD',
+      );
+      if (toiLaChuNhiem && !conChuNhiemKhac) throw LastLeadLeavingException;
       await this.prisma.projectMember.updateMany({
         where: { projectId: id, userId },
         data: { claimStatus: 'REJECTED', respondedAt: new Date() },
       });
     } else {
-      await this.assertLead(id, userId);
+      await this.assertQuanLy(id, userId);
       await this.prisma.researchProject.update({
         where: { id },
         data: { deletedAt: new Date() },
@@ -498,11 +541,28 @@ export class ProjectService {
       code: r.project.code,
       funder: r.project.funder,
       year: r.project.startYear,
+      // Vai trò người khai đã gán. Thiếu nó thì ô chọn bên phys-profile không
+      // biết mặc định là gì — và từng mặc định "Thành viên" (xem respond).
+      role: r.role,
       invitedBy: r.invitedBy,
       invitedByName: r.invitedBy ? (nameOf.get(r.invitedBy) ?? null) : null,
     }));
   }
 
+  /**
+   * Trả lời lời mời vào đề tài — CHỈ khi đang chờ.
+   *
+   * `role` gửi kèm GHI ĐÈ vai trò người khai đã gán. Ô chọn bên phys-profile
+   * từng mặc định "Thành viên", nên chủ nhiệm được gắn tên chỉ cần bấm xác nhận
+   * là tự hạ mình xuống: đề tài hết chủ nhiệm, và hồi đó chỉ chủ nhiệm sửa được
+   * nên không ai sửa, không ai xoá được nữa. Đo 13/9/2026: 8 đề tài không có
+   * chủ nhiệm nào đã xác nhận, 6 trong số đó có chủ nhiệm đang chờ trả lời.
+   *
+   * Dòng ĐÃ trả lời mà vẫn gọi lại được đây thì thành viên nào cũng tự nâng mình
+   * lên chủ nhiệm bằng một yêu cầu gõ tay — rồi sửa kinh phí, cấp đề tài, tức
+   * mẫu số giờ của cả nhóm. Không màn hình nào gọi lại trên dòng đã trả lời, nên
+   * trả nguyên trạng thay vì báo lỗi (bấm đúp không thành lỗi).
+   */
   async respond(
     userId: string,
     projectId: string,
@@ -511,9 +571,10 @@ export class ProjectService {
   ) {
     const row = await this.prisma.projectMember.findUnique({
       where: { projectId_userId: { projectId, userId } },
-      select: { id: true },
+      select: { id: true, claimStatus: true },
     });
     if (!row) throw NotAProjectMemberException;
+    if (row.claimStatus !== 'PENDING') return this.findOne(projectId, userId);
     await this.prisma.projectMember.update({
       where: { projectId_userId: { projectId, userId } },
       data: {
@@ -557,13 +618,29 @@ export class ProjectService {
     if (daChia + share > 100) throw ShareOverflowException(daChia, share);
   }
 
-  private async assertLead(projectId: string, userId: string) {
-    const m = await this.prisma.projectMember.findUnique({
-      where: { projectId_userId: { projectId, userId } },
-      select: { claimStatus: true, role: true },
+  /**
+   * Người quản lý đề tài (sửa, xoá hẳn) — xem duocQuanLy trong project-roles.ts.
+   * Trả luôn danh sách thành viên để nơi gọi khỏi đọc lại lần nữa.
+   */
+  private async assertQuanLy(projectId: string, userId: string) {
+    const p = await this.prisma.researchProject.findFirst({
+      where: { id: projectId, deletedAt: null },
+      select: {
+        createdBy: true,
+        members: {
+          select: { id: true, userId: true, role: true, claimStatus: true },
+        },
+      },
     });
-    if (!m || m.claimStatus !== 'CONFIRMED') throw NotAProjectMemberException;
-    if (m.role !== 'LEAD') throw NotProjectLeadException;
+    if (!p) throw ProjectNotFoundException;
+    const toi = p.members.find((m) => m.userId === userId);
+    if (!toi || toi.claimStatus !== 'CONFIRMED') {
+      throw NotAProjectMemberException;
+    }
+    if (!duocQuanLy(userId, p.createdBy, p.members)) {
+      throw NotProjectLeadException;
+    }
+    return p.members;
   }
 
   private async assertMember(projectId: string, userId: string) {

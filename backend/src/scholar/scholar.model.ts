@@ -1061,6 +1061,12 @@ export const ProjectResSchema = z.object({
   myClaimStatus: z.enum(CLAIM_STATUSES).nullable(),
   myShowOnWeb: z.boolean(),
   mySharePercent: z.number().int().nullable(),
+  /**
+   * Người gọi bấm Sửa được không: chủ nhiệm đã xác nhận, hoặc người khai khi đề
+   * tài chưa có chủ nhiệm nào xác nhận. Tính bằng CÙNG hàm với chốt chặn ở máy
+   * chủ (duocQuanLy trong project-roles.ts).
+   */
+  canEdit: z.boolean(),
 });
 
 export const ProjectListResSchema = z.object({
@@ -1145,6 +1151,12 @@ export const UpdateProjectBodySchema = CreateProjectBodySchema.partial().extend(
           userId: z.string(),
           role: z.enum(PROJECT_ROLES).optional(),
           sharePercent: z.number().int().min(1).max(100).nullish(),
+          /**
+           * Diện học viên — CHỈ ghi nhận cho thống kê, không tính giờ. Người
+           * trong Khoa thêm LÚC SỬA đi đường này, nên thiếu trường này là diện
+           * học viên của họ rơi mất không tiếng động (zod bỏ khoá lạ).
+           */
+          studentType: StudentTypeField,
         }),
       )
       .max(50)
@@ -1187,6 +1199,8 @@ export const PendingProjectListResSchema = z.array(
     code: z.string().nullable(),
     funder: z.string().nullable(),
     year: z.number().int().nullable(),
+    /** Vai trò người khai đã gán — để ô chọn lúc xác nhận mặc định đúng nó. */
+    role: z.enum(PROJECT_ROLES),
     invitedBy: z.string().nullable(),
     invitedByName: z.string().nullable(),
   }),

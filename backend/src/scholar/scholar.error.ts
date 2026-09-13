@@ -120,6 +120,27 @@ export const ActivityNotFoundException = new NotFoundException([
   { field: 'id', error: 'Không tìm thấy hoạt động khoa học' },
 ]);
 
+/** Danh sách nhân sự của đề tài không có chủ nhiệm — xem project-roles.ts. */
+export const ProjectNeedsLeadException = new UnprocessableEntityException([
+  {
+    field: 'members',
+    error:
+      'Danh sách nhân sự của đề tài phải có Chủ nhiệm. Chọn vai trò Chủ nhiệm ' +
+      'cho đúng người chủ nhiệm đề tài — kể cả khi đó là cộng sự ngoài Khoa.',
+  },
+]);
+
+/** Chủ nhiệm duy nhất rút tên khỏi đề tài còn người khác — xem remove(). */
+export const LastLeadLeavingException = new UnprocessableEntityException([
+  {
+    field: 'id',
+    error:
+      'Bạn đang là Chủ nhiệm duy nhất của đề tài nên chưa rút tên được — danh ' +
+      'sách nhân sự phải luôn có Chủ nhiệm. Chuyển vai Chủ nhiệm cho đúng người ' +
+      '(Sửa → Nhân sự đề tài) rồi hãy rút tên.',
+  },
+]);
+
 /** Tổng tỷ lệ chia của đề tài vượt 100% — xem `assertShareFits`. */
 export const ShareOverflowException = (daChia: number, them: number) =>
   new UnprocessableEntityException([
@@ -136,7 +157,8 @@ export const NotProjectLeadException = new ForbiddenException([
   {
     field: 'id',
     error:
-      'Chỉ chủ nhiệm đề tài mới sửa được. Phụ lục 2 đặt trách nhiệm nộp phương ' +
-      'án chia giờ ở chủ nhiệm — nhờ chủ nhiệm sửa, hoặc báo nếu vai trò ghi sai.',
+      'Chỉ chủ nhiệm đề tài mới sửa được — hoặc người khai đề tài, khi đề tài ' +
+      'chưa có chủ nhiệm nào xác nhận. Phụ lục 2 đặt trách nhiệm nộp phương án ' +
+      'chia giờ ở chủ nhiệm — nhờ chủ nhiệm sửa, hoặc báo nếu vai trò ghi sai.',
   },
 ]);
