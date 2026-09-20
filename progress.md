@@ -1065,22 +1065,16 @@ Kiểm chứng: `vitest run` 213/213 (15 tệp), `tsc --noEmit -p tsconfig.build
 sạch, `eslint` hai tệp 0 lỗi (7 cảnh báo có sẵn). *Không* chạy `pnpm run lint` —
 script đó kèm `--fix` nên sẽ ghi đè hàng loạt tệp đang sửa dở.
 
-**Việc còn lại KHÔNG phải mã, mà là biến môi trường** (chưa đặt ở cả hai đầu):
+**Đường đẩy vốn ĐÃ CHẠY, không phải "chưa bật".** Lúc đầu tôi kết luận còn
+thiếu biến môi trường ở cả hai đầu; đo lại thì sai. Bằng chứng: gọi thẳng
+`https://acadsoom.vercel.app/api/webhook/webkhoa` với chữ ký rác trả **401 "sai
+chữ ký"** (chưa đặt khoá thì route đó trả 503), và bên ACADsoom dòng `SyncState`
+khoá `webkhoa-webhook` mang `lastAt = 2026-09-20T00:52:23Z`, `note =
+"publication.changed"` — tức web Khoa gửi sự kiện thật sáng nay và ACADsoom đã
+quét theo. Chỉ lượt gọi **qua được chữ ký** mới ghi được dòng đó.
 
-```
-# box web Khoa
-EVENT_WEBHOOKS=https://acadsoom.vercel.app/api/webhook/webkhoa
-EVENT_WEBHOOK_SECRET=<chuỗi ngẫu nhiên đủ dài>
-# Vercel của ACADsoom — cùng giá trị, khác tên biến
-WEBKHOA_EVENT_SECRET=<đúng chuỗi đó>
-```
-
-Chưa đặt thì mọi thứ im lặng đúng như thiết kế: `EVENT_WEBHOOKS` rỗng là bộ phát
-thoát ngay, còn bên nhận trả 503 thay vì mở toang cho cả Internet bắt nó quét cả
-Khoa. Bên nhận (`acadsoom/src/app/api/webhook/webkhoa/route.js`) đã có từ 22/8 và
-tự lo phần khó: bỏ qua sự kiện không liên quan bằng 200 (4xx sẽ làm bộ phát ngừng
-thử lại), và giành lượt quét bằng **một lệnh cập nhật nguyên tử** nên 10 webhook
-của một lần lưu liền tay chỉ thành một lượt quét.
+Nghĩa là suốt từ 22/8 mọi thay đổi công bố / đề tài / hoạt động đều đã báo sang
+ngay — **trừ** đường `respond`. Bản vá ở trên là mảnh cuối; đẩy lên box là xong.
 
 **Trạng thái kho lúc ghi dòng này:** cây làm việc đã có sẵn ~828 dòng sửa dở của
 việc khác (OCR minh chứng đề tài: `project-doc.service.ts`, `project-doc-parse.ts`,

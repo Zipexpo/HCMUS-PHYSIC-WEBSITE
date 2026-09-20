@@ -1021,6 +1021,16 @@ export const PROJECT_EVIDENCE_KINDS = [
   'NGHIEM_THU',
   'KHAC',
 ] as const;
+/** Diện cơ quan của thành viên đề tài — cùng bộ với bài báo (chỉ để ghi nhận). */
+export const PROJECT_AFFILIATIONS = [
+  'school',
+  'double',
+  'non_school',
+  'vnu',
+  'foreign',
+] as const;
+/** Ô nhận diện cơ quan, dùng lại cho member / external / memberUpdates. */
+const AffiliationField = z.enum(PROJECT_AFFILIATIONS).nullish();
 
 const ProjectYear = z.number().int().min(1950).max(2200);
 const ProjectMonth = z.number().int().min(1).max(12);
@@ -1037,6 +1047,8 @@ export const ProjectMemberResSchema = z.object({
   sharePercent: z.number().int().nullable(),
   /** Diện học viên — CHỈ ghi nhận cho thống kê, không tính giờ. */
   studentType: z.enum(STUDENT_TYPES).nullable(),
+  /** Diện cơ quan — ghi nhận giống bài báo, không tính giờ. */
+  affiliation: z.string().nullable(),
   claimStatus: z.enum(CLAIM_STATUSES),
   invitedBy: z.string().nullable(),
   respondedAt: z.date().nullable(),
@@ -1122,6 +1134,8 @@ export const CreateProjectBodySchema = z.object({
   note: OptionalText(2000),
   myRole: z.enum(PROJECT_ROLES).optional(),
   mySharePercent: z.number().int().min(1).max(100).nullish(),
+  /** Diện cơ quan của chính tôi — ghi nhận giống bài báo, không tính giờ. */
+  myAffiliation: AffiliationField,
   /** Hiện đề tài này trên trang nhân sự của tôi. */
   myShowOnWeb: z.boolean().optional(),
   /**
@@ -1137,6 +1151,8 @@ export const CreateProjectBodySchema = z.object({
         sharePercent: z.number().int().min(1).max(100).nullish(),
         /** Diện học viên — CHỈ ghi nhận cho thống kê, không tính giờ. */
         studentType: StudentTypeField,
+        /** Diện cơ quan — ghi nhận giống bài báo, không tính giờ. */
+        affiliation: AffiliationField,
       }),
     )
     .max(50)
@@ -1155,6 +1171,8 @@ export const CreateProjectBodySchema = z.object({
         sharePercent: z.number().int().min(1).max(100).nullish(),
         /** Diện học viên — CHỈ ghi nhận cho thống kê, không tính giờ. */
         studentType: StudentTypeField,
+        /** Diện cơ quan — ghi nhận giống bài báo, không tính giờ. */
+        affiliation: AffiliationField,
       }),
     )
     .max(50)
@@ -1195,6 +1213,7 @@ export const UpdateProjectBodySchema = CreateProjectBodySchema.partial().extend(
            * học viên của họ rơi mất không tiếng động (zod bỏ khoá lạ).
            */
           studentType: StudentTypeField,
+          affiliation: AffiliationField,
         }),
       )
       .max(50)
@@ -1216,6 +1235,7 @@ export const UpdateProjectBodySchema = CreateProjectBodySchema.partial().extend(
           sharePercent: z.number().int().min(1).max(100).nullish(),
           /** Diện học viên — CHỈ ghi nhận cho thống kê, không tính giờ. */
           studentType: StudentTypeField,
+          affiliation: AffiliationField,
         }),
       )
       .max(50)
@@ -1251,8 +1271,25 @@ export const StagedDocResSchema = z.object({
   source: z.enum(['text', 'ocr']),
 });
 
+/**
+ * Một thành viên rút từ thuyết minh (A9) + tỷ lệ chia gợi ý (theo tháng công ở
+ * B5.3). `userId` có khi khớp được tài khoản trong Khoa; null thì coi là cộng sự
+ * ngoài. LUÔN là gợi ý để chủ nhiệm soát.
+ */
+export const ParsedMemberResSchema = z.object({
+  name: z.string(),
+  role: z.enum(PROJECT_ROLES),
+  org: z.string().nullable(),
+  laborMonths: z.number().nullable(),
+  sharePercent: z.number().int().nullable(),
+  userId: z.string().nullable(),
+  /** Tên tài khoản khớp được (để hiển thị), null nếu không khớp. */
+  matchedName: z.string().nullable(),
+});
+
 export const ParseDocumentsResSchema = z.object({
   fields: ParsedProjectFieldsSchema,
+  members: z.array(ParsedMemberResSchema),
   documents: z.array(StagedDocResSchema),
 });
 

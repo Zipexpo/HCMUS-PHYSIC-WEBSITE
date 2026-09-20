@@ -20,7 +20,12 @@ import {
   StagedDocNotFoundException,
 } from './scholar.error';
 import { ProjectDocOcrService, EVIDENCE_DIR } from './project-doc.service';
-import { bocTachTruongDeTai, gopTruong } from './project-doc-parse';
+import {
+  bocTachTruongDeTai,
+  gopTruong,
+  type ThanhVienOcr,
+} from './project-doc-parse';
+import { looselyMatches, normalizeName } from './name-match';
 import type {
   CreateProjectBodyType,
   IntegrationQueryType,
@@ -187,6 +192,7 @@ export class ProjectService {
         sharePercent: m.sharePercent,
         // GHI NHẬN diện học viên — không tham gia bất kỳ phép tính giờ nào.
         studentType: m.studentType ?? null,
+        affiliation: m.affiliation ?? null,
         claimStatus: m.claimStatus,
         invitedBy: m.invitedBy,
         respondedAt: m.respondedAt,
@@ -288,6 +294,7 @@ export class ProjectService {
             // Người khai mặc định là chủ nhiệm; đổi được nếu họ chỉ là thành viên.
             role: body.myRole ?? 'LEAD',
             sharePercent: body.mySharePercent ?? null,
+            affiliation: body.myAffiliation ?? null,
             showOnWeb: body.myShowOnWeb ?? true,
             claimStatus: 'CONFIRMED',
             respondedAt: new Date(),
@@ -322,6 +329,7 @@ export class ProjectService {
       role?: 'LEAD' | 'SECRETARY' | 'MEMBER';
       sharePercent?: number | null;
       studentType?: 'sinh_vien' | 'cao_hoc' | 'ncs' | null;
+      affiliation?: string | null;
     }>,
   ) {
     const sach = people.filter((p) => p.name.trim());
@@ -335,6 +343,7 @@ export class ProjectService {
         sharePercent: p.sharePercent ?? null,
         // GHI NHẬN diện học viên — không tính giờ.
         studentType: p.studentType ?? null,
+        affiliation: p.affiliation ?? null,
         role: p.role ?? ('MEMBER' as const),
         claimStatus: 'CONFIRMED' as const,
         respondedAt: new Date(),
@@ -351,6 +360,7 @@ export class ProjectService {
       role?: 'LEAD' | 'SECRETARY' | 'MEMBER';
       sharePercent?: number | null;
       studentType?: 'sinh_vien' | 'cao_hoc' | 'ncs' | null;
+      affiliation?: string | null;
     }>,
   ) {
     // Khử trùng theo userId: gắn tên một người hai lần là lỗi của người khai,
@@ -373,6 +383,7 @@ export class ProjectService {
         sharePercent: p.sharePercent ?? null,
         // GHI NHẬN diện học viên — không tính giờ.
         studentType: p.studentType ?? null,
+        affiliation: p.affiliation ?? null,
         invitedBy,
         claimStatus: 'PENDING' as const,
       })),
@@ -504,6 +515,9 @@ export class ProjectService {
             ...(m.studentType === undefined
               ? {}
               : { studentType: m.studentType ?? null }),
+            ...(m.affiliation === undefined
+              ? {}
+              : { affiliation: m.affiliation ?? null }),
           },
         });
       }
@@ -534,6 +548,7 @@ export class ProjectService {
                   externalOrg: p.org?.trim() || null,
                   sharePercent: p.sharePercent ?? null,
                   studentType: p.studentType ?? null,
+                  affiliation: p.affiliation ?? null,
                   role: p.role ?? ('MEMBER' as const),
                   claimStatus: 'CONFIRMED' as const,
                   respondedAt: new Date(),
@@ -551,6 +566,7 @@ export class ProjectService {
     if (
       body.myRole ||
       body.mySharePercent !== undefined ||
+      body.myAffiliation !== undefined ||
       body.myShowOnWeb !== undefined
     ) {
       await this.prisma.projectMember.update({
@@ -559,6 +575,10 @@ export class ProjectService {
           role: body.myRole ?? undefined,
           sharePercent:
             body.mySharePercent === undefined ? undefined : body.mySharePercent,
+          affiliation:
+            body.myAffiliation === undefined
+              ? undefined
+              : (body.myAffiliation ?? null),
           showOnWeb: body.myShowOnWeb ?? undefined,
         },
       });
@@ -768,7 +788,14 @@ export class ProjectService {
       let source: 'text' | 'ocr' = 'ocr';
       let text = '';
       try {
-        const doc = await this.ocr.docText(file.path, file.mimetype);
+        const doc = await this.ocr.docText(file.path, file.mimetype, {
+          // Hợp đồng scan: dừng OCR ngay khi đã có tên + hai mốc + kinh phí (Điều
+          // 1–3, thường hết trang 2) thay vì quét cả 6 trang — nhanh gấp ~3 lần.
+          enough: (t) => {
+            const f = bocTachTruongDeTai(t);
+            return Boolean(f.title && f.startYear && f.budget);
+          },
+        });
         source = doc.source;
         text = doc.text;
       } catch {
@@ -797,7 +824,49 @@ export class ProjectService {
       });
       parsedList.push(parsed);
     }
-    return { fields: gopTruong(parsedList), documents };
+    // Tách nhân sự (A9) ra khỏi các ô vô hướng, rồi khớp tên với tài khoản Khoa.
+    const { members: nsGoc, ...fields } = gopTruong(parsedList);
+    const members = await this.khopThanhVien(nsGoc);
+    return { fields, members, documents };
+  }
+
+  /**
+   * Khớp tên thành viên (rút từ thuyết minh) với tài khoản trong Khoa: chính xác
+   * theo tên chuẩn hoá trước, rồi tới giống lỏng (cùng chữ cái đầu + chung một từ
+   * — xem name-match.ts). Không khớp thì `userId` null → coi là cộng sự ngoài.
+   */
+  private async khopThanhVien(ds: ThanhVienOcr[]) {
+    if (!ds.length) return [];
+    const rows = await this.prisma.scholarProfile.findMany({
+      where: { user: { isActive: true } },
+      select: {
+        userId: true,
+        nameVariants: { select: { normalized: true } },
+        user: { select: { firstName: true, lastName: true } },
+      },
+    });
+    const cands = rows.map((r) => {
+      const dn = [r.user.lastName, r.user.firstName].filter(Boolean).join(' ');
+      return {
+        userId: r.userId,
+        displayName: dn,
+        norms: [normalizeName(dn), ...r.nameVariants.map((v) => v.normalized)],
+      };
+    });
+    return ds.map((m) => {
+      const nn = normalizeName(m.name);
+      let hit = cands.find((c) => c.norms.includes(nn));
+      if (!hit) hit = cands.find((c) => looselyMatches(m.name, c.displayName));
+      return {
+        name: m.name,
+        role: m.role,
+        org: m.org,
+        laborMonths: m.laborMonths,
+        sharePercent: m.sharePercent,
+        userId: hit?.userId ?? null,
+        matchedName: hit?.displayName ?? null,
+      };
+    });
   }
 
   /** Nạp các dòng StagedUpload theo token — CHỈ của chính người này. */

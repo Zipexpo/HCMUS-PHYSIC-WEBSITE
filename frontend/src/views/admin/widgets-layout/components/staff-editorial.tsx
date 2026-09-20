@@ -25,7 +25,13 @@ const PAPER = "#F9F9F6";
 /** INK dạng rgba — phủ màn tối lên ảnh nền hero để chữ blend vẫn đọc được. */
 const inkVeil = (alpha: number) => {
   const h = INK.replace("#", "");
-  const n = h.length === 3 ? h.split("").map((c) => c + c).join("") : h;
+  const n =
+    h.length === 3
+      ? h
+          .split("")
+          .map((c) => c + c)
+          .join("")
+      : h;
   const r = parseInt(n.slice(0, 2), 16);
   const g = parseInt(n.slice(2, 4), 16);
   const b = parseInt(n.slice(4, 6), 16);
@@ -97,7 +103,13 @@ function RuleHeading({ children }: { children: React.ReactNode }) {
   );
 }
 
-function EntryList({ items, tx }: { items: Entry[]; tx: (v: LocalizedString) => string }) {
+function EntryList({
+  items,
+  tx,
+}: {
+  items: Entry[];
+  tx: (v: LocalizedString) => string;
+}) {
   return (
     <ul className="space-y-2.5 font-light text-gray-600">
       {items.map((it, i) => (
@@ -176,7 +188,10 @@ function StaffProfileEditorialRender(props: Props) {
   for (const e of props.extras ?? []) {
     const sec = tx(e.section).trim();
     if (!sec || !tx(e.title).trim()) continue;
-    groups.set(sec, [...(groups.get(sec) ?? []), { title: e.title, desc: e.desc }]);
+    groups.set(sec, [
+      ...(groups.get(sec) ?? []),
+      { title: e.title, desc: e.desc },
+    ]);
   }
 
   // Quá trình đào tạo: khi KHÔNG có đoạn giới thiệu, kéo mục "Học vấn" lên lấp
@@ -227,7 +242,9 @@ function StaffProfileEditorialRender(props: Props) {
   // `heroBg` mang MỘT trong ba: mã màu hex (#rgb/#rrggbb… — giảng viên tự chọn ở
   // phys-profile), URL ảnh nền (admin đặt), hoặc rỗng = nền tối INK mặc định.
   const heroBgRaw = (props.heroBg || "").trim();
-  const heroIsColor = /^#([0-9a-f]{3,4}|[0-9a-f]{6}|[0-9a-f]{8})$/i.test(heroBgRaw);
+  const heroIsColor = /^#([0-9a-f]{3,4}|[0-9a-f]{6}|[0-9a-f]{8})$/i.test(
+    heroBgRaw,
+  );
   const heroBg = heroIsColor ? "" : resolveMediaUrl(heroBgRaw);
   const heroVeil = inkVeil(0.72);
   // Nền tối phủ ĐÚNG vùng hero, và vùng hero cao bao nhiêu thì nó cao bấy nhiêu.
@@ -266,11 +283,26 @@ function StaffProfileEditorialRender(props: Props) {
           href: `https://orcid.org/${encodeURIComponent(props.orcid.trim())}`,
           label: "ORCID iD",
           icon: (
-            <svg width="22" height="22" viewBox="0 0 256 256" role="img" aria-hidden="true">
-              <path fill="#A6CE39" d="M256 128c0 70.7-57.3 128-128 128S0 198.7 0 128 57.3 0 128 0s128 57.3 128 128z" />
+            <svg
+              width="22"
+              height="22"
+              viewBox="0 0 256 256"
+              role="img"
+              aria-hidden="true"
+            >
+              <path
+                fill="#A6CE39"
+                d="M256 128c0 70.7-57.3 128-128 128S0 198.7 0 128 57.3 0 128 0s128 57.3 128 128z"
+              />
               <path fill="#FFF" d="M86.3 186.2H70.9V79.1h15.4v107.1z" />
-              <path fill="#FFF" d="M108.9 79.1h41.6c39.6 0 57 28.3 57 53.6 0 27.5-21.5 53.6-56.8 53.6h-41.8V79.1zm15.4 93.3h24.5c34.9 0 42.9-26.5 42.9-39.7 0-21.5-13.7-39.7-43.7-39.7h-23.7v79.4z" />
-              <path fill="#FFF" d="M88.7 56.8c0 5.5-4.5 10.1-10.1 10.1-5.6 0-10.1-4.6-10.1-10.1 0-5.6 4.5-10.1 10.1-10.1 5.6 0 10.1 4.6 10.1 10.1z" />
+              <path
+                fill="#FFF"
+                d="M108.9 79.1h41.6c39.6 0 57 28.3 57 53.6 0 27.5-21.5 53.6-56.8 53.6h-41.8V79.1zm15.4 93.3h24.5c34.9 0 42.9-26.5 42.9-39.7 0-21.5-13.7-39.7-43.7-39.7h-23.7v79.4z"
+              />
+              <path
+                fill="#FFF"
+                d="M88.7 56.8c0 5.5-4.5 10.1-10.1 10.1-5.6 0-10.1-4.6-10.1-10.1 0-5.6 4.5-10.1 10.1-10.1 5.6 0 10.1 4.6 10.1 10.1z"
+              />
             </svg>
           ),
         }
@@ -281,11 +313,20 @@ function StaffProfileEditorialRender(props: Props) {
           href: `https://scholar.google.com/citations?user=${encodeURIComponent(props.googleScholar.trim())}`,
           label: "Google Scholar",
           icon: (
-            <svg width="22" height="22" viewBox="0 0 512 512" role="img" aria-hidden="true">
+            <svg
+              width="22"
+              height="22"
+              viewBox="0 0 512 512"
+              role="img"
+              aria-hidden="true"
+            >
               <path fill="#4285F4" d="M256 411.12L0 202.667 256 0z" />
               <path fill="#356AC3" d="M256 411.12l256-208.453L256 0z" />
               <circle fill="#A0C3FF" cx="256" cy="362.667" r="149.333" />
-              <path fill="#76A7FA" d="M121.037 298.667c23.968-50.453 75.392-85.334 134.963-85.334s110.995 34.881 134.963 85.334H121.037z" />
+              <path
+                fill="#76A7FA"
+                d="M121.037 298.667c23.968-50.453 75.392-85.334 134.963-85.334s110.995 34.881 134.963 85.334H121.037z"
+              />
             </svg>
           ),
         }
@@ -296,7 +337,13 @@ function StaffProfileEditorialRender(props: Props) {
           href: `https://www.scopus.com/authid/detail.uri?authorId=${encodeURIComponent(props.scopus.trim())}`,
           label: "Scopus Author ID",
           icon: (
-            <svg width="22" height="22" viewBox="0 0 24 24" role="img" aria-hidden="true">
+            <svg
+              width="22"
+              height="22"
+              viewBox="0 0 24 24"
+              role="img"
+              aria-hidden="true"
+            >
               <circle cx="12" cy="12" r="12" fill="#E9711C" />
               <text
                 x="12"
@@ -319,7 +366,13 @@ function StaffProfileEditorialRender(props: Props) {
           href: `https://www.webofscience.com/wos/author/record/${encodeURIComponent(props.researcherId.trim())}`,
           label: "ResearcherID (Web of Science)",
           icon: (
-            <svg width="22" height="22" viewBox="0 0 24 24" role="img" aria-hidden="true">
+            <svg
+              width="22"
+              height="22"
+              viewBox="0 0 24 24"
+              role="img"
+              aria-hidden="true"
+            >
               <g stroke="#8C52FF" strokeWidth="1.4" strokeLinecap="round">
                 <line x1="12" y1="12" x2="5.5" y2="6" />
                 <line x1="12" y1="12" x2="18.5" y2="7" />
@@ -362,110 +415,112 @@ function StaffProfileEditorialRender(props: Props) {
       {/* ── Hero ── Khối ngoài full-bleed CHỈ để mang nền: khối trong bị
           `max-w-7xl` bó lại nên đặt nền lên đó thì hai bên trống. */}
       <div className="staff-hero">
-      <div className={heroWrapCls}>
-        <div className={photoWrapCls}>
-          <div className="aspect-[3/4] w-full shadow-2xl overflow-hidden rounded-tl-[5rem] rounded-bl-[5rem] rounded-tr-xl rounded-br-xl bg-gray-200">
-            {photo ? (
-              // eslint-disable-next-line @next/next/no-img-element
-              <img
-                src={photo}
-                alt={nameLines.join(" ")}
-                className={
-                  "w-full h-full object-cover " +
-                  (props.photoFilter ? "contrast-125 saturate-50" : "")
-                }
-                loading="eager"
-                onError={(e) => {
-                  e.currentTarget.style.display = "none";
-                }}
-              />
-            ) : null}
+        <div className={heroWrapCls}>
+          <div className={photoWrapCls}>
+            <div className="aspect-[3/4] w-full shadow-2xl overflow-hidden rounded-tl-[5rem] rounded-bl-[5rem] rounded-tr-xl rounded-br-xl bg-gray-200">
+              {photo ? (
+                // eslint-disable-next-line @next/next/no-img-element
+                <img
+                  src={photo}
+                  alt={nameLines.join(" ")}
+                  className={
+                    "w-full h-full object-cover " +
+                    (props.photoFilter ? "contrast-125 saturate-50" : "")
+                  }
+                  loading="eager"
+                  onError={(e) => {
+                    e.currentTarget.style.display = "none";
+                  }}
+                />
+              ) : null}
+            </div>
           </div>
-        </div>
 
-        <div className="w-full md:w-7/12 flex flex-col justify-center">
-          <div className="text-white blend">
-            {tx(props.eyebrow) || hocViDem ? (
-              <p className="text-xs md:text-sm tracking-[0.3em] mb-4 font-medium uppercase">
-                {tx(props.eyebrow) || hocViDem}
-              </p>
-            ) : null}
-            {tenHienThi ? (
-              <h1
-                className={nameCls}
-                style={{ fontFamily: "var(--font-playfair)" }}
-              >
-                {tenHienThi}
-              </h1>
-            ) : null}
-            {tx(props.intro) ? (
-              <p className="text-base md:text-lg max-w-xl font-light leading-relaxed">
-                {tx(props.intro)}
-              </p>
-            ) : heroDaoTao.length ? (
-              <div className="max-w-xl">
-                <p className="text-xs md:text-sm tracking-[0.25em] mb-3 font-semibold uppercase">
-                  {heroDaoTaoTitle ||
-                    (locale === "en" ? "Education" : "Quá trình đào tạo")}
+          <div className="w-full md:w-7/12 flex flex-col justify-center">
+            <div className="text-white blend">
+              {tx(props.eyebrow) || hocViDem ? (
+                <p className="text-xs md:text-sm tracking-[0.3em] mb-4 font-medium uppercase">
+                  {tx(props.eyebrow) || hocViDem}
                 </p>
-                <ul className="space-y-2 text-sm md:text-base font-light leading-relaxed">
-                  {heroDaoTao.map((e, i) => (
-                    <li key={`${tx(e.title)}-${i}`}>
-                      <span className="font-medium">{tx(e.title)}</span>
-                      {tx(e.desc) ? <span> — {tx(e.desc)}</span> : null}
-                    </li>
-                  ))}
-                </ul>
+              ) : null}
+              {tenHienThi ? (
+                <h1
+                  className={nameCls}
+                  style={{ fontFamily: "var(--font-playfair)" }}
+                >
+                  {tenHienThi}
+                </h1>
+              ) : null}
+              {tx(props.intro) ? (
+                <p className="text-base md:text-lg max-w-xl font-light leading-relaxed">
+                  {tx(props.intro)}
+                </p>
+              ) : heroDaoTao.length ? (
+                <div className="max-w-xl">
+                  <p className="text-xs md:text-sm tracking-[0.25em] mb-3 font-semibold uppercase">
+                    {heroDaoTaoTitle ||
+                      (locale === "en" ? "Education" : "Quá trình đào tạo")}
+                  </p>
+                  <ul className="space-y-2 text-sm md:text-base font-light leading-relaxed">
+                    {heroDaoTao.map((e, i) => (
+                      <li key={`${tx(e.title)}-${i}`}>
+                        <span className="font-medium">{tx(e.title)}</span>
+                        {tx(e.desc) ? <span> — {tx(e.desc)}</span> : null}
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              ) : null}
+            </div>
+            {scholarLinks.length || props.email?.trim() ? (
+              // `text-white blend`: cùng phép trừ màu với khối tên ở trên — icon và
+              // email tự đổi trắng/đen theo nền thay vì cứng trắng rồi chìm mất.
+              <div className="mt-5 flex flex-wrap items-center gap-x-4 gap-y-2 text-white blend">
+                {scholarLinks.length ? (
+                  <div className="flex items-center gap-3">
+                    {scholarLinks.map((l) => (
+                      <a
+                        key={l.key}
+                        href={l.href}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        title={l.label}
+                        aria-label={l.label}
+                        className="inline-flex hover:opacity-70 transition-opacity"
+                      >
+                        {l.icon}
+                      </a>
+                    ))}
+                  </div>
+                ) : null}
+                {props.email?.trim() ? (
+                  <a
+                    href={`mailto:${props.email.trim()}`}
+                    title={props.email.trim()}
+                    className="inline-flex items-center gap-1.5 text-xs md:text-sm hover:opacity-70 transition-opacity break-all"
+                  >
+                    <svg
+                      width="16"
+                      height="16"
+                      viewBox="0 0 24 24"
+                      fill="none"
+                      stroke="currentColor"
+                      strokeWidth="1.8"
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                      aria-hidden="true"
+                      className="shrink-0"
+                    >
+                      <rect x="3" y="5" width="18" height="14" rx="2" />
+                      <path d="m3 7 9 6 9-6" />
+                    </svg>
+                    <span>{props.email.trim()}</span>
+                  </a>
+                ) : null}
               </div>
             ) : null}
           </div>
-          {scholarLinks.length || props.email?.trim() ? (
-            <div className="mt-5 flex flex-wrap items-center gap-x-4 gap-y-2">
-              {scholarLinks.length ? (
-                <div className="flex items-center gap-3">
-                  {scholarLinks.map((l) => (
-                    <a
-                      key={l.key}
-                      href={l.href}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      title={l.label}
-                      aria-label={l.label}
-                      className="inline-flex hover:opacity-70 transition-opacity"
-                    >
-                      {l.icon}
-                    </a>
-                  ))}
-                </div>
-              ) : null}
-              {props.email?.trim() ? (
-                <a
-                  href={`mailto:${props.email.trim()}`}
-                  title={props.email.trim()}
-                  className="inline-flex items-center gap-1.5 text-xs md:text-sm text-white/90 hover:text-white break-all"
-                >
-                  <svg
-                    width="16"
-                    height="16"
-                    viewBox="0 0 24 24"
-                    fill="none"
-                    stroke="currentColor"
-                    strokeWidth="1.8"
-                    strokeLinecap="round"
-                    strokeLinejoin="round"
-                    aria-hidden="true"
-                    className="shrink-0"
-                  >
-                    <rect x="3" y="5" width="18" height="14" rx="2" />
-                    <path d="m3 7 9 6 9-6" />
-                  </svg>
-                  <span>{props.email.trim()}</span>
-                </a>
-              ) : null}
-            </div>
-          ) : null}
         </div>
-      </div>
       </div>
 
       {/* ── Nghiên cứu / Giảng dạy ── */}
@@ -685,7 +740,8 @@ export const StaffProfileEditorial: ComponentConfig<Props> = {
     },
     extras: {
       type: "array",
-      label: "Mục tự đặt tên (Học vấn, Major, Giải thưởng… — cùng tên mục thì gom chung)",
+      label:
+        "Mục tự đặt tên (Học vấn, Major, Giải thưởng… — cùng tên mục thì gom chung)",
       getItemSummary: (item, i) =>
         `${localizedSummary(item?.section, "Mục")} — ${localizedSummary(item?.title, `Dòng ${(i ?? 0) + 1}`)}`,
       arrayFields: {
