@@ -1038,3 +1038,53 @@ vào `User.departmentId`, chỉ là chưa API nào trả ra — nay `/scholar/me
 **Còn treo:** `import-page-dois.ts --apply` (99/113 DOI, hiện mới 3 công bố trong hệ
 thống); ACADsoom chưa kéo Bảng 3 vào NV2 vì cần rà lại cách `mucBTheoMa` ghép 65 mã
 sang đầu mục mục B khi có dữ liệu thật; một hồ sơ khoa học không khớp danh sách PHYsoom.
+
+## 2026-09-20 — Bật đường đẩy sự kiện sang ACADsoom: vá một chỗ sót, còn lại là cấu hình
+
+ACADsoom đang tốn hạn mức "Active CPU" của Vercel (gói miễn phí 4 giờ/tháng cho
+CẢ team, ngày 20/9 đã dùng 100%, vượt nữa thì Vercel tạm dừng mọi project) vì
+phải **quét mò**: cron mỗi đêm + kéo lại mỗi lần giảng viên mở màn NV2. Bus sự
+kiện dựng từ 22/8 chính là lời giải, nhưng chưa bật.
+
+**Rà lại toàn bộ đường ghi NCKH.** 16 chỗ đã phát sự kiện. Đối chiếu từng hàm
+ghi CSDL trong `scholar.service.ts` / `project.service.ts` / `activity.service.ts`
+(kể cả các helper riêng như `ganStaged`, `recount`, `attachSelf`) thì **chỉ một
+chỗ sót**: `ProjectService.respond` — trả lời lời mời vào đề tài. Đường công bố
+(`respondToClaim`) và hoạt động khoa học (`respondClaim`) đều phát ở chỗ tương
+đương; riêng đề tài thì không.
+
+Chỗ sót này đắt hơn vẻ ngoài: trước khi xác nhận, người được mời **chưa được
+tính giờ nào** của đề tài (`assertShareFits` chỉ cộng người đã CONFIRMED), nên
+đúng lúc số của họ vừa đổi thật thì bên nhận lại không được báo — phải chờ tới
+lượt quét theo lịch. Đã thêm `bus.emit('project.changed', …)` ngay sau lượt cập
+nhật, kèm 3 test trong `project-claim.spec.ts`: phát khi chấp nhận, phát khi từ
+chối, và **không** phát lại khi bấm lại trên dòng đã trả lời (`respond` trả
+nguyên trạng cho cú bấm đúp, không nên biến nó thành lượt quét thừa).
+
+Kiểm chứng: `vitest run` 213/213 (15 tệp), `tsc --noEmit -p tsconfig.build.json`
+sạch, `eslint` hai tệp 0 lỗi (7 cảnh báo có sẵn). *Không* chạy `pnpm run lint` —
+script đó kèm `--fix` nên sẽ ghi đè hàng loạt tệp đang sửa dở.
+
+**Việc còn lại KHÔNG phải mã, mà là biến môi trường** (chưa đặt ở cả hai đầu):
+
+```
+# box web Khoa
+EVENT_WEBHOOKS=https://acadsoom.vercel.app/api/webhook/webkhoa
+EVENT_WEBHOOK_SECRET=<chuỗi ngẫu nhiên đủ dài>
+# Vercel của ACADsoom — cùng giá trị, khác tên biến
+WEBKHOA_EVENT_SECRET=<đúng chuỗi đó>
+```
+
+Chưa đặt thì mọi thứ im lặng đúng như thiết kế: `EVENT_WEBHOOKS` rỗng là bộ phát
+thoát ngay, còn bên nhận trả 503 thay vì mở toang cho cả Internet bắt nó quét cả
+Khoa. Bên nhận (`acadsoom/src/app/api/webhook/webkhoa/route.js`) đã có từ 22/8 và
+tự lo phần khó: bỏ qua sự kiện không liên quan bằng 200 (4xx sẽ làm bộ phát ngừng
+thử lại), và giành lượt quét bằng **một lệnh cập nhật nguyên tử** nên 10 webhook
+của một lần lưu liền tay chỉ thành một lượt quét.
+
+**Trạng thái kho lúc ghi dòng này:** cây làm việc đã có sẵn ~828 dòng sửa dở của
+việc khác (OCR minh chứng đề tài: `project-doc.service.ts`, `project-doc-parse.ts`,
+`schema.prisma`, `scholar.controller.ts`…) từ phiên trước, **không** thuộc mục
+này. Thay đổi của mục này chỉ gồm `project.service.ts` (một lệnh emit + chú
+thích) và `project-claim.spec.ts` (3 test) — chưa commit, để khỏi gộp chung với
+việc đang dở kia.

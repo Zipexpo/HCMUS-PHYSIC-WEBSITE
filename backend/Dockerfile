@@ -26,6 +26,13 @@ RUN pnpm exec nest build
 
 FROM base AS runner
 ENV NODE_ENV=production
+# OCR minh chứng đề tài: pdftotext/pdftoppm (poppler) + tesseract với gói tiếng
+# Việt. Endpoint scholar/projects/parse-documents gọi chúng qua child_process để
+# đọc hợp đồng scan và thuyết minh. Xem project-doc.service.ts.
+RUN apt-get update \
+  && apt-get install -y --no-install-recommends \
+     poppler-utils tesseract-ocr tesseract-ocr-vie \
+  && rm -rf /var/lib/apt/lists/*
 COPY --from=builder /app/dist ./dist
 COPY --from=builder /app/node_modules ./node_modules
 COPY --from=builder /app/src/generated ./src/generated

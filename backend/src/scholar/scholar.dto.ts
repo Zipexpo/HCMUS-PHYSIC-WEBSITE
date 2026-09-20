@@ -35,6 +35,8 @@ import {
   ProjectClaimBodySchema,
   ProjectListResSchema,
   ProjectResSchema,
+  ParseDocumentsResSchema,
+  UploadEvidenceBodySchema,
   StaffPageResSchema,
   DepartmentStaffResSchema,
   SyncStaffPageBodySchema,
@@ -113,6 +115,12 @@ export class UpdateStaffPageBodyDTO extends createZodDto(
 
 export class ProjectResDTO extends createZodDto(ProjectResSchema) {}
 export class ProjectListResDTO extends createZodDto(ProjectListResSchema) {}
+export class ParseDocumentsResDTO extends createZodDto(
+  ParseDocumentsResSchema,
+) {}
+export class UploadEvidenceBodyDTO extends createZodDto(
+  UploadEvidenceBodySchema,
+) {}
 export class CreateProjectBodyDTO extends createZodDto(
   CreateProjectBodySchema,
 ) {}

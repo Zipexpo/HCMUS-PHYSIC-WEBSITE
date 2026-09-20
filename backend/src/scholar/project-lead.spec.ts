@@ -249,7 +249,7 @@ function dungService(
       update: vi.fn().mockResolvedValue({}),
     },
   };
-  const svc = new ProjectService(prisma as never, { emit: vi.fn() } as never);
+  const svc = new ProjectService(prisma as never, { emit: vi.fn() } as never, {} as never);
   vi.spyOn(
     svc as unknown as { findOne: () => Promise<unknown> },
     'findOne',

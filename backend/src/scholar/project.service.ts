@@ -1,23 +1,44 @@
 import { Injectable } from '@nestjs/common';
-import { Prisma } from '../generated/prisma/client';
+import { createReadStream } from 'fs';
+import { rm } from 'fs/promises';
+import { join } from 'path';
+import { Prisma, ProjectEvidenceKind } from '../generated/prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { EventBusService } from '../shared/services/event-bus.service';
 import { laterOf, pageBySince } from './integration-cursor';
 import { duocQuanLy, vaiTroLucTao, vaiTroSauKhiSua } from './project-roles';
 import {
+  EvidenceNotFoundException,
   LastLeadLeavingException,
   NotAProjectMemberException,
   NotProjectLeadException,
+  ProjectDatesReversedException,
+  ProjectNeedsAcceptanceException,
   ProjectNeedsLeadException,
   ProjectNotFoundException,
   ShareOverflowException,
+  StagedDocNotFoundException,
 } from './scholar.error';
+import { ProjectDocOcrService, EVIDENCE_DIR } from './project-doc.service';
+import { bocTachTruongDeTai, gopTruong } from './project-doc-parse';
 import type {
   CreateProjectBodyType,
   IntegrationQueryType,
   ListProjectsQueryType,
   UpdateProjectBodyType,
 } from './scholar.model';
+
+/**
+ * Tệp người dùng vừa tải lên — hình dạng đủ dùng cho service, khớp cấu trúc với
+ * `Express.Multer.File` mà controller truyền vào (không phụ thuộc kiểu global).
+ */
+export type TepTaiLen = {
+  originalname: string;
+  filename: string;
+  path: string;
+  mimetype: string;
+  size: number;
+};
 
 /**
  * Đề tài, dự án NCKH — Bảng 2 của Phụ lục 2.
@@ -51,14 +72,59 @@ export function soThang(
   endYear?: number | null,
   endMonth?: number | null,
 ): number | null {
-  if (!startYear || !startMonth || !endYear || !endMonth) return null;
+  const moc = soatMocDeTai(startYear, startMonth, endYear, endMonth);
+  return moc.loai === 'du' ? moc.soThang : null;
+}
+
+/**
+ * Bốn mốc của đề tài ở tình trạng nào — TÁCH "thiếu mốc" khỏi "ngày ngược".
+ *
+ * soThang() trả null cho CẢ HAI, và cả ba nơi dùng nó (tạo, sửa, kênh gửi
+ * ACADsoom) đều hiểu null là "thiếu mốc, lấy số tháng nhập tay". Nên đề tài gõ
+ * nhầm năm kết thúc lọt vào với số tháng người khai tự gõ: đo 14/9/2026 có 3 đề
+ * tài như vậy, VL2020-18-02 (1/2020 → 1/2019) months=13, T2025-18 (12/2025 →
+ * 12/2024) months=8 — hai mốc nói một đằng, số tháng nói một nẻo.
+ *
+ * Thiếu mốc thì còn nhập tay được; ngày ngược là dữ liệu SAI, phải sửa mốc.
+ */
+export type MocDeTai =
+  | { loai: 'thieu' }
+  | { loai: 'nguoc' }
+  | { loai: 'du'; soThang: number };
+
+export function soatMocDeTai(
+  startYear?: number | null,
+  startMonth?: number | null,
+  endYear?: number | null,
+  endMonth?: number | null,
+): MocDeTai {
+  if (!startYear || !startMonth || !endYear || !endMonth) {
+    return { loai: 'thieu' };
+  }
   const dau = startYear * 12 + (startMonth - 1);
   const cuoi = endYear * 12 + (endMonth - 1);
-  if (cuoi < dau) return null;
+  if (cuoi < dau) return { loai: 'nguoc' };
   // HIỆU SỐ (span), KHÔNG cộng 1: 2/2025→2/2026 = 12 (đúng một năm), 1/2025→
   // 12/2025 = 11, cùng tháng = 0. Trước đây +1 (đếm cả hai đầu mút) nên 2/25→2/26
   // ra 13 — lệch dư một tháng.
-  return cuoi - dau;
+  return { loai: 'du', soThang: cuoi - dau };
+}
+
+/**
+ * Số tháng gửi ACADsoom: đủ mốc thì suy từ mốc; thiếu mốc mới dùng số đã lưu;
+ * mốc NGƯỢC thì null — không gửi số người khai tự gõ đi tính giờ khi hai mốc
+ * đang nói ngược với nó.
+ */
+export function thangGuiAcadsoom(p: {
+  startYear: number | null;
+  startMonth: number | null;
+  endYear: number | null;
+  endMonth: number | null;
+  months: number | null;
+}): number | null {
+  const moc = soatMocDeTai(p.startYear, p.startMonth, p.endYear, p.endMonth);
+  if (moc.loai === 'du') return moc.soThang;
+  return moc.loai === 'thieu' ? p.months : null;
 }
 
 @Injectable()
@@ -66,6 +132,7 @@ export class ProjectService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly bus: EventBusService,
+    private readonly ocr: ProjectDocOcrService,
   ) {}
 
   private get memberInclude() {
@@ -76,6 +143,7 @@ export class ProjectService {
         },
         orderBy: { role: 'asc' as const },
       },
+      evidences: { orderBy: { createdAt: 'asc' as const } },
     };
   }
 
@@ -93,6 +161,19 @@ export class ProjectService {
       // Ai bấm Sửa được — CÙNG hàm với chốt chặn ở update()/remove(), để nút
       // trên giao diện không nói khác máy chủ.
       canEdit: duocQuanLy(userId, row.createdBy, row.members),
+      // Minh chứng đã gắn + cờ "đã có nghiệm thu" — điều kiện chuyển KẾT THÚC.
+      evidences: (row.evidences ?? []).map((e: any) => ({
+        id: e.id,
+        kind: e.kind,
+        originalName: e.originalName,
+        mimeType: e.mimeType,
+        size: e.size,
+        uploadedBy: e.uploadedBy ?? null,
+        createdAt: e.createdAt,
+      })),
+      coMinhChungNghiemThu: (row.evidences ?? []).some(
+        (e: any) => e.kind === 'NGHIEM_THU',
+      ),
       members: row.members.map((m: any) => ({
         id: m.id,
         userId: m.userId,
@@ -166,6 +247,22 @@ export class ProjectService {
     if (!vaiTroLucTao(userId, body).includes('LEAD')) {
       throw ProjectNeedsLeadException;
     }
+    // Mốc NGƯỢC là dữ liệu sai chứ không phải thiếu mốc — chặn, và không bao giờ
+    // lấy số tháng gõ tay thay cho hai mốc. Xem soatMocDeTai.
+    const mocTao = soatMocDeTai(
+      body.startYear,
+      body.startMonth,
+      body.endYear,
+      body.endMonth,
+    );
+    if (mocTao.loai === 'nguoc') throw ProjectDatesReversedException;
+    // Minh chứng đính kèm (tải qua parse-documents) — nạp trước để biết loại, và
+    // để chốt chặn KẾT THÚC thấy được nghiệm thu ngay từ lúc tạo. Chỉ chặn khi
+    // NGƯỜI DÙNG CHỦ ĐỘNG đặt COMPLETED, không truy hồi đề tài đã kết thúc từ trước.
+    const dinhKem = await this.napStaged(userId, body.attachDocuments);
+    if (body.status === 'COMPLETED' && !this.coNghiemThu(dinhKem)) {
+      throw ProjectNeedsAcceptanceException;
+    }
     const created = await this.prisma.researchProject.create({
       data: {
         code: body.code ?? null,
@@ -182,15 +279,7 @@ export class ProjectService {
         startMonth: body.startMonth ?? null,
         endYear: body.endYear ?? null,
         endMonth: body.endMonth ?? null,
-        months:
-          soThang(
-            body.startYear,
-            body.startMonth,
-            body.endYear,
-            body.endMonth,
-          ) ??
-          body.months ??
-          null,
+        months: mocTao.loai === 'du' ? mocTao.soThang : (body.months ?? null),
         note: body.note ?? null,
         createdBy: userId,
         members: {
@@ -209,6 +298,7 @@ export class ProjectService {
     });
     await this.invite(created.id, userId, body.members ?? []);
     await this.addExternals(created.id, body.externalMembers ?? []);
+    await this.ganStaged(created.id, dinhKem);
     this.bus.emit('project.changed', {
       id: created.id,
       userIds: [userId, ...(body.members ?? []).map((m) => m.userId)],
@@ -320,6 +410,7 @@ export class ProjectService {
       where: { id },
       select: {
         catalogCode: true,
+        status: true,
         startYear: true,
         startMonth: true,
         endYear: true,
@@ -337,12 +428,30 @@ export class ProjectService {
       endYear: body.endYear === undefined ? cur.endYear : body.endYear,
       endMonth: body.endMonth === undefined ? cur.endMonth : body.endMonth,
     };
-    const thangSuyRa = soThang(
+    const mocSua = soatMocDeTai(
       moc.startYear,
       moc.startMonth,
       moc.endYear,
       moc.endMonth,
     );
+    // Mốc sau khi sửa mà NGƯỢC thì chặn — kể cả khi lượt này không đụng tới mốc:
+    // đề tài đang lưu ngày ngược phải được sửa mốc trước. Riêng bật/tắt hiện
+    // trên trang là việc của từng thành viên, không bắt họ gánh dữ liệu chung.
+    if (mocSua.loai === 'nguoc' && !chiDoiHienThi) {
+      throw ProjectDatesReversedException;
+    }
+    const thangSuyRa = mocSua.loai === 'du' ? mocSua.soThang : null;
+
+    // Minh chứng đính kèm ở lượt sửa này (nếu có), và chốt chặn KẾT THÚC: chỉ khi
+    // NGƯỜI DÙNG chủ động đặt COMPLETED thì phải đã có — hoặc đang gắn — minh
+    // chứng nghiệm thu. Hợp đồng + thuyết minh chỉ chứng cho đề tài đang thực hiện.
+    const dinhKem = await this.napStaged(userId, body.attachDocuments);
+    if (body.status === 'COMPLETED' && !this.coNghiemThu(dinhKem)) {
+      const daCoNghiemThu = await this.prisma.projectEvidence.count({
+        where: { projectId: id, kind: 'NGHIEM_THU' },
+      });
+      if (!daCoNghiemThu) throw ProjectNeedsAcceptanceException;
+    }
 
     await this.prisma.researchProject.update({
       where: { id },
@@ -455,6 +564,7 @@ export class ProjectService {
       });
     }
     if (body.members) await this.invite(id, userId, body.members);
+    await this.ganStaged(id, dinhKem);
     this.bus.emit('project.changed', { id, userIds: [userId] });
     return this.findOne(id, userId);
   }
@@ -583,6 +693,12 @@ export class ProjectService {
         role: accept ? (role ?? undefined) : undefined,
       },
     });
+    // Báo ngay cho app ngoài. Xác nhận/từ chối là lúc giờ NCKH của người này
+    // ĐỔI THẬT: trước khi trả lời họ chưa hưởng giờ nào của đề tài (xem
+    // assertShareFits — chỉ cộng người đã xác nhận). Ba đường kia (create,
+    // update, remove) đều đã phát; riêng đây bị sót, nên bên nhận phải chờ lượt
+    // quét theo lịch mới thấy — đúng ô người dùng hỏi nhiều nhất.
+    this.bus.emit('project.changed', { id: projectId, userIds: [userId] });
     return this.findOne(projectId, userId);
   }
 
@@ -616,6 +732,235 @@ export class ProjectService {
     });
     const daChia = others.reduce((s, m) => s + (m.sharePercent ?? 0), 0);
     if (daChia + share > 100) throw ShareOverflowException(daChia, share);
+  }
+
+  // ── Minh chứng đề tài: tải lên → OCR điền sẵn → gắn khi lưu ────────────────
+
+  /**
+   * Đọc hợp đồng / thuyết minh, trả về các ô ĐIỀN SẴN (để người dùng SOÁT) và
+   * token của tệp đã giữ tạm. Tệp chưa gắn vào đề tài nào — khi bấm Lưu,
+   * create/update nhận lại token ở `attachDocuments` để biến thành minh chứng.
+   *
+   * Hợp đồng đứng TRƯỚC thuyết minh khi gộp: hợp đồng có mã + hai mốc + số quyết
+   * định; thuyết minh bù tên/email/kinh phí khi hợp đồng thiếu (xem gopTruong).
+   */
+  async parseDocuments(
+    userId: string,
+    files: { hopDong?: TepTaiLen; deXuat?: TepTaiLen },
+  ) {
+    await this.donStagedQuaHan();
+    const dau: Array<{ file: TepTaiLen; kind: ProjectEvidenceKind }> = [];
+    if (files.hopDong) dau.push({ file: files.hopDong, kind: 'HOP_DONG' });
+    if (files.deXuat) dau.push({ file: files.deXuat, kind: 'DE_XUAT' });
+
+    const documents: Array<{
+      token: string;
+      kind: ProjectEvidenceKind;
+      originalName: string;
+      mimeType: string;
+      size: number;
+      source: 'text' | 'ocr';
+    }> = [];
+    const parsedList: Array<ReturnType<typeof bocTachTruongDeTai>> = [];
+
+    for (const { file, kind } of dau) {
+      const originalName = this.tenGoc(file.originalname);
+      let source: 'text' | 'ocr' = 'ocr';
+      let text = '';
+      try {
+        const doc = await this.ocr.docText(file.path, file.mimetype);
+        source = doc.source;
+        text = doc.text;
+      } catch {
+        // OCR hỏng (thiếu nhị phân, tệp lỗi) — vẫn giữ tệp để gắn, chỉ không điền sẵn.
+        text = '';
+      }
+      const parsed = bocTachTruongDeTai(text, originalName);
+      const staged = await this.prisma.stagedUpload.create({
+        data: {
+          kind,
+          originalName,
+          storedName: file.filename,
+          mimeType: file.mimetype,
+          size: file.size,
+          uploadedBy: userId,
+        },
+        select: { id: true },
+      });
+      documents.push({
+        token: staged.id,
+        kind,
+        originalName,
+        mimeType: file.mimetype,
+        size: file.size,
+        source,
+      });
+      parsedList.push(parsed);
+    }
+    return { fields: gopTruong(parsedList), documents };
+  }
+
+  /** Nạp các dòng StagedUpload theo token — CHỈ của chính người này. */
+  private async napStaged(
+    userId: string,
+    attach?: Array<{ token: string; kind?: ProjectEvidenceKind }>,
+  ): Promise<
+    Array<{
+      staged: {
+        id: string;
+        originalName: string;
+        storedName: string;
+        mimeType: string;
+        size: number;
+        uploadedBy: string | null;
+      };
+      kind: ProjectEvidenceKind;
+    }>
+  > {
+    if (!attach?.length) return [];
+    const ids = attach.map((a) => a.token);
+    const rows = await this.prisma.stagedUpload.findMany({
+      where: { id: { in: ids }, uploadedBy: userId },
+    });
+    // Token nào không thấy / không phải của người này thì báo lỗi, không lặng lẽ bỏ.
+    if (rows.length !== new Set(ids).size) throw StagedDocNotFoundException;
+    const kindTheoToken = new Map(attach.map((a) => [a.token, a.kind]));
+    return rows.map((r) => ({
+      staged: r,
+      kind: kindTheoToken.get(r.id) ?? r.kind,
+    }));
+  }
+
+  private coNghiemThu(list: Array<{ kind: ProjectEvidenceKind }>): boolean {
+    return list.some((x) => x.kind === 'NGHIEM_THU');
+  }
+
+  /** Biến tệp giữ tạm thành minh chứng của đề tài rồi xoá dòng tạm. */
+  private async ganStaged(
+    projectId: string,
+    list: Array<{
+      staged: {
+        id: string;
+        originalName: string;
+        storedName: string;
+        mimeType: string;
+        size: number;
+        uploadedBy: string | null;
+      };
+      kind: ProjectEvidenceKind;
+    }>,
+  ) {
+    if (!list.length) return;
+    await this.prisma.$transaction([
+      this.prisma.projectEvidence.createMany({
+        data: list.map((x) => ({
+          projectId,
+          kind: x.kind,
+          originalName: x.staged.originalName,
+          storedName: x.staged.storedName,
+          mimeType: x.staged.mimeType,
+          size: x.staged.size,
+          uploadedBy: x.staged.uploadedBy,
+        })),
+      }),
+      this.prisma.stagedUpload.deleteMany({
+        where: { id: { in: list.map((x) => x.staged.id) } },
+      }),
+    ]);
+  }
+
+  /** Danh sách minh chứng của đề tài (thành viên xem được). */
+  async listEvidence(userId: string, projectId: string) {
+    await this.assertMember(projectId, userId);
+    const rows = await this.prisma.projectEvidence.findMany({
+      where: { projectId },
+      orderBy: { createdAt: 'asc' },
+    });
+    return rows.map((e) => ({
+      id: e.id,
+      kind: e.kind,
+      originalName: e.originalName,
+      mimeType: e.mimeType,
+      size: e.size,
+      uploadedBy: e.uploadedBy,
+      createdAt: e.createdAt,
+    }));
+  }
+
+  /** Tệp minh chứng để tải về — trả luồng đọc + metadata. */
+  async evidenceFile(userId: string, projectId: string, evidenceId: string) {
+    await this.assertMember(projectId, userId);
+    const e = await this.prisma.projectEvidence.findFirst({
+      where: { id: evidenceId, projectId },
+    });
+    if (!e) throw EvidenceNotFoundException;
+    return {
+      stream: createReadStream(join(EVIDENCE_DIR, e.storedName)),
+      mimeType: e.mimeType,
+      originalName: e.originalName,
+    };
+  }
+
+  /** Tải thẳng một minh chứng lên đề tài đã có (vd biên bản nghiệm thu). */
+  async addEvidence(
+    userId: string,
+    projectId: string,
+    file: TepTaiLen,
+    kind: ProjectEvidenceKind,
+  ) {
+    await this.assertQuanLy(projectId, userId);
+    await this.prisma.projectEvidence.create({
+      data: {
+        projectId,
+        kind,
+        originalName: this.tenGoc(file.originalname),
+        storedName: file.filename,
+        mimeType: file.mimetype,
+        size: file.size,
+        uploadedBy: userId,
+      },
+    });
+    this.bus.emit('project.changed', { id: projectId, userIds: [userId] });
+    return this.findOne(projectId, userId);
+  }
+
+  /** Gỡ một minh chứng (chủ nhiệm / người khai). Xoá cả tệp trên đĩa. */
+  async removeEvidence(userId: string, projectId: string, evidenceId: string) {
+    await this.assertQuanLy(projectId, userId);
+    const e = await this.prisma.projectEvidence.findFirst({
+      where: { id: evidenceId, projectId },
+    });
+    if (!e) throw EvidenceNotFoundException;
+    await this.prisma.projectEvidence.delete({ where: { id: e.id } });
+    await rm(join(EVIDENCE_DIR, e.storedName), { force: true }).catch(() => {});
+    this.bus.emit('project.changed', { id: projectId, userIds: [userId] });
+    return this.findOne(projectId, userId);
+  }
+
+  /** multer để tên gốc ở latin1 — trả lại UTF-8 để tên tiếng Việt không loạn. */
+  private tenGoc(name: string): string {
+    return Buffer.from(name, 'latin1').toString('utf8');
+  }
+
+  /**
+   * Dọn tệp giữ tạm quá 1 ngày mà chưa gắn: người dùng bỏ giữa chừng thì tệp
+   * không nằm mãi trong `uploads/`. Gọi nhẹ mỗi lần parse, không cần cron.
+   */
+  private async donStagedQuaHan() {
+    const nguong = new Date(Date.now() - 24 * 60 * 60 * 1000);
+    const cu = await this.prisma.stagedUpload.findMany({
+      where: { createdAt: { lt: nguong } },
+      select: { id: true, storedName: true },
+    });
+    if (!cu.length) return;
+    await this.prisma.stagedUpload.deleteMany({
+      where: { id: { in: cu.map((s) => s.id) } },
+    });
+    for (const s of cu) {
+      await rm(join(EVIDENCE_DIR, s.storedName), { force: true }).catch(
+        () => {},
+      );
+    }
   }
 
   /**
@@ -684,10 +1029,7 @@ export class ProjectService {
               ...(query.from
                 ? [
                     {
-                      OR: [
-                        { endYear: null },
-                        { endYear: { gte: query.from } },
-                      ],
+                      OR: [{ endYear: null }, { endYear: { gte: query.from } }],
                     },
                   ]
                 : []),
@@ -761,10 +1103,9 @@ export class ProjectService {
           // tài tạo trước khi đổi sang quy ước SPAN còn giữ `months` kiểu cũ
           // (cộng cả hai đầu, dư một tháng) trong CSDL. Suy lại thì đề tài cũ
           // lẫn mới đều gửi cùng một thước, khớp cách ACADsoom cắt tháng theo
-          // năm học (nửa mở). Thiếu mốc thì mới lùi về số đã lưu / nhập tay.
-          months:
-            soThang(p.startYear, p.startMonth, p.endYear, p.endMonth) ??
-            p.months,
+          // năm học (nửa mở). Thiếu mốc thì mới lùi về số đã lưu / nhập tay;
+          // mốc ngược thì null, không gửi số gõ tay — xem thangGuiAcadsoom.
+          months: thangGuiAcadsoom(p),
           role: r.role,
           isLead: r.role === 'LEAD',
           sharePercent: r.sharePercent,

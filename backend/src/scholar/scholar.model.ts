@@ -1015,6 +1015,12 @@ export const PROJECT_STATUSES = [
   'FAILED',
 ] as const;
 export const PROJECT_ROLES = ['LEAD', 'SECRETARY', 'MEMBER'] as const;
+export const PROJECT_EVIDENCE_KINDS = [
+  'DE_XUAT',
+  'HOP_DONG',
+  'NGHIEM_THU',
+  'KHAC',
+] as const;
 
 const ProjectYear = z.number().int().min(1950).max(2200);
 const ProjectMonth = z.number().int().min(1).max(12);
@@ -1034,6 +1040,17 @@ export const ProjectMemberResSchema = z.object({
   claimStatus: z.enum(CLAIM_STATUSES),
   invitedBy: z.string().nullable(),
   respondedAt: z.date().nullable(),
+});
+
+export const ProjectEvidenceResSchema = z.object({
+  id: z.string(),
+  kind: z.enum(PROJECT_EVIDENCE_KINDS),
+  /** Tên gốc người dùng tải lên. */
+  originalName: z.string(),
+  mimeType: z.string(),
+  size: z.number().int(),
+  uploadedBy: z.string().nullable(),
+  createdAt: z.date(),
 });
 
 export const ProjectResSchema = z.object({
@@ -1056,6 +1073,13 @@ export const ProjectResSchema = z.object({
   createdAt: z.date(),
   updatedAt: z.date(),
   members: z.array(ProjectMemberResSchema),
+  /** Minh chứng đã gắn: hợp đồng, thuyết minh, biên bản nghiệm thu… */
+  evidences: z.array(ProjectEvidenceResSchema),
+  /**
+   * Đã có ít nhất một minh chứng NGHIỆM THU chưa — điều kiện để chuyển đề tài
+   * sang "Đã kết thúc". Frontend dựa vào đây để mở/khoá lựa chọn trạng thái.
+   */
+  coMinhChungNghiemThu: z.boolean(),
   isClassified: z.boolean(),
   myRole: z.enum(PROJECT_ROLES).nullable(),
   myClaimStatus: z.enum(CLAIM_STATUSES).nullable(),
@@ -1135,6 +1159,20 @@ export const CreateProjectBodySchema = z.object({
     )
     .max(50)
     .default([]),
+  /**
+   * Tệp đã tải lên qua POST /projects/parse-documents (mỗi tệp một `token`),
+   * gắn vào đề tài này làm MINH CHỨNG ngay khi lưu. Token là id dòng
+   * StagedUpload; chỉ người đã tải lên mới gắn được, và mỗi token dùng một lần.
+   */
+  attachDocuments: z
+    .array(
+      z.object({
+        token: z.string(),
+        kind: z.enum(PROJECT_EVIDENCE_KINDS).optional(),
+      }),
+    )
+    .max(10)
+    .optional(),
 });
 export type CreateProjectBodyType = z.infer<typeof CreateProjectBodySchema>;
 
@@ -1185,6 +1223,44 @@ export const UpdateProjectBodySchema = CreateProjectBodySchema.partial().extend(
   },
 );
 export type UpdateProjectBodyType = z.infer<typeof UpdateProjectBodySchema>;
+
+/** Các ô đề tài bóc tách từ tài liệu — LUÔN là gợi ý để người dùng soát. */
+export const ParsedProjectFieldsSchema = z.object({
+  code: z.string().nullable(),
+  title: z.string().nullable(),
+  decisionNo: z.string().nullable(),
+  budget: z.number().nullable(),
+  months: z.number().int().nullable(),
+  startMonth: z.number().int().nullable(),
+  startYear: z.number().int().nullable(),
+  endMonth: z.number().int().nullable(),
+  endYear: z.number().int().nullable(),
+  funder: z.string().nullable(),
+  leadName: z.string().nullable(),
+  leadEmail: z.string().nullable(),
+});
+
+export const StagedDocResSchema = z.object({
+  /** Id dòng StagedUpload — truyền lại ở `attachDocuments` khi lưu đề tài. */
+  token: z.string(),
+  kind: z.enum(PROJECT_EVIDENCE_KINDS),
+  originalName: z.string(),
+  mimeType: z.string(),
+  size: z.number().int(),
+  /** 'text' = trích thẳng (thuyết minh chữ), 'ocr' = quét ảnh (hợp đồng scan). */
+  source: z.enum(['text', 'ocr']),
+});
+
+export const ParseDocumentsResSchema = z.object({
+  fields: ParsedProjectFieldsSchema,
+  documents: z.array(StagedDocResSchema),
+});
+
+/** Loại minh chứng khi tải thẳng lên một đề tài đã có (vd nghiệm thu). */
+export const UploadEvidenceBodySchema = z.object({
+  kind: z.enum(PROJECT_EVIDENCE_KINDS).default('KHAC'),
+});
+export type UploadEvidenceBodyType = z.infer<typeof UploadEvidenceBodySchema>;
 
 export const ListProjectsQuerySchema = z.object({
   status: z.enum(PROJECT_STATUSES).optional(),

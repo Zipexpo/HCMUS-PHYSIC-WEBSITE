@@ -10,10 +10,18 @@ import {
   Patch,
   Post,
   Query,
+  Res,
+  StreamableFile,
+  UnprocessableEntityException,
   UploadedFile,
+  UploadedFiles,
   UseInterceptors,
 } from '@nestjs/common';
-import { FileInterceptor } from '@nestjs/platform-express';
+import type { Response } from 'express';
+import {
+  FileInterceptor,
+  FileFieldsInterceptor,
+} from '@nestjs/platform-express';
 import { CacheInterceptor, CacheTTL } from '@nestjs/cache-manager';
 import { diskStorage } from 'multer';
 import { ZodSerializerDto } from 'nestjs-zod';
@@ -51,6 +59,8 @@ import {
   UpdateActivityBodyDTO,
   ProjectListResDTO,
   ProjectResDTO,
+  ParseDocumentsResDTO,
+  UploadEvidenceBodyDTO,
   StaffPageResDTO,
   DepartmentStaffResDTO,
   SyncStaffPageBodyDTO,
@@ -65,6 +75,7 @@ import {
 import { ScholarService } from './scholar.service';
 import { StaffPageService } from './staff-page.service';
 import { ProjectService } from './project.service';
+import { EVIDENCE_DIR } from './project-doc.service';
 import { ActivityService } from './activity.service';
 import { PhotoRequiredException } from './scholar.error';
 
@@ -74,6 +85,32 @@ const UPLOADS_DIR = join(process.cwd(), 'uploads');
 mkdirSync(UPLOADS_DIR, { recursive: true });
 
 const FIVE_MINUTES_MS = 300_000;
+
+// Minh chứng đề tài (hợp đồng, thuyết minh, biên bản nghiệm thu) — PDF hoặc ảnh,
+// tối đa 25 MB, đặt tên ngẫu nhiên trong uploads/project-evidence/ (volume ngoài).
+mkdirSync(EVIDENCE_DIR, { recursive: true });
+const evidenceStorage = diskStorage({
+  destination: EVIDENCE_DIR,
+  filename: (_req, file, cb) =>
+    cb(null, `${randomUUID()}${extname(file.originalname).toLowerCase()}`),
+});
+const EVIDENCE_LIMITS = { fileSize: 25 * 1024 * 1024 };
+const chiPdfHoacAnh = (
+  _req: unknown,
+  file: { mimetype: string },
+  cb: (error: Error | null, ok: boolean) => void,
+) => {
+  const ok =
+    file.mimetype === 'application/pdf' || file.mimetype.startsWith('image/');
+  cb(
+    ok
+      ? null
+      : new UnprocessableEntityException([
+          { field: 'file', error: 'Chỉ nhận PDF hoặc ảnh (JPG, PNG).' },
+        ]),
+    ok,
+  );
+};
 
 /**
  * API của app hồ sơ khoa học (profile.phys.hcmus.edu.vn).
@@ -271,6 +308,101 @@ export class ScholarController {
   @Delete('projects/:id')
   removeProject(@ActiveUser('userId') userId: string, @Param('id') id: string) {
     return this.projects.remove(userId, id);
+  }
+
+  // ── Minh chứng đề tài (OCR điền sẵn + lưu tệp) ────────────────────────────
+  /**
+   * Tải hợp đồng và/hoặc thuyết minh lên → OCR trả về các ô ĐIỀN SẴN + token tệp.
+   * Chưa lưu gì vào đề tài: người dùng SOÁT rồi bấm Lưu, gửi token ở
+   * `attachDocuments` của POST/PATCH projects. Hợp đồng scan cần OCR nên endpoint
+   * này có thể mất vài giây.
+   */
+  @Post('projects/parse-documents')
+  @UseInterceptors(
+    FileFieldsInterceptor(
+      [
+        { name: 'hopDong', maxCount: 1 },
+        { name: 'deXuat', maxCount: 1 },
+      ],
+      {
+        storage: evidenceStorage,
+        limits: EVIDENCE_LIMITS,
+        fileFilter: chiPdfHoacAnh,
+      },
+    ),
+  )
+  @ZodSerializerDto(ParseDocumentsResDTO)
+  parseProjectDocuments(
+    @ActiveUser('userId') userId: string,
+    @UploadedFiles()
+    files: {
+      hopDong?: Express.Multer.File[];
+      deXuat?: Express.Multer.File[];
+    },
+  ) {
+    return this.projects.parseDocuments(userId, {
+      hopDong: files?.hopDong?.[0],
+      deXuat: files?.deXuat?.[0],
+    });
+  }
+
+  @Get('projects/:id/evidences')
+  listProjectEvidence(
+    @ActiveUser('userId') userId: string,
+    @Param('id') id: string,
+  ) {
+    return this.projects.listEvidence(userId, id);
+  }
+
+  /** Tải thẳng minh chứng lên đề tài đã có — vd biên bản nghiệm thu để kết thúc. */
+  @Post('projects/:id/evidences')
+  @UseInterceptors(
+    FileInterceptor('file', {
+      storage: evidenceStorage,
+      limits: EVIDENCE_LIMITS,
+      fileFilter: chiPdfHoacAnh,
+    }),
+  )
+  @ZodSerializerDto(ProjectResDTO)
+  addProjectEvidence(
+    @ActiveUser('userId') userId: string,
+    @Param('id') id: string,
+    @UploadedFile() file: Express.Multer.File | undefined,
+    @Body() body: UploadEvidenceBodyDTO,
+  ) {
+    if (!file) {
+      throw new UnprocessableEntityException([
+        { field: 'file', error: 'Cần chọn một tệp minh chứng.' },
+      ]);
+    }
+    return this.projects.addEvidence(userId, id, file, body.kind);
+  }
+
+  @Get('projects/:id/evidences/:evidenceId/file')
+  async downloadProjectEvidence(
+    @ActiveUser('userId') userId: string,
+    @Param('id') id: string,
+    @Param('evidenceId') evidenceId: string,
+    @Res({ passthrough: true }) res: Response,
+  ): Promise<StreamableFile> {
+    const f = await this.projects.evidenceFile(userId, id, evidenceId);
+    res.set({
+      'Content-Type': f.mimeType,
+      'Content-Disposition': `attachment; filename*=UTF-8''${encodeURIComponent(
+        f.originalName,
+      )}`,
+    });
+    return new StreamableFile(f.stream);
+  }
+
+  @Delete('projects/:id/evidences/:evidenceId')
+  @ZodSerializerDto(ProjectResDTO)
+  removeProjectEvidence(
+    @ActiveUser('userId') userId: string,
+    @Param('id') id: string,
+    @Param('evidenceId') evidenceId: string,
+  ) {
+    return this.projects.removeEvidence(userId, id, evidenceId);
   }
 
   /** Người trong Khoa, để chọn làm thành viên đề tài. Không có tài khoản đơn vị. */

@@ -120,6 +120,34 @@ export const ActivityNotFoundException = new NotFoundException([
   { field: 'id', error: 'Không tìm thấy hoạt động khoa học' },
 ]);
 
+export const EvidenceNotFoundException = new NotFoundException([
+  { field: 'evidenceId', error: 'Không tìm thấy tệp minh chứng của đề tài' },
+]);
+
+/**
+ * Token minh chứng gửi lên khi lưu đề tài không còn / không phải của người này.
+ * Tệp tải qua parse-documents chỉ giữ tạm; quá hạn thì bị dọn.
+ */
+export const StagedDocNotFoundException = new UnprocessableEntityException([
+  {
+    field: 'attachDocuments',
+    error:
+      'Tệp đính kèm không còn khả dụng — có thể đã quá hạn giữ tạm. Tải lại ' +
+      'hợp đồng / thuyết minh rồi lưu lại.',
+  },
+]);
+
+/** Mốc kết thúc của đề tài trước mốc bắt đầu — xem soatMocDeTai. */
+export const ProjectDatesReversedException = new UnprocessableEntityException([
+  {
+    field: 'endYear',
+    error:
+      'Ngày kết thúc đề tài đang trước ngày bắt đầu — kiểm lại tháng/năm (thường ' +
+      'là gõ nhầm năm). Đủ hai mốc thì số tháng thực hiện được tính từ mốc, không ' +
+      'nhập tay.',
+  },
+]);
+
 /** Danh sách nhân sự của đề tài không có chủ nhiệm — xem project-roles.ts. */
 export const ProjectNeedsLeadException = new UnprocessableEntityException([
   {
@@ -140,6 +168,23 @@ export const LastLeadLeavingException = new UnprocessableEntityException([
       '(Sửa → Nhân sự đề tài) rồi hãy rút tên.',
   },
 ]);
+
+/**
+ * Đặt đề tài sang KẾT THÚC mà chưa có minh chứng nghiệm thu. Hợp đồng + thuyết
+ * minh chỉ chứng cho đề tài ĐANG thực hiện; muốn kết thúc phải kèm biên bản
+ * nghiệm thu / thanh lý — xem chốt chặn trong project.service.ts.
+ */
+export const ProjectNeedsAcceptanceException = new UnprocessableEntityException(
+  [
+    {
+      field: 'status',
+      error:
+        'Đề tài chỉ chuyển sang "Đã kết thúc" khi đã có minh chứng nghiệm thu ' +
+        '(biên bản nghiệm thu / thanh lý). Tải minh chứng nghiệm thu lên đề tài ' +
+        'rồi mới đổi trạng thái.',
+    },
+  ],
+);
 
 /** Tổng tỷ lệ chia của đề tài vượt 100% — xem `assertShareFits`. */
 export const ShareOverflowException = (daChia: number, them: number) =>

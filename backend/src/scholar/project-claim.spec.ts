@@ -21,11 +21,12 @@ function dung(claimStatus: 'PENDING' | 'CONFIRMED' | 'REJECTED' | null) {
     },
     user: { findMany: vi.fn().mockResolvedValue([]) },
   };
-  const svc = new ProjectService(prisma as never, { emit: vi.fn() } as never);
+  const bus = { emit: vi.fn() };
+  const svc = new ProjectService(prisma as never, bus as never, {} as never);
   const findOne = vi
     .spyOn(svc as unknown as { findOne: () => Promise<unknown> }, 'findOne')
     .mockResolvedValue({ id: 'p1' });
-  return { svc, prisma, findOne };
+  return { svc, prisma, findOne, bus };
 }
 
 describe('ProjectService.respond', () => {
@@ -66,6 +67,27 @@ describe('ProjectService.respond', () => {
     const { svc, prisma } = dung(null);
     await expect(svc.respond('u1', 'p1', true, 'LEAD')).rejects.toBeDefined();
     expect(prisma.projectMember.update).not.toHaveBeenCalled();
+  });
+
+  // Trả lời lời mời là lúc giờ NCKH của người đó đổi thật, mà đường này từng là
+  // đường DUY NHẤT trong project.service không phát sự kiện — ACADsoom phải chờ
+  // tới lượt quét đêm mới thấy.
+  it.each([true, false])(
+    'trả lời (accept=%s) → phát project.changed',
+    async (accept) => {
+      const { svc, bus } = dung('PENDING');
+      await svc.respond('u1', 'p1', accept);
+      expect(bus.emit).toHaveBeenCalledWith('project.changed', {
+        id: 'p1',
+        userIds: ['u1'],
+      });
+    },
+  );
+
+  it('dòng đã trả lời → KHÔNG phát lại (bấm đúp không làm bên nhận quét thừa)', async () => {
+    const { svc, bus } = dung('CONFIRMED');
+    await svc.respond('u1', 'p1', true);
+    expect(bus.emit).not.toHaveBeenCalled();
   });
 });
 

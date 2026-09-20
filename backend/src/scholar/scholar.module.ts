@@ -5,6 +5,7 @@ import { ResolveService } from './resolve/resolve.service';
 import { ScholarController } from './scholar.controller';
 import { ScholarService } from './scholar.service';
 import { ProjectService } from './project.service';
+import { ProjectDocOcrService } from './project-doc.service';
 import { ActivityService } from './activity.service';
 import { StaffPageService } from './staff-page.service';
 
@@ -19,6 +20,7 @@ import { StaffPageService } from './staff-page.service';
     ResolveService,
     StaffPageService,
     ProjectService,
+    ProjectDocOcrService,
     ActivityService,
   ],
   exports: [ScholarService],

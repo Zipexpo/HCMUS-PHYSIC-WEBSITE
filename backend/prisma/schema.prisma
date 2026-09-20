@@ -80,6 +80,16 @@ enum ProjectStatus {
   FAILED
 }
 
+/// Loại minh chứng của đề tài. Hợp đồng + thuyết minh chứng cho đề tài ĐANG
+/// THỰC HIỆN; muốn chuyển sang KẾT THÚC (COMPLETED) phải có biên bản nghiệm thu
+/// / thanh lý — xem chốt chặn trong project.service.ts.
+enum ProjectEvidenceKind {
+  DE_XUAT
+  HOP_DONG
+  NGHIEM_THU
+  KHAC
+}
+
 /// Một bài được dùng chung cho mọi đồng tác giả trong Khoa. Người khai đầu tiên
 /// gắn tên đồng nghiệp vào; những người đó phải tự xác nhận thì mới được tính.
 enum AuthorClaimStatus {
@@ -1210,7 +1220,8 @@ model ResearchProject {
   updatedAt DateTime  @updatedAt
   deletedAt DateTime?
 
-  members ProjectMember[]
+  members   ProjectMember[]
+  evidences ProjectEvidence[]
 
   @@index([catalogCode])
   @@index([status])
@@ -1258,4 +1269,42 @@ model ProjectMember {
 
   @@unique([projectId, userId])
   @@index([userId, claimStatus])
+}
+
+/// Một tệp minh chứng gắn với đề tài (hợp đồng, thuyết minh, biên bản nghiệm thu…).
+/// Tệp nằm trong volume `uploads/` (bền qua các lần deploy), CSDL chỉ giữ metadata.
+model ProjectEvidence {
+  id           String              @id @default(cuid())
+  projectId    String
+  kind         ProjectEvidenceKind @default(KHAC)
+  /// Tên gốc người dùng tải lên — để hiển thị và đặt lại khi tải về.
+  originalName String
+  /// Tên trên đĩa: `<uuid>.<ext>` trong `uploads/project-evidence/`.
+  storedName   String
+  mimeType     String
+  size         Int
+  uploadedBy   String?
+  createdAt    DateTime            @default(now())
+
+  project ResearchProject @relation(fields: [projectId], references: [id], onDelete: Cascade)
+
+  @@index([projectId])
+}
+
+/// Tệp đã tải lên và OCR nhưng CHƯA gắn vào đề tài nào — người dùng còn đang soát
+/// thông tin điền sẵn trước khi bấm Lưu. Khi lưu, tệp được chuyển thành
+/// ProjectEvidence và dòng này bị xoá. Dòng quá hạn được dọn định kỳ (xem service).
+model StagedUpload {
+  id           String              @id @default(cuid())
+  kind         ProjectEvidenceKind @default(KHAC)
+  originalName String
+  storedName   String
+  mimeType     String
+  size         Int
+  /// Chỉ người tải lên mới gắn được tệp này vào đề tài của mình.
+  uploadedBy   String?
+  createdAt    DateTime            @default(now())
+
+  @@index([uploadedBy])
+  @@index([createdAt])
 }

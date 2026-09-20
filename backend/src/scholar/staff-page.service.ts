@@ -550,6 +550,11 @@ export class StaffPageService {
         email: p.email,
         visiting: p.visiting,
         category: p.category,
+        // Danh sách trường ở đây là DANH SÁCH CHO QUA: trường nào không chép ra
+        // thì API không bao giờ trả. `facultyRole` từng được tính ở trên và có
+        // trong schema, nhưng quên chép ở đây — mục "Ban lãnh đạo Khoa" trên
+        // /giang-vien-co-huu vì thế không bao giờ hiện (phát hiện 13/9/2026).
+        facultyRole: p.facultyRole ?? null,
       })),
     };
     // Cache ngắn; nguồn đổi (sửa trang cá nhân) đã gọi afterWrite → cache.clear().
