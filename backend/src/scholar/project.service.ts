@@ -14,6 +14,7 @@ import {
   NotProjectLeadException,
   ProjectDatesReversedException,
   ProjectNeedsAcceptanceException,
+  ProjectNeedsFinishMonthException,
   ProjectNeedsLeadException,
   ProjectNotFoundException,
   ShareOverflowException,
@@ -269,6 +270,7 @@ export class ProjectService {
     if (body.status === 'COMPLETED' && !this.coNghiemThu(dinhKem)) {
       throw ProjectNeedsAcceptanceException;
     }
+    this.soatMocChot(body.status, body.finishedYear, body.finishedMonth);
     const created = await this.prisma.researchProject.create({
       data: {
         code: body.code ?? null,
@@ -286,6 +288,8 @@ export class ProjectService {
         endYear: body.endYear ?? null,
         endMonth: body.endMonth ?? null,
         months: mocTao.loai === 'du' ? mocTao.soThang : (body.months ?? null),
+        finishedYear: body.finishedYear ?? null,
+        finishedMonth: body.finishedMonth ?? null,
         note: body.note ?? null,
         createdBy: userId,
         members: {
@@ -426,6 +430,8 @@ export class ProjectService {
         startMonth: true,
         endYear: true,
         endMonth: true,
+        finishedYear: true,
+        finishedMonth: true,
       },
     });
     if (!cur) throw ProjectNotFoundException;
@@ -463,6 +469,13 @@ export class ProjectService {
       });
       if (!daCoNghiemThu) throw ProjectNeedsAcceptanceException;
     }
+    // Mốc chốt lấy theo bản SAU khi sửa: người dùng có thể chỉ bấm đổi trạng
+    // thái, còn tháng nghiệm thu đã nhập từ lượt trước.
+    this.soatMocChot(
+      body.status,
+      body.finishedYear === undefined ? cur.finishedYear : body.finishedYear,
+      body.finishedMonth === undefined ? cur.finishedMonth : body.finishedMonth,
+    );
 
     await this.prisma.researchProject.update({
       where: { id },
@@ -484,6 +497,10 @@ export class ProjectService {
         startMonth: body.startMonth === undefined ? undefined : body.startMonth,
         endYear: body.endYear === undefined ? undefined : body.endYear,
         endMonth: body.endMonth === undefined ? undefined : body.endMonth,
+        finishedYear:
+          body.finishedYear === undefined ? undefined : body.finishedYear,
+        finishedMonth:
+          body.finishedMonth === undefined ? undefined : body.finishedMonth,
         months:
           thangSuyRa ?? (body.months === undefined ? undefined : body.months),
         note: body.note === undefined ? undefined : body.note,
@@ -904,6 +921,26 @@ export class ProjectService {
     return list.some((x) => x.kind === 'NGHIEM_THU');
   }
 
+  /**
+   * Đóng đề tài thì phải nói ĐÓNG THÁNG NÀO.
+   *
+   * Chỉ chặn khi NGƯỜI DÙNG chủ động đặt trạng thái ở lượt này — y như chốt
+   * chặn nghiệm thu ngay trên — để không truy hồi những đề tài đã KẾT THÚC từ
+   * trước khi có ô này.
+   *
+   * Vì sao bắt buộc: mốc này quyết định năm học nào được cộng phần thời gian
+   * còn lại. Thiếu nó, đề tài nghiệm thu sớm vẫn bị chia đều tới hạn cũ, nên
+   * giờ của cả nhóm nằm lại ở một năm học mà đề tài đã đóng xong.
+   */
+  private soatMocChot(
+    status: string | undefined,
+    nam: number | null | undefined,
+    thang: number | null | undefined,
+  ) {
+    if (status !== 'COMPLETED' && status !== 'FAILED') return;
+    if (!nam || !thang) throw ProjectNeedsFinishMonthException;
+  }
+
   /** Biến tệp giữ tạm thành minh chứng của đề tài rồi xoá dòng tạm. */
   private async ganStaged(
     projectId: string,
@@ -1175,6 +1212,11 @@ export class ProjectService {
           // năm học (nửa mở). Thiếu mốc thì mới lùi về số đã lưu / nhập tay;
           // mốc ngược thì null, không gửi số gõ tay — xem thangGuiAcadsoom.
           months: thangGuiAcadsoom(p),
+          // MỐC CHỐT THỰC TẾ — ACADsoom cắt tháng theo mốc này chứ không chỉ
+          // theo end: nghiệm thu sớm thì dồn phần còn lại vào năm học chứa
+          // tháng này, không hoàn thành thì cắt cụt tại đây.
+          finishedYear: p.finishedYear,
+          finishedMonth: p.finishedMonth,
           role: r.role,
           isLead: r.role === 'LEAD',
           sharePercent: r.sharePercent,

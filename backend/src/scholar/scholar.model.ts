@@ -1080,6 +1080,9 @@ export const ProjectResSchema = z.object({
   endYear: z.number().int().nullable(),
   endMonth: z.number().int().nullable(),
   months: z.number().int().nullable(),
+  /** Tháng nghiệm thu, hoặc tháng khai không hoàn thành. */
+  finishedYear: z.number().int().nullable(),
+  finishedMonth: z.number().int().nullable(),
   note: z.string().nullable(),
   createdBy: z.string().nullable(),
   createdAt: z.date(),
@@ -1125,6 +1128,13 @@ export const CreateProjectBodySchema = z.object({
   startMonth: ProjectMonth.nullish(),
   endYear: ProjectYear.nullish(),
   endMonth: ProjectMonth.nullish(),
+  /**
+   * MỐC CHỐT THỰC TẾ — tháng nghiệm thu, hoặc tháng khai không hoàn thành.
+   * BẮT BUỘC khi người dùng đặt trạng thái KẾT THÚC hoặc KHÔNG HOÀN THÀNH: nó
+   * quyết định năm học nào ôm phần tháng còn lại. Xem chốt chặn trong service.
+   */
+  finishedYear: ProjectYear.nullish(),
+  finishedMonth: ProjectMonth.nullish(),
   /**
    * Số tháng thực hiện. CHỈ dùng khi thiếu mốc bắt đầu hoặc kết thúc — có đủ hai
    * mốc thì backend tự suy ra và bỏ qua giá trị gửi lên, để con số này không bao
@@ -1342,6 +1352,14 @@ export const IntegrationProjectResSchema = z.object({
       endYear: z.number().int().nullable(),
       endMonth: z.number().int().nullable(),
       months: z.number().int().nullable(),
+      /**
+       * MỐC CHỐT THỰC TẾ — tháng nghiệm thu, hoặc tháng khai không hoàn thành.
+       * start/end là kế hoạch; ACADsoom dùng mốc này để biết năm học nào ôm
+       * phần tháng còn lại (nghiệm thu sớm dồn hết vào năm chứa tháng này;
+       * không hoàn thành thì cắt cụt tại đây).
+       */
+      finishedYear: z.number().int().nullable(),
+      finishedMonth: z.number().int().nullable(),
       role: z.enum(PROJECT_ROLES),
       isLead: z.boolean(),
       sharePercent: z.number().int().nullable(),

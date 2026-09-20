@@ -452,7 +452,9 @@ function StaffProfileEditorialRender(props: Props) {
                 </h1>
               ) : null}
               {tx(props.intro) ? (
-                <p className="text-base md:text-lg max-w-xl font-light leading-relaxed">
+                // `whitespace-pre-line`: giữ ĐÚNG các lần xuống dòng người dùng
+                // gõ ở ô "Giới thiệu ngắn" (mặc định CSS gộp \n thành khoảng trắng).
+                <p className="text-base md:text-lg max-w-xl font-light leading-relaxed whitespace-pre-line">
                   {tx(props.intro)}
                 </p>
               ) : heroDaoTao.length ? (

@@ -1200,11 +1200,11 @@ model ResearchProject {
   /// với hầu hết các mục; dùng BigInt vì đề tài tiền tỷ vượt phạm vi int32.
   budget      BigInt?
 
-  status     ProjectStatus @default(ONGOING)
-  startYear  Int?
-  startMonth Int?
-  endYear    Int?
-  endMonth   Int?
+  status        ProjectStatus @default(ONGOING)
+  startYear     Int?
+  startMonth    Int?
+  endYear       Int?
+  endMonth      Int?
   /// Số tháng thực hiện chính thức. Phụ lục 2 tr. 2.7 chia đều giờ cho từng
   /// tháng, nên đây là MẪU SỐ của phép chia theo năm học — sai một tháng là lệch
   /// giờ của mọi thành viên, mọi năm.
@@ -1212,7 +1212,20 @@ model ResearchProject {
   /// SUY RA từ start/end khi có đủ hai mốc (xem `soThang()` trong service). Chỉ
   /// giữ giá trị nhập tay khi thiếu mốc, hoặc khi đề tài có thời gian tạm dừng
   /// nên số tháng thực hiện ít hơn khoảng cách hai mốc.
-  months     Int?
+  months        Int?
+  /// MỐC CHỐT THỰC TẾ: tháng nghiệm thu (status COMPLETED), hoặc tháng khai
+  /// không hoàn thành (FAILED). start/end chỉ là KẾ HOẠCH — mốc này mới quyết
+  /// định năm học nào ôm phần tháng còn lại (Khoa chốt 20/9/2026):
+  ///
+  ///   nghiệm thu SỚM → dồn toàn bộ phần còn lại vào năm học chứa tháng này,
+  ///     các năm sau không tính đề tài nữa; tổng giờ không đổi, chỉ về sớm hơn.
+  ///   TRỄ hạn → chỉ ghi nhận, không có thêm giờ (vẫn chặn ở mốc kế hoạch).
+  ///   KHÔNG hoàn thành → cắt cụt tại đây, phần còn lại không cộng cho ai.
+  ///
+  /// Phép cắt nằm bên ACADsoom (`catThang` trong lib/namHoc); ở đây chỉ lưu và
+  /// gửi đi qua /integration/projects.
+  finishedYear  Int?
+  finishedMonth Int?
 
   note      String?
   createdBy String?

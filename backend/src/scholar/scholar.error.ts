@@ -186,6 +186,23 @@ export const ProjectNeedsAcceptanceException = new UnprocessableEntityException(
   ],
 );
 
+/**
+ * Đặt KẾT THÚC / KHÔNG HOÀN THÀNH mà không nói tháng nào.
+ *
+ * Không phải thủ tục giấy tờ: mốc này quyết định năm học nào được cộng phần
+ * tháng còn lại. Thiếu nó thì đề tài nghiệm thu sớm vẫn bị chia đều tới hạn cũ,
+ * tức giờ của người ta nằm lại ở một năm học mà đề tài đã đóng.
+ */
+export const ProjectNeedsFinishMonthException =
+  new UnprocessableEntityException([
+    {
+      field: 'finishedMonth',
+      error:
+        'Cho biết tháng/năm nghiệm thu (hoặc tháng khai không hoàn thành). ' +
+        'Mốc này quyết định năm học nào được tính phần thời gian còn lại của đề tài.',
+    },
+  ]);
+
 /** Tổng tỷ lệ chia của đề tài vượt 100% — xem `assertShareFits`. */
 export const ShareOverflowException = (daChia: number, them: number) =>
   new UnprocessableEntityException([

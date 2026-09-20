@@ -1082,3 +1082,41 @@ việc khác (OCR minh chứng đề tài: `project-doc.service.ts`, `project-do
 này. Thay đổi của mục này chỉ gồm `project.service.ts` (một lệnh emit + chú
 thích) và `project-claim.spec.ts` (3 test) — chưa commit, để khỏi gộp chung với
 việc đang dở kia.
+
+## 2026-09-20b — Mốc chốt thực tế của đề tài (nghiệm thu sớm / không hoàn thành)
+
+Phụ lục 2 tr. 2.7 chia đều giờ đề tài cho từng tháng, mỗi năm học lấy phần rơi
+vào nó — nhưng hai mốc `start`/`end` chỉ là **kế hoạch**. Đề tài 2/2025 → 2/2027
+nghiệm thu 10/2026 vẫn bị chia đều tới 2/2027, nên phần giờ của mấy tháng cuối
+nằm ở năm học 2026-2027, một năm mà đề tài đã đóng xong.
+
+Khoa chốt 20/9/2026: nghiệm thu **sớm** thì toàn bộ phần còn lại dồn vào năm học
+chứa tháng nghiệm thu (năm sau không tính nữa, tổng giờ không đổi); **trễ hạn**
+thì chỉ ghi nhận, không thêm giờ; **không hoàn thành** thì cắt cụt tại tháng
+khai, phần còn lại không cộng cho ai.
+
+Phần bên này chỉ là **dữ kiện**, phép cắt nằm ở ACADsoom (`catThang` trong
+`lib/namHoc.js`, đã làm và đã test bên đó):
+
+- `ResearchProject.finishedYear` / `finishedMonth` — hai cột cộng thêm, cần
+  **`db push`** khi deploy (không có migration file, đúng lối repo đang dùng).
+- Nhận ở `CreateProjectBodySchema` / `UpdateProjectBodySchema`; trả ra ở
+  `ProjectResSchema`; gửi đi ở `IntegrationProjectResSchema`.
+- Chốt chặn `soatMocChot`: đặt `status` = `COMPLETED` hoặc `FAILED` mà không có
+  tháng thì `ProjectNeedsFinishMonthException`. Chỉ chặn lượt **người dùng chủ
+  động** đổi trạng thái — cùng lối với chốt chặn nghiệm thu, để không truy hồi
+  những đề tài đã kết thúc từ trước khi có ô này. Lượt sửa đọc mốc theo bản SAU
+  khi sửa, vì người dùng có thể đã nhập tháng từ lượt trước rồi mới bấm đổi.
+
+Kiểm chứng: `vitest run` 227/227 (15 tệp, thêm 6 test trong
+`project-months.spec.ts`), `tsc --noEmit -p tsconfig.build.json` sạch, `eslint`
+các tệp đã sửa 0 lỗi. Vẫn **không** chạy `pnpm run lint` (script kèm `--fix`).
+
+Đầu giao diện nằm ở repo `phys-profile` (commit `5f5caf6`): ô "Nghiệm thu
+(tháng/năm)" / "Khai không hoàn thành từ (tháng/năm)", điền sẵn tháng hiện tại.
+**Thứ tự deploy: backend này trước** (`db push` + dựng lại image), rồi
+phys-profile — ngược lại thì zod loại âm thầm hai trường đó.
+
+Thay đổi của mục này: `prisma/schema.prisma`, `scholar.model.ts`,
+`scholar.error.ts`, `project.service.ts`, `project-months.spec.ts`. Cây làm việc
+vẫn còn phần OCR minh chứng dở từ phiên trước, không thuộc mục này.

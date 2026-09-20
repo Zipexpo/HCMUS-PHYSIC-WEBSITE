@@ -104,6 +104,8 @@ function dung(cur: {
   startMonth: number | null;
   endYear: number | null;
   endMonth: number | null;
+  finishedYear?: number | null;
+  finishedMonth?: number | null;
 }) {
   const hienCo = [
     { id: 'm1', userId: 'u1', role: 'LEAD', claimStatus: 'CONFIRMED' },
@@ -127,7 +129,11 @@ function dung(cur: {
       update: vi.fn().mockResolvedValue({}),
     },
   };
-  const svc = new ProjectService(prisma as never, { emit: vi.fn() } as never, {} as never);
+  const svc = new ProjectService(
+    prisma as never,
+    { emit: vi.fn() } as never,
+    {} as never,
+  );
   vi.spyOn(
     svc as unknown as { findOne: () => Promise<unknown> },
     'findOne',
@@ -184,5 +190,75 @@ describe('ProjectService — chặn ngày ngược ở lúc tạo và lúc sửa
     const { svc, prisma } = dung(NGUOC);
     await svc.update('u1', 'p1', { myShowOnWeb: false });
     expect(prisma.projectMember.update).toHaveBeenCalledTimes(1);
+  });
+});
+
+/**
+ * MỐC CHỐT THỰC TẾ — đóng đề tài thì phải nói đóng THÁNG NÀO.
+ *
+ * Không phải thủ tục giấy tờ: Khoa chốt 20/9/2026 rằng đề tài nghiệm thu SỚM
+ * được dồn toàn bộ phần tháng còn lại vào năm học chứa tháng nghiệm thu (và năm
+ * sau không tính nữa), còn đề tài KHÔNG hoàn thành thì cắt cụt tại tháng khai.
+ * Cả hai đều cần con số đó; thiếu nó, ACADsoom vẫn chia đều tới hạn cũ nên giờ
+ * của cả nhóm nằm lại ở một năm học mà đề tài đã đóng.
+ *
+ * Phép cắt nằm bên ACADsoom; ở đây chỉ kiểm chốt chặn và đường ghi.
+ */
+describe('ProjectService — mốc chốt khi đóng đề tài', () => {
+  const trong = { members: [], externalMembers: [] };
+  const DU = { startYear: 2025, startMonth: 2, endYear: 2027, endMonth: 2 };
+
+  it('tạo: KHÔNG HOÀN THÀNH mà không nói tháng → báo lỗi, không ghi', async () => {
+    const { svc, prisma } = dung(DU);
+    await expect(
+      svc.create('u1', { title: 'T', ...DU, status: 'FAILED', ...trong }),
+    ).rejects.toBeDefined();
+    expect(prisma.researchProject.create).not.toHaveBeenCalled();
+  });
+
+  it('tạo: kèm tháng → lưu đúng hai cột', async () => {
+    const { svc, prisma } = dung(DU);
+    await svc.create('u1', {
+      title: 'T',
+      ...DU,
+      status: 'FAILED',
+      finishedYear: 2026,
+      finishedMonth: 10,
+      ...trong,
+    });
+    const { data } = prisma.researchProject.create.mock.calls[0][0];
+    expect([data.finishedYear, data.finishedMonth]).toEqual([2026, 10]);
+  });
+
+  it('tạo: đang thực hiện thì KHÔNG đòi tháng chốt', async () => {
+    const { svc, prisma } = dung(DU);
+    await svc.create('u1', { title: 'T', ...DU, ...trong });
+    expect(prisma.researchProject.create).toHaveBeenCalledTimes(1);
+  });
+
+  it('sửa: đặt KHÔNG HOÀN THÀNH mà chưa có tháng → chặn trước khi ghi', async () => {
+    const { svc, prisma } = dung(DU);
+    await expect(
+      svc.update('u1', 'p1', { status: 'FAILED' }),
+    ).rejects.toBeDefined();
+    expect(prisma.researchProject.update).not.toHaveBeenCalled();
+  });
+
+  // Người dùng có thể đã nhập tháng ở lượt trước rồi mới bấm đổi trạng thái.
+  // Chốt chặn phải nhìn bản SAU khi sửa, không chỉ nhìn body của lượt này.
+  it('sửa: tháng đã lưu từ lượt trước → không chặn nữa', async () => {
+    const { svc, prisma } = dung({
+      ...DU,
+      finishedYear: 2026,
+      finishedMonth: 10,
+    });
+    await svc.update('u1', 'p1', { status: 'FAILED' });
+    expect(prisma.researchProject.update).toHaveBeenCalledTimes(1);
+  });
+
+  it('sửa: không đụng trạng thái → không đòi tháng chốt', async () => {
+    const { svc, prisma } = dung(DU);
+    await svc.update('u1', 'p1', { title: 'Tên mới' });
+    expect(prisma.researchProject.update).toHaveBeenCalledTimes(1);
   });
 });
