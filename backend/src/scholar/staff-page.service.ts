@@ -4,7 +4,6 @@ import { Prisma } from '../generated/prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { EventBusService } from '../shared/services/event-bus.service';
 import { PublicRevalidateService } from '../shared/services/public-revalidate.service';
-import { toSlug } from '../shared/helpers';
 import {
   NoStaffPageException,
   StaffBlockAmbiguousException,
@@ -590,7 +589,7 @@ export class StaffPageService {
    */
   async ensureStaffPage(
     userId: string,
-    opts: { dryRun?: boolean } = {},
+    opts: { dryRun?: boolean; createdBy?: string } = {},
   ): Promise<{ created: boolean; slug?: string; reason: string }> {
     const user = await this.prisma.user.findUnique({
       where: { id: userId },
@@ -672,7 +671,7 @@ export class StaffPageService {
         isPublished: true,
         publishedAt: new Date(),
         departmentId: dept.id,
-        createdBy: userId,
+        createdBy: opts.createdBy ?? userId,
         puckData: tree as Prisma.InputJsonValue,
         publishedPuckData: tree as Prisma.InputJsonValue,
       },
@@ -2105,71 +2104,15 @@ export class StaffPageService {
   }
 
   /**
-   * Trang mẫu editorial ĐẦY ĐỦ để DỰNG TRANG MỚI: Header + Footer + root + props
-   * vỏ (đã bỏ field cá nhân). Khác `editorialTemplate` (chỉ props) vì trang mới
-   * chưa có Header/Footer sẵn để giữ như đường migrate.
-   */
-  private async fullEditorialTemplate(): Promise<{
-    header: PuckNode | null;
-    footer: PuckNode | null;
-    root: unknown;
-    props: Record<string, unknown>;
-  } | null> {
-    const rows = await this.prisma.$queryRaw<
-      Array<{ puckData: unknown; publishedPuckData: unknown }>
-    >`
-      SELECT "puckData", "publishedPuckData" FROM "PageLayout"
-      WHERE "deletedAt" IS NULL
-        AND position('StaffProfileEditorial' in coalesce("publishedPuckData"::text, "puckData"::text)) > 0
-      LIMIT 1
-    `;
-    if (!rows.length) return null;
-    const src = (rows[0].publishedPuckData ?? rows[0].puckData) as {
-      content?: unknown;
-      root?: unknown;
-    };
-    const content = Array.isArray(src?.content)
-      ? (src.content as PuckNode[])
-      : [];
-    const header = content.find((b) => b.type === 'Header') ?? null;
-    const footer = content.find((b) => b.type === 'Footer') ?? null;
-    const ed = content.find((b) => b.type === 'StaffProfileEditorial');
-    if (!ed?.props) return null;
-    const props: Record<string, unknown> = { ...ed.props };
-    for (const k of [
-      'id',
-      'photo',
-      'name',
-      'role',
-      'email',
-      'phone',
-      'html',
-      'intro',
-      'eyebrow',
-      'research',
-      'teaching',
-      'publications',
-      'extras',
-      'projects',
-      'nameLines',
-      'orcid',
-      'scopus',
-      'googleScholar',
-      'researcherId',
-      'heroLayout',
-    ]) {
-      delete props[k];
-    }
-    return { header, footer, root: src?.root ?? {}, props };
-  }
-
-  /**
-   * Tạo trang nhân sự editorial cho người CÓ bộ môn + hồ sơ nhưng CHƯA có
-   * `staffPageSlug` — chỉ quản trị. Slug `{bộ môn}/nhan-su/{học vị}-{tên}` (bỏ
-   * dấu qua toSlug); tên hiển thị kèm học vị (trang tự tách sang eyebrow). Các
-   * mục nội dung để trống — giảng viên tự điền qua phys-profile.
+   * Backfill: dựng/nối trang nhân sự cho MỌI cán bộ active có bộ môn nhưng chưa
+   * lên danh sách — chỉ quản trị, chạy từ super-admin console. Uỷ thác cho
+   * `ensureStaffPage` từng người nên bắt được cả người chưa có ScholarProfile,
+   * người có `staffPageSlug` RỖNG (không chỉ null), và tự NỐI vào trang đã tồn tại
+   * theo email thay vì tạo trùng.
    *
-   * `dryRun` chỉ trả slug SẼ tạo (không ghi). `limit`/`emails` để làm mẫu/chọn.
+   * `dryRun` chỉ liệt kê sẽ tạo/nối (không ghi). `limit` để làm mẫu; `emails` /
+   * `excludeEmails` để chọn/loại người. Nội dung để trống — giảng viên tự điền
+   * qua phys-profile.
    */
   async createMissingStaffPages(
     createdBy: string,
@@ -2180,13 +2123,6 @@ export class StaffPageService {
       excludeEmails?: string[];
     } = {},
   ) {
-    const DEG: Record<string, { prefix: string; abbr: string }> = {
-      CN: { prefix: 'CN.', abbr: 'cn' },
-      ThS: { prefix: 'ThS.', abbr: 'ths' },
-      TS: { prefix: 'TS.', abbr: 'ts' },
-      PGS: { prefix: 'PGS.TS.', abbr: 'pgsts' },
-      GS: { prefix: 'GS.TS.', abbr: 'gsts' },
-    };
     const emails = opts.emails
       ?.map((e) => e.trim().toLowerCase())
       .filter(Boolean);
@@ -2202,128 +2138,51 @@ export class StaffPageService {
             },
           }
         : {};
-    const profiles = await this.prisma.scholarProfile.findMany({
+    // Quét THẲNG User (không qua ScholarProfile) để bắt cả người chưa có hồ sơ
+    // và người có staffPageSlug RỖNG — ensureStaffPage lo lọc/tránh trùng/nối.
+    const users = await this.prisma.user.findMany({
       where: {
-        staffPageSlug: null,
-        user: {
-          isActive: true,
-          departmentId: { not: null },
-          ...emailFilter,
-        },
+        isActive: true,
+        role: { not: 'SUPER_ADMIN' },
+        departmentId: { not: null },
+        ...emailFilter,
       },
-      select: {
-        userId: true,
-        user: {
-          select: {
-            email: true,
-            firstName: true,
-            lastName: true,
-            degree: true,
-            departmentId: true,
-            department: { select: { slug: true } },
-          },
-        },
-      },
-      orderBy: { userId: 'asc' },
+      select: { id: true, email: true },
+      orderBy: { createdAt: 'asc' },
     });
 
-    const tpl = opts.dryRun ? null : await this.fullEditorialTemplate();
-    if (!opts.dryRun && !tpl) {
-      return {
-        error: 'Không có trang mẫu StaffProfileEditorial để lấy bố cục.',
-      };
-    }
-
-    const created: Array<{ email: string; name: string; slug: string }> = [];
+    const created: Array<{ email: string; slug?: string }> = [];
+    const linked: Array<{ email: string; slug?: string }> = [];
     const boQua: Array<{ email: string; lyDo: string }> = [];
     let n = 0;
-    for (const p of profiles) {
+    for (const u of users) {
       if (opts.limit && n >= opts.limit) break;
-      const u = p.user;
-      const email = u?.email ?? '(?)';
-      const fullName = [u?.lastName, u?.firstName]
-        .filter(Boolean)
-        .join(' ')
-        .replace(/\s+/g, ' ')
-        .trim();
-      if (!fullName || !u?.department?.slug) {
-        boQua.push({ email, lyDo: 'thiếu tên hoặc bộ môn' });
-        continue;
-      }
-      const hv = DEG[(u.degree ?? '').trim()];
-      const slugBase = `${u.department.slug}/nhan-su/${
-        hv ? hv.abbr + '-' : ''
-      }${toSlug(fullName)}`;
-      // Slug đã có trang khác → BỎ QUA (không tạo trùng, tuyệt đối không đụng
-      // trang cũ nên không thể xoá ảnh/nội dung ai). Nổi lên report để soi.
-      const trung = await this.prisma.pageLayout.findFirst({
-        where: { slug: slugBase, deletedAt: null },
-        select: { id: true },
+      const r = await this.ensureStaffPage(u.id, {
+        dryRun: opts.dryRun,
+        createdBy,
       });
-      if (trung) {
-        boQua.push({ email, lyDo: `slug đã có trang: ${slugBase}` });
-        continue;
+      const email = u.email ?? '(?)';
+      if (r.reason === 'da-tao' || r.reason === 'se-tao') {
+        created.push({ email, slug: r.slug });
+        n++;
+      } else if (
+        r.reason === 'noi-trang-co-san' ||
+        r.reason === 'se-noi-trang-co-san'
+      ) {
+        linked.push({ email, slug: r.slug });
+        n++;
+      } else if (r.reason !== 'da-co-trang') {
+        // 'da-co-trang' = đã có trang nối sẵn, bình thường, không cần liệt kê.
+        boQua.push({ email, lyDo: r.reason });
       }
-      const slug = slugBase;
-      const nameVi = hv ? `${hv.prefix} ${fullName}` : fullName;
-      n++;
-      if (opts.dryRun) {
-        created.push({ email, name: nameVi, slug });
-        continue;
-      }
-
-      const editorial: PuckNode = {
-        type: 'StaffProfileEditorial',
-        props: {
-          ...tpl!.props,
-          id: `body-${toSlug(fullName)}`,
-          photo: '',
-          heroLayout: 'compact',
-          name: { vi: nameVi, en: '' },
-          nameLines: [],
-          email: u.email ?? '',
-          intro: { vi: '', en: '' },
-          eyebrow: { vi: '', en: '' },
-          research: [],
-          teaching: [],
-          publications: [],
-          extras: [],
-          projects: [],
-          html: { vi: '', en: '' },
-        },
-      };
-      const content = [tpl!.header, editorial, tpl!.footer].filter(Boolean);
-      const puck = {
-        root: tpl!.root ?? {},
-        zones: {},
-        content,
-      } as unknown as Prisma.InputJsonValue;
-      await this.prisma.pageLayout.create({
-        data: {
-          name: nameVi,
-          slug,
-          isPublished: true,
-          publishedAt: new Date(),
-          createdBy,
-          departmentId: u.departmentId,
-          puckData: puck,
-          publishedPuckData: puck,
-        },
-      });
-      await this.prisma.scholarProfile.update({
-        where: { userId: p.userId },
-        data: { staffPageSlug: slug },
-      });
-      created.push({ email, name: nameVi, slug });
     }
-
-    if (created.length && !opts.dryRun) {
-      await this.cache.clear();
-      this.publicRevalidate.trigger([
-        ...created.map((c) => `page:${c.slug}`),
-        'sitemap',
-      ]);
-    }
-    return { dryRun: !!opts.dryRun, tong: created.length, created, boQua };
+    return {
+      dryRun: !!opts.dryRun,
+      tongTao: created.length,
+      tongNoi: linked.length,
+      created,
+      linked,
+      boQua,
+    };
   }
 }
