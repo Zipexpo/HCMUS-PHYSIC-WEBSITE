@@ -12,6 +12,11 @@ import {
 } from './scholar.error';
 import type { UpdateStaffPageBodyType } from './scholar.model';
 import { LISTING_ROSTER } from './listing-roster';
+import {
+  countStaffNodes,
+  scaffoldStaffTree,
+  staffSlugFor,
+} from './staff-scaffold';
 
 /**
  * Cho giảng viên tự sửa TRANG NHÂN SỰ của chính mình từ app hồ sơ khoa học.
@@ -220,7 +225,11 @@ const toLocalized = (vi: string, prev: unknown): Localized => {
  * rỗng để xoá) thì dùng nó; KHÔNG gửi (undefined/null) thì giữ nguyên `en` cũ.
  * Nhờ vậy lần lưu nào không đụng tiếng Anh cũng không vô tình xoá mất nó.
  */
-const toLoc2 = (vi: string, en: string | null | undefined, prev: unknown): Localized => {
+const toLoc2 = (
+  vi: string,
+  en: string | null | undefined,
+  prev: unknown,
+): Localized => {
   const p = (typeof prev === 'object' && prev ? prev : {}) as Localized;
   return { vi, en: en != null ? en : (p.en ?? '') };
 };
@@ -393,7 +402,11 @@ export class StaffPageService {
 
     const prefix = `${clean}/nhan-su/`;
     const pages = await this.prisma.pageLayout.findMany({
-      where: { slug: { startsWith: prefix }, isPublished: true, deletedAt: null },
+      where: {
+        slug: { startsWith: prefix },
+        isPublished: true,
+        deletedAt: null,
+      },
       select: { slug: true, puckData: true, publishedPuckData: true },
     });
 
@@ -447,7 +460,9 @@ export class StaffPageService {
           },
         })
       : [];
-    const profBySlug = new Map(profiles.map((pr) => [pr.staffPageSlug as string, pr]));
+    const profBySlug = new Map(
+      profiles.map((pr) => [pr.staffPageSlug as string, pr]),
+    );
 
     // Roster: chức vụ + thứ tự curated. Tra theo slug trước, email sau.
     const roster = LISTING_ROSTER[clean] ?? [];
@@ -482,13 +497,11 @@ export class StaffPageService {
       // Roster ĐẶC BIỆT (Trưởng/Phó BM · Giáo vụ · Thỉnh giảng) đè DB; còn lại lấy
       // theo NGẠCH trong DB (Chuyên viên/Trợ giảng/GV chính…) cho đúng, rồi mới lùi
       // về roster chung, cuối cùng mặc định "Giảng viên".
-      const role: Localized =
-        (rosterRole && isSpecialRole(rosterRole.vi ?? '')
-          ? rosterRole
-          : undefined) ??
+      const role: Localized = (rosterRole && isSpecialRole(rosterRole.vi ?? '')
+        ? rosterRole
+        : undefined) ??
         dbRole ??
-        rosterRole ??
-        { vi: 'Giảng viên', en: 'Lecturer' };
+        rosterRole ?? { vi: 'Giảng viên', en: 'Lecturer' };
       const order =
         orderBySlug.get(r.slug) ??
         (acctEmail ? orderByEmail.get(acctEmail) : undefined) ??
@@ -562,6 +575,182 @@ export class StaffPageService {
     return result;
   }
 
+  /**
+   * ĐẢM BẢO người này có TRANG NHÂN SỰ cá nhân (điều kiện để lên danh sách công khai).
+   *
+   * Danh sách "Đội ngũ" chỉ gom người từ trang `{bộ-môn}/nhan-su/…` đã xuất bản;
+   * tài khoản không có trang thì không hiện (xem departmentStaff). Hàm này dựng
+   * sẵn trang đó bằng cách NHÂN BẢN một đồng nghiệp cùng bộ môn rồi thay ô định
+   * danh — chạy TỰ ĐỘNG khi tạo cán bộ / gán đơn vị, và trong backfill cho người
+   * đang thiếu. Sau khi tạo còn NỐI `staffPageSlug` để người đó tự sửa được.
+   *
+   * Idempotent: ai đã nối một trang CÒN SỐNG thì bỏ qua. Người trùng tên trong
+   * cùng bộ môn được cấp slug có hậu tố để không đụng nhau. `dryRun` chỉ tính
+   * quyết định + slug, KHÔNG ghi gì — cho backfill xem trước.
+   */
+  async ensureStaffPage(
+    userId: string,
+    opts: { dryRun?: boolean } = {},
+  ): Promise<{ created: boolean; slug?: string; reason: string }> {
+    const user = await this.prisma.user.findUnique({
+      where: { id: userId },
+      select: {
+        email: true,
+        firstName: true,
+        lastName: true,
+        degree: true,
+        role: true,
+        department: { select: { id: true, slug: true, kind: true } },
+        scholarProfile: { select: { staffPageSlug: true } },
+      },
+    });
+    if (!user) return { created: false, reason: 'khong-co-tai-khoan' };
+    if (user.role === 'SUPER_ADMIN')
+      return { created: false, reason: 'super-admin' };
+    const dept = user.department;
+    if (!dept?.slug) return { created: false, reason: 'chua-co-don-vi' };
+    if (dept.kind !== 'department' && dept.kind !== 'unit') {
+      return { created: false, reason: `don-vi-khong-liet-ke-${dept.kind}` };
+    }
+    if (!user.email) return { created: false, reason: 'chua-co-email' };
+    const fullName = [user.lastName, user.firstName]
+      .map((s) => (s ?? '').trim())
+      .filter(Boolean)
+      .join(' ')
+      .trim();
+    if (!fullName) return { created: false, reason: 'chua-co-ten' };
+    // Tài khoản dùng chung / đơn vị (BCN Khoa, Ban…, Phòng…) — không phải người.
+    if (
+      /^(bcn|ban|phòng|văn phòng|hội đồng|công đoàn|chi bộ|đoàn|trung tâm)\b/i.test(
+        fullName,
+      )
+    ) {
+      return { created: false, reason: 'ten-don-vi' };
+    }
+
+    // Đã nối một trang CÒN SỐNG → thôi. Link trỏ vào trang đã xoá thì coi như
+    // chưa nối và dựng lại (tự chữa liên kết chết).
+    const linked = user.scholarProfile?.staffPageSlug;
+    if (linked) {
+      const alive = await this.prisma.pageLayout.findFirst({
+        where: { slug: linked, deletedAt: null },
+        select: { id: true },
+      });
+      if (alive) return { created: false, reason: 'da-co-trang', slug: linked };
+    }
+
+    // Đã có TRANG mang email này (dựng tay nhưng hồ sơ chưa nối) → NỐI vào đó,
+    // đừng tạo trùng. Nhiều trang cũ chưa nối `staffPageSlug`; dò theo email như
+    // syncProfileCards. Đây là chốt chặn trùng cho backfill.
+    const byEmail = await this.pageByEmail(user.email);
+    if (byEmail) {
+      if (opts.dryRun) {
+        return { created: false, reason: 'se-noi-trang-co-san', slug: byEmail };
+      }
+      await this.linkProfileToPage(userId, byEmail);
+      await this.afterWrite(userId, [byEmail]);
+      return { created: false, reason: 'noi-trang-co-san', slug: byEmail };
+    }
+
+    const template = await this.pickStaffTemplate(dept.slug);
+    if (!template) return { created: false, reason: 'khong-co-trang-mau' };
+    const tree = scaffoldStaffTree(template, {
+      fullName,
+      email: user.email,
+      degree: user.degree,
+    });
+    if (!tree) return { created: false, reason: 'trang-mau-khong-hop-le' };
+
+    const base = staffSlugFor(dept.slug, user.degree, fullName);
+    const slug = await this.freeStaffSlug(base);
+    if (opts.dryRun) return { created: false, reason: 'se-tao', slug };
+
+    await this.prisma.pageLayout.create({
+      data: {
+        name: fullName,
+        slug,
+        isPublished: true,
+        publishedAt: new Date(),
+        departmentId: dept.id,
+        createdBy: userId,
+        puckData: tree as Prisma.InputJsonValue,
+        publishedPuckData: tree as Prisma.InputJsonValue,
+      },
+    });
+    await this.linkProfileToPage(userId, slug);
+    await this.afterWrite(userId, [`${dept.slug}/nhan-su`, slug]);
+    return { created: true, reason: 'da-tao', slug };
+  }
+
+  /** Nối hồ sơ khoa học của người này vào một trang nhân sự (tạo hồ sơ nếu chưa có). */
+  private linkProfileToPage(userId: string, slug: string) {
+    return this.prisma.scholarProfile.upsert({
+      where: { userId },
+      create: { userId, staffPageSlug: slug, showOnWeb: true },
+      update: { staffPageSlug: slug },
+    });
+  }
+
+  /**
+   * Slug trang nhân sự cá nhân ĐÃ XUẤT BẢN có chứa email này (khớp người theo
+   * email trong puckData, như syncProfileCards). Dùng để tránh dựng trùng khi
+   * người ta đã có trang nhưng chưa nối `staffPageSlug`.
+   */
+  private async pageByEmail(email: string): Promise<string | null> {
+    const e = email.toLowerCase();
+    const rows = await this.prisma.$queryRaw<Array<{ slug: string }>>`
+      SELECT slug FROM "PageLayout"
+      WHERE "deletedAt" IS NULL AND "isPublished" = true
+        AND slug LIKE '%/nhan-su/%'
+        AND position(${e} in lower(coalesce("publishedPuckData"::text, "puckData"::text))) > 0
+      ORDER BY slug
+      LIMIT 1
+    `;
+    return rows[0]?.slug ?? null;
+  }
+
+  /**
+   * Cây Puck của một đồng nghiệp làm MẪU nhân bản — ưu tiên cùng bộ môn, chọn
+   * trang có ĐÚNG một khối hồ sơ và ÍT khối nhất (ít rủi ro sót nội dung). Không
+   * có trong bộ môn thì lấy bất kỳ trang nhân sự nào trong Khoa.
+   */
+  private async pickStaffTemplate(deptSlug: string): Promise<unknown | null> {
+    const pickFrom = async (where: Prisma.PageLayoutWhereInput) => {
+      const rows = await this.prisma.pageLayout.findMany({
+        where: { ...where, isPublished: true, deletedAt: null },
+        select: { puckData: true, publishedPuckData: true },
+        take: 60,
+      });
+      let best: { tree: unknown; size: number } | null = null;
+      for (const r of rows) {
+        const tree = r.publishedPuckData ?? r.puckData;
+        if (countStaffNodes(tree) !== 1) continue;
+        const content = (tree as { content?: unknown[] })?.content;
+        const size = Array.isArray(content) ? content.length : 999;
+        if (!best || size < best.size) best = { tree, size };
+      }
+      return best?.tree ?? null;
+    };
+    return (
+      (await pickFrom({ slug: { startsWith: `${deptSlug}/nhan-su/` } })) ??
+      (await pickFrom({ slug: { contains: '/nhan-su/' } }))
+    );
+  }
+
+  /** Slug còn trống: gốc trước, rồi `-2`, `-3`… cho người trùng tên cùng bộ môn. */
+  private async freeStaffSlug(base: string): Promise<string> {
+    const candidates = [base, ...[2, 3, 4, 5, 6].map((i) => `${base}-${i}`)];
+    const taken = new Set(
+      (
+        await this.prisma.pageLayout.findMany({
+          where: { slug: { in: candidates }, deletedAt: null },
+          select: { slug: true },
+        })
+      ).map((r) => r.slug),
+    );
+    return candidates.find((s) => !taken.has(s)) ?? `${base}-${Date.now()}`;
+  }
+
   /** Cây con có chứa khối kiểu `type` không (đệ quy qua mọi mảng/props). */
   private subtreeHasType(node: unknown, type: string): boolean {
     let found = false;
@@ -618,7 +807,8 @@ export class StaffPageService {
     deptSlug: string,
     deptName: string,
   ): { tree: unknown; changed: boolean } {
-    if (!data || typeof data !== 'object') return { tree: data, changed: false };
+    if (!data || typeof data !== 'object')
+      return { tree: data, changed: false };
     const obj = data as Record<string, unknown>;
     const content = obj.content;
     if (!Array.isArray(content)) return { tree: data, changed: false };
@@ -665,13 +855,15 @@ export class StaffPageService {
       if (node?.type === 'DepartmentStaffAuto' && node.props) {
         hasAuto = true;
         const props: Record<string, unknown> = { ...node.props };
-        if (this.isEmptyLoc(props.title) && finalTitle) props.title = finalTitle;
+        if (this.isEmptyLoc(props.title) && finalTitle)
+          props.title = finalTitle;
         if (props.showHero === undefined) props.showHero = true;
         if (props.heroEyebrow === undefined) {
           props.heroEyebrow = { vi: 'Nhân sự', en: 'Staff' };
         }
         if (!props.departmentSlug) props.departmentSlug = deptSlug;
-        if (JSON.stringify(props) !== JSON.stringify(node.props)) changed = true;
+        if (JSON.stringify(props) !== JSON.stringify(node.props))
+          changed = true;
         out.push({ ...node, props });
         continue;
       }
@@ -780,7 +972,10 @@ export class StaffPageService {
     for (const item of content) {
       const node = item as PuckNode;
       if (node?.type === 'Navbar' && node.props) {
-        return JSON.parse(JSON.stringify(node.props)) as Record<string, unknown>;
+        return JSON.parse(JSON.stringify(node.props)) as Record<
+          string,
+          unknown
+        >;
       }
     }
     return null;
@@ -829,7 +1024,8 @@ export class StaffPageService {
     data: unknown,
     navbarProps: Record<string, unknown>,
   ): { tree: unknown; changed: boolean } {
-    if (!data || typeof data !== 'object') return { tree: data, changed: false };
+    if (!data || typeof data !== 'object')
+      return { tree: data, changed: false };
     const obj = data as Record<string, unknown>;
     const content = obj.content;
     if (!Array.isArray(content)) return { tree: data, changed: false };
@@ -964,7 +1160,8 @@ export class StaffPageService {
     data: unknown,
     type: 'co-huu' | 'thinh-giang',
   ): { tree: unknown; changed: boolean } {
-    if (!data || typeof data !== 'object') return { tree: data, changed: false };
+    if (!data || typeof data !== 'object')
+      return { tree: data, changed: false };
     const obj = data as Record<string, unknown>;
     const content = obj.content;
     if (!Array.isArray(content)) return { tree: data, changed: false };
@@ -1449,7 +1646,10 @@ export class StaffPageService {
         if (!photo) continue;
         report.nguoi++;
         if (layout.isPublished) {
-          const pub = this.setPhotoOnStaffBlocks(layout.publishedPuckData, photo);
+          const pub = this.setPhotoOnStaffBlocks(
+            layout.publishedPuckData,
+            photo,
+          );
           if (pub.changed) {
             await this.prisma.pageLayout.update({
               where: { id: layout.id },
@@ -1824,10 +2024,7 @@ export class StaffPageService {
   }
 
   /** Props KHÔNG-cá-nhân của một khối editorial có sẵn, làm khuôn (tiêu đề mục, photoFilter…). */
-  private async editorialTemplate(): Promise<Record<
-    string,
-    unknown
-  > | null> {
+  private async editorialTemplate(): Promise<Record<string, unknown> | null> {
     const rows = await this.prisma.$queryRaw<
       Array<{ publishedPuckData: unknown; puckData: unknown }>
     >`
@@ -1858,8 +2055,20 @@ export class StaffPageService {
     if (!ed?.props) return null;
     const t: Record<string, unknown> = { ...ed.props };
     for (const k of [
-      'id', 'photo', 'name', 'role', 'email', 'phone', 'html', 'intro',
-      'eyebrow', 'research', 'teaching', 'publications', 'extras', 'projects',
+      'id',
+      'photo',
+      'name',
+      'role',
+      'email',
+      'phone',
+      'html',
+      'intro',
+      'eyebrow',
+      'research',
+      'teaching',
+      'publications',
+      'extras',
+      'projects',
       'nameLines',
     ]) {
       delete t[k];
@@ -1928,9 +2137,25 @@ export class StaffPageService {
     if (!ed?.props) return null;
     const props: Record<string, unknown> = { ...ed.props };
     for (const k of [
-      'id', 'photo', 'name', 'role', 'email', 'phone', 'html', 'intro',
-      'eyebrow', 'research', 'teaching', 'publications', 'extras', 'projects',
-      'nameLines', 'orcid', 'scopus', 'googleScholar', 'researcherId',
+      'id',
+      'photo',
+      'name',
+      'role',
+      'email',
+      'phone',
+      'html',
+      'intro',
+      'eyebrow',
+      'research',
+      'teaching',
+      'publications',
+      'extras',
+      'projects',
+      'nameLines',
+      'orcid',
+      'scopus',
+      'googleScholar',
+      'researcherId',
       'heroLayout',
     ]) {
       delete props[k];
@@ -2004,7 +2229,9 @@ export class StaffPageService {
 
     const tpl = opts.dryRun ? null : await this.fullEditorialTemplate();
     if (!opts.dryRun && !tpl) {
-      return { error: 'Không có trang mẫu StaffProfileEditorial để lấy bố cục.' };
+      return {
+        error: 'Không có trang mẫu StaffProfileEditorial để lấy bố cục.',
+      };
     }
 
     const created: Array<{ email: string; name: string; slug: string }> = [];

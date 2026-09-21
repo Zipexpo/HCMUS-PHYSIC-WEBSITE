@@ -1,5 +1,6 @@
-import { ConflictException, Injectable } from '@nestjs/common';
+import { ConflictException, Injectable, Logger } from '@nestjs/common';
 import { AdminRepository, StaffKind } from './admin.repo';
+import { StaffPageService } from '../scholar/staff-page.service';
 import {
   AdminListQueryType,
   CreateStaffBodyType,
@@ -17,10 +18,31 @@ const ACTIVE_WINDOW_MS = 5 * 60 * 1000;
 
 @Injectable()
 export class AdminService {
+  private readonly logger = new Logger(AdminService.name);
+
   constructor(
     private readonly adminRepository: AdminRepository,
     private readonly hashingService: HashingService,
+    private readonly staffPage: StaffPageService,
   ) {}
+
+  /**
+   * Dựng sẵn trang nhân sự cá nhân (best-effort) sau khi có tài khoản + đơn vị —
+   * để người đó lên danh sách "Đội ngũ" công khai mà không cần dựng trang tay.
+   * KHÔNG được làm hỏng thao tác chính: mọi lỗi chỉ ghi log rồi bỏ qua.
+   */
+  private async ensureStaffPageSafely(userId: string) {
+    try {
+      const r = await this.staffPage.ensureStaffPage(userId);
+      if (r.created) {
+        this.logger.log(`Đã tự dựng trang nhân sự ${r.slug} cho ${userId}`);
+      }
+    } catch (err) {
+      this.logger.warn(
+        `Không dựng được trang nhân sự cho ${userId}: ${String(err)}`,
+      );
+    }
+  }
 
   async list(query: AdminListQueryType) {
     return this.listByKind('admin', query);
@@ -56,7 +78,7 @@ export class AdminService {
       throw new ConflictException('Email đã tồn tại');
     }
     const { firstName, lastName } = splitVietnameseName(body.name);
-    return this.adminRepository.createStaff({
+    const created = await this.adminRepository.createStaff({
       email,
       firstName,
       lastName,
@@ -69,6 +91,10 @@ export class AdminService {
       positionFrom: body.positionFrom ?? null,
       positionTo: body.positionTo ?? null,
     });
+    // Tự dựng trang nhân sự khi cán bộ mới đã có đơn vị (không có đơn vị thì
+    // ensureStaffPage tự bỏ qua). Không chặn kết quả tạo cán bộ.
+    await this.ensureStaffPageSafely(created.id);
+    return created;
   }
 
   /**
@@ -79,7 +105,13 @@ export class AdminService {
   async updateProfile(id: string, body: UpdateAdminProfileBodyType) {
     const user = await this.adminRepository.findById(id);
     if (!user) throw AdminNotFoundException;
-    return this.adminRepository.updateProfile(id, body);
+    const updated = await this.adminRepository.updateProfile(id, body);
+    // Gán/đổi đơn vị là lúc người này mới đủ điều kiện lên trang — thử dựng trang
+    // nhân sự (idempotent, ai đã có trang thì bỏ qua). Chỉ khi có đụng tới đơn vị.
+    if (body.departmentId !== undefined && body.departmentId) {
+      await this.ensureStaffPageSafely(id);
+    }
+    return updated;
   }
 
   private async loadAdminOrThrow(id: string) {

@@ -23,6 +23,8 @@ import { StaffPageService } from './staff-page.service';
     ProjectDocOcrService,
     ActivityService,
   ],
-  exports: [ScholarService],
+  // StaffPageService.ensureStaffPage() được AdminModule dùng để tự dựng trang
+  // nhân sự khi tạo cán bộ / gán đơn vị.
+  exports: [ScholarService, StaffPageService],
 })
 export class ScholarModule {}

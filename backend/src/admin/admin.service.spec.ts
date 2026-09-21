@@ -3,6 +3,7 @@ import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { AdminService } from './admin.service';
 import { AdminRepository } from './admin.repo';
 import { HashingService } from '../shared/services/hashing.service';
+import { StaffPageService } from '../scholar/staff-page.service';
 import {
   AdminNotFoundException,
   CannotMutateSuperAdminException,
@@ -47,16 +48,23 @@ describe('AdminService mutations', () => {
     hash: ReturnType<typeof vi.fn>;
     compare: ReturnType<typeof vi.fn>;
   };
+  let staffPage: { ensureStaffPage: ReturnType<typeof vi.fn> };
 
   beforeEach(async () => {
     repo = makeRepoMock();
     hashing = { hash: vi.fn().mockResolvedValue('HASHED'), compare: vi.fn() };
+    staffPage = {
+      ensureStaffPage: vi
+        .fn()
+        .mockResolvedValue({ created: false, reason: 'noop' }),
+    };
 
     const module: TestingModule = await Test.createTestingModule({
       providers: [
         AdminService,
         { provide: AdminRepository, useValue: repo },
         { provide: HashingService, useValue: hashing },
+        { provide: StaffPageService, useValue: staffPage },
       ],
     }).compile();
 
@@ -173,6 +181,53 @@ describe('AdminService mutations', () => {
       await expect(
         service.resetPassword('missing', { password: 'newPass123' }),
       ).rejects.toBe(AdminNotFoundException);
+    });
+  });
+
+  // Tạo cán bộ / gán đơn vị xong thì tự dựng trang nhân sự (best-effort) — người
+  // mới lên danh sách "Đội ngũ" mà không cần dựng trang tay.
+  describe('tự dựng trang nhân sự', () => {
+    it('createStaff xong thì gọi ensureStaffPage cho cán bộ mới', async () => {
+      repo.findByEmail.mockResolvedValue(null);
+      repo.createStaff.mockResolvedValue({ id: 'new-1', email: 'a@b.com' });
+
+      const out = await service.createStaff({
+        name: 'Nguyễn Văn A',
+        email: 'A@b.com',
+      } as never);
+
+      expect(out).toEqual({ id: 'new-1', email: 'a@b.com' });
+      expect(staffPage.ensureStaffPage).toHaveBeenCalledWith('new-1');
+    });
+
+    it('lỗi dựng trang KHÔNG làm hỏng việc tạo cán bộ', async () => {
+      repo.findByEmail.mockResolvedValue(null);
+      repo.createStaff.mockResolvedValue({ id: 'new-2', email: 'c@d.com' });
+      staffPage.ensureStaffPage.mockRejectedValue(new Error('bể'));
+
+      await expect(
+        service.createStaff({ name: 'Trần B', email: 'c@d.com' } as never),
+      ).resolves.toEqual({ id: 'new-2', email: 'c@d.com' });
+    });
+
+    it('updateProfile có gán đơn vị thì gọi ensureStaffPage', async () => {
+      repo.findById.mockResolvedValue(sampleAdmin);
+      repo.updateProfile.mockResolvedValue(sampleAdmin);
+
+      await service.updateProfile('admin-1', {
+        departmentId: 'dept1',
+      } as never);
+
+      expect(staffPage.ensureStaffPage).toHaveBeenCalledWith('admin-1');
+    });
+
+    it('updateProfile KHÔNG đụng đơn vị thì không gọi', async () => {
+      repo.findById.mockResolvedValue(sampleAdmin);
+      repo.updateProfile.mockResolvedValue(sampleAdmin);
+
+      await service.updateProfile('admin-1', { rank: 'gv' } as never);
+
+      expect(staffPage.ensureStaffPage).not.toHaveBeenCalled();
     });
   });
 });
