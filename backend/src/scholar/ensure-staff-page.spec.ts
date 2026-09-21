@@ -220,20 +220,23 @@ describe('StaffPageService.ensureStaffPage', () => {
     expect(create).not.toHaveBeenCalled();
   });
 
-  it('bỏ qua tài khoản mang tên đơn vị (BCN…)', async () => {
+  it('người thật có họ trùng từ đơn vị (Đoàn/Ban…) VẪN được tạo', async () => {
+    // Trước đây guard theo tên chặn nhầm "Đoàn Thị Hiền"; nay chỉ lọc theo role.
     const { svc, create } = build({
-      user: { firstName: 'Khoa', lastName: 'BCN', scholarProfile: null },
+      user: { firstName: 'Hiền', lastName: 'Đoàn Thị', scholarProfile: null },
     });
     const r = await svc.ensureStaffPage('u1');
-    expect(r).toEqual({ created: false, reason: 'ten-don-vi' });
-    expect(create).not.toHaveBeenCalled();
+    expect(r.created).toBe(true);
+    expect(create).toHaveBeenCalledTimes(1);
   });
 
-  it('bỏ qua super admin', async () => {
-    const { svc, create } = build({ user: { role: 'SUPER_ADMIN' } });
-    const r = await svc.ensureStaffPage('u1');
-    expect(r).toEqual({ created: false, reason: 'super-admin' });
-    expect(create).not.toHaveBeenCalled();
+  it('bỏ qua tài khoản không phải cán bộ (ADMIN / super-admin / dịch vụ)', async () => {
+    for (const role of ['ADMIN', 'SUPER_ADMIN']) {
+      const { svc, create } = build({ user: { role } });
+      const r = await svc.ensureStaffPage('u1');
+      expect(r).toEqual({ created: false, reason: 'khong-phai-can-bo' });
+      expect(create).not.toHaveBeenCalled();
+    }
   });
 
   it('không có trang mẫu hợp lệ thì không tạo', async () => {

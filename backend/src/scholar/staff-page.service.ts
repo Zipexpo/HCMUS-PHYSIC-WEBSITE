@@ -604,8 +604,13 @@ export class StaffPageService {
       },
     });
     if (!user) return { created: false, reason: 'khong-co-tai-khoan' };
-    if (user.role === 'SUPER_ADMIN')
-      return { created: false, reason: 'super-admin' };
+    // Chỉ CÁN BỘ (role LECTURER) mới lên "Đội ngũ". Tài khoản ADMIN gồm cả
+    // tài khoản DỊCH VỤ của bộ môn/đơn vị (tên = tên đơn vị, vd "Vật Lý Tin Học",
+    // "USAC Câu lạc bộ") và tài khoản trùng — không phải người, loại ở đây để
+    // backfill/tự-động không dựng trang rác. (Giảng viên kiêm admin hầu hết đã có
+    // trang; nếu chưa, tự nối qua phys-profile.)
+    if (user.role !== 'LECTURER')
+      return { created: false, reason: 'khong-phai-can-bo' };
     const dept = user.department;
     if (!dept?.slug) return { created: false, reason: 'chua-co-don-vi' };
     if (dept.kind !== 'department' && dept.kind !== 'unit') {
@@ -618,14 +623,9 @@ export class StaffPageService {
       .join(' ')
       .trim();
     if (!fullName) return { created: false, reason: 'chua-co-ten' };
-    // Tài khoản dùng chung / đơn vị (BCN Khoa, Ban…, Phòng…) — không phải người.
-    if (
-      /^(bcn|ban|phòng|văn phòng|hội đồng|công đoàn|chi bộ|đoàn|trung tâm)\b/i.test(
-        fullName,
-      )
-    ) {
-      return { created: false, reason: 'ten-don-vi' };
-    }
+    // KHÔNG lọc theo tên đơn vị: role=LECTURER đã loại hết tài khoản dịch vụ (đều
+    // ADMIN), còn bắt tên sẽ chặn NHẦM người thật có họ trùng từ đơn vị — vd
+    // "Đoàn Thị Hiền" (họ Đoàn), "Ban", "Phòng"… là họ Việt có thật.
 
     // Đã nối một trang CÒN SỐNG → thôi. Link trỏ vào trang đã xoá thì coi như
     // chưa nối và dựng lại (tự chữa liên kết chết).
@@ -2140,10 +2140,12 @@ export class StaffPageService {
         : {};
     // Quét THẲNG User (không qua ScholarProfile) để bắt cả người chưa có hồ sơ
     // và người có staffPageSlug RỖNG — ensureStaffPage lo lọc/tránh trùng/nối.
+    // CHỈ role LECTURER: tài khoản ADMIN gồm cả tài khoản dịch vụ bộ môn (tên =
+    // tên đơn vị) nên KHÔNG được coi là người (xem ensureStaffPage).
     const users = await this.prisma.user.findMany({
       where: {
         isActive: true,
-        role: { not: 'SUPER_ADMIN' },
+        role: 'LECTURER',
         departmentId: { not: null },
         ...emailFilter,
       },
