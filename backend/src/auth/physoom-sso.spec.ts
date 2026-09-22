@@ -2,6 +2,7 @@ import { createHmac } from 'node:crypto';
 import { describe, expect, it } from 'vitest';
 import {
   SsoTokenError,
+  laEmailSinhVien,
   splitVietnameseName,
   verifyPhysoomToken,
 } from './physoom-sso';
@@ -125,5 +126,18 @@ describe('splitVietnameseName', () => {
       lastName: '',
     });
     expect(splitVietnameseName('')).toEqual({ firstName: '', lastName: '' });
+  });
+});
+
+describe('laEmailSinhVien', () => {
+  it('email sinh viên — kể cả viết hoa, dính khoảng trắng', () => {
+    expect(laEmailSinhVien('25c3101514@student.hcmus.edu.vn')).toBe(true);
+    expect(laEmailSinhVien('  25C3101514@Student.HCMUS.edu.vn ')).toBe(true);
+  });
+  it('email cán bộ và tên miền con khác không bị bắt nhầm', () => {
+    expect(laEmailSinhVien('htyhong@hcmus.edu.vn')).toBe(false);
+    expect(laEmailSinhVien('a@phys.hcmus.edu.vn')).toBe(false);
+    expect(laEmailSinhVien('')).toBe(false);
+    expect(laEmailSinhVien(null)).toBe(false);
   });
 });

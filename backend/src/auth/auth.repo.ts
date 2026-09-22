@@ -148,17 +148,25 @@ export class AuthRepository {
    * trị viên cũng có tài khoản PHYsoom, đăng nhập lại mà bị hạ xuống LECTURER
    * là mất luôn trang quản trị.
    */
-  upsertSsoUser(data: {
+  /**
+   * Đăng nhập qua PHYsoom: tạo tài khoản ở lần đầu, các lần sau chỉ ghi giờ đăng
+   * nhập.
+   *
+   * KHÔNG GHI ĐÈ HỌ TÊN. Web Khoa làm chủ hồ sơ tài khoản (Khoa chốt 28/8/2026)
+   * và quản trị sửa tên ở trang quản lý người dùng. Trước 22/9/2026 mỗi lượt đăng
+   * nhập đè tên theo PHYsoom — mà PHYsoom lấy tên tài khoản Google, ghi kiểu Tây
+   * ("Hồng Huỳnh Thị Yến"). Nên sửa tay xong, lần đăng nhập sau lại đảo, và bản
+   * đảo lan tiếp sang ACADsoom qua /integration/staff. Nay chỉ ĐIỀN ô đang trống.
+   */
+  async upsertSsoUser(data: {
     email: string;
     firstName: string;
     lastName: string;
     position?: string | null;
   }) {
-    return this.prisma.user.upsert({
+    const user = await this.prisma.user.upsert({
       where: { email: data.email },
       update: {
-        firstName: data.firstName,
-        lastName: data.lastName,
         lastLoginAt: new Date(),
       },
       create: {
@@ -170,6 +178,18 @@ export class AuthRepository {
         isActive: true,
         lastLoginAt: new Date(),
       },
+      omit: { password: true },
+    });
+    const dien = {
+      ...(!user.firstName && data.firstName
+        ? { firstName: data.firstName }
+        : {}),
+      ...(!user.lastName && data.lastName ? { lastName: data.lastName } : {}),
+    };
+    if (!Object.keys(dien).length) return user;
+    return this.prisma.user.update({
+      where: { id: user.id },
+      data: dien,
       omit: { password: true },
     });
   }

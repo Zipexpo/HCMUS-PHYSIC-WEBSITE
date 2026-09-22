@@ -1120,3 +1120,42 @@ phys-profile — ngược lại thì zod loại âm thầm hai trường đó.
 Thay đổi của mục này: `prisma/schema.prisma`, `scholar.model.ts`,
 `scholar.error.ts`, `project.service.ts`, `project-months.spec.ts`. Cây làm việc
 vẫn còn phần OCR minh chứng dở từ phiên trước, không thuộc mục này.
+
+## 2026-09-22 — Đăng nhập qua PHYsoom: không tạo tài khoản sinh viên, không đè họ tên
+
+Hai báo cáo cùng gốc, nhìn thấy ở bản xem trước "đồng bộ nhân sự từ web Khoa"
+bên ACADsoom:
+
+1. **Họ tên bị đảo — sửa rồi vẫn bị đảo lại.** "Huỳnh Thị Yến Hồng → Hồng Huỳnh
+   Thị Yến". `/integration/staff` ghép đúng `[lastName, firstName]`, nhưng hai ô đó
+   trong CSDL đang đảo. Nguồn: `upsertSsoUser` ghi đè họ tên ở MỖI lượt đăng nhập
+   qua PHYsoom, mà PHYsoom lấy tên tài khoản Google (kiểu Tây). Quản trị sửa tay
+   xong, lần đăng nhập sau lại đảo. `upsertUserFromPhysoom` (PHYsoom đẩy người
+   sang) cũng đè y như vậy, và còn dồn cả tên vào `firstName` — lệch với lối ghép
+   `[lastName, firstName]` mọi chỗ khác đang dùng.
+2. **Sinh viên thành LECTURER.** Mọi lượt đăng nhập qua PHYsoom đều tạo role
+   `LECTURER`, kể cả `@student.hcmus.edu.vn` — người đó vào danh bạ cán bộ, ACADsoom
+   kéo về thành ngạch GV.
+
+Đã sửa:
+
+- `laEmailSinhVien()` (thuần, trong `auth/physoom-sso.ts`).
+- `loginWithPhysoom`: email sinh viên → 401, KHÔNG ghi gì.
+- `upsertSsoUser`: lần sau chỉ ghi `lastLoginAt`; họ tên chỉ ĐIỀN khi ô đang
+  trống. Web Khoa làm chủ hồ sơ tài khoản (Khoa chốt 28/8/2026), sửa tên ở trang
+  quản lý người dùng.
+- `upsertUserFromPhysoom`: email sinh viên → 400; người đã có tên thì không đè;
+  người mới chỉ có `name` thì tách theo `splitVietnameseName`.
+
+Kiểm chứng: `vitest run` 262/262 (18 tệp; thêm `auth/sso-user.spec.ts` 7 test +
+2 test trong `physoom-sso.spec.ts`), `tsc --noEmit -p tsconfig.build.json` sạch,
+eslint các tệp đã sửa 0 lỗi (chỉ `--fix` trên tệp spec mới của chính mục này;
+KHÔNG chạy `pnpm run lint`).
+
+**Còn phải làm tay trên dữ liệu đang có** (sau khi deploy bản này, không thì lần
+đăng nhập sau lại hỏng): sửa họ tên chị Huỳnh Thị Yến Hồng ở trang quản lý người
+dùng, và khoá/gỡ tài khoản sinh viên `25c3101514@student.hcmus.edu.vn`.
+
+ACADsoom cũng thêm chốt chặn phía bên đó (commit `6557e95`): bỏ qua email sinh
+viên khi đồng bộ và khi dựng hồ sơ lúc đăng nhập; giữ tên đang có nếu tên mới chỉ
+là các chữ cũ đảo thứ tự.

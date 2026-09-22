@@ -10,6 +10,7 @@ import {
   type CandidateProfile,
 } from './name-match';
 import { laterOf, pageBySince } from './integration-cursor';
+import { laEmailSinhVien, splitVietnameseName } from '../auth/physoom-sso';
 import { parseBibliographyFile } from './resolve/bibliography';
 import { ResolveService } from './resolve/resolve.service';
 import { StaffPageService } from './staff-page.service';
@@ -1564,11 +1565,26 @@ export class ScholarService {
       .trim()
       .toLowerCase();
     if (!email) throw new BadRequestException('Thiếu email');
+    // Cùng luật với đăng nhập qua PHYsoom: sinh viên không bao giờ thành LECTURER.
+    // 400 chứ không phải 200-bỏ-qua: bên đẩy cần biết mình đang gửi sai người.
+    if (laEmailSinhVien(email)) {
+      throw new BadRequestException(
+        'Không tạo tài khoản cán bộ cho email sinh viên.',
+      );
+    }
 
-    // Physoom gửi `name` nguyên khối; nếu không tách sẵn first/last thì đặt cả
-    // tên vào firstName để phần hiển thị `first + last` ra đúng nguyên tên.
-    const firstName = (data.firstName ?? data.name ?? '').trim() || null;
-    const lastName = (data.lastName ?? '').trim() || null;
+    // PHYsoom gửi `name` nguyên khối thì TÁCH theo lối tiếng Việt (từ cuối là
+    // tên gọi) — y như đăng nhập SSO. Trước đây dồn cả tên vào firstName "để
+    // hiển thị first + last", nhưng mọi chỗ hiển thị nay ghép [lastName,
+    // firstName]; dồn vào firstName là tên người đó hiện lệch với cả Khoa.
+    const tach =
+      !data.firstName && !data.lastName && data.name
+        ? splitVietnameseName(data.name)
+        : null;
+    const firstName =
+      (tach ? tach.firstName : (data.firstName ?? '')).trim() || null;
+    const lastName =
+      (tach ? tach.lastName : (data.lastName ?? '')).trim() || null;
     const physoomId = (data.physoomId ?? '').trim() || null;
     const teacherId = (data.teacherId ?? '').trim() || null;
 
@@ -1576,11 +1592,11 @@ export class ScholarService {
     const existing = physoomId
       ? await this.prisma.user.findFirst({
           where: { OR: [{ physoomId }, { email }] },
-          select: { id: true },
+          select: { id: true, firstName: true, lastName: true },
         })
       : await this.prisma.user.findUnique({
           where: { email },
-          select: { id: true },
+          select: { id: true, firstName: true, lastName: true },
         });
 
     if (existing) {
@@ -1588,8 +1604,12 @@ export class ScholarService {
         where: { id: existing.id },
         data: {
           email,
-          ...(firstName ? { firstName } : {}),
-          ...(lastName ? { lastName } : {}),
+          // KHÔNG GHI ĐÈ HỌ TÊN — web Khoa làm chủ (Khoa chốt 28/8/2026), quản
+          // trị sửa ở trang người dùng. Tên PHYsoom lấy từ tài khoản Google, ghi
+          // kiểu Tây, và từng đè bản đúng mỗi lượt đẩy (22/9/2026). Chỉ điền ô
+          // đang trống.
+          ...(firstName && !existing.firstName ? { firstName } : {}),
+          ...(lastName && !existing.lastName ? { lastName } : {}),
           ...(physoomId ? { physoomId } : {}),
           ...(teacherId ? { teacherId } : {}),
           // KHÔNG đặt role / isActive ở đây.

@@ -81,6 +81,18 @@ export function verifyPhysoomToken(
   return { ...payload, email: String(payload.email).toLowerCase() };
 }
 
+/**
+ * Email SINH VIÊN — không bao giờ là cán bộ (role LECTURER).
+ *
+ * Trước 22/9/2026 mọi lượt đăng nhập qua PHYsoom đều được tạo LECTURER, kể cả
+ * `…@student.hcmus.edu.vn`. Tài khoản đó rồi hiện trong danh bạ cán bộ, lọt sang
+ * ACADsoom thành ngạch GV (vào bảng điểm cả Khoa), và có thể được tự dựng trang
+ * nhân sự khi gán đơn vị.
+ */
+export function laEmailSinhVien(email: string | null | undefined): boolean {
+  return /@student\.hcmus\.edu\.vn$/i.test(String(email ?? '').trim());
+}
+
 /** Tách tên tiếng Việt: từ cuối là tên gọi, phần còn lại là họ + đệm. */
 export function splitVietnameseName(full: string): {
   firstName: string;

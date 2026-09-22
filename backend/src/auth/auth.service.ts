@@ -37,6 +37,7 @@ import { VerificationCodeType } from '../generated/prisma/client';
 import {
   SsoTokenError,
   splitVietnameseName,
+  laEmailSinhVien,
   verifyPhysoomToken,
 } from './physoom-sso';
 
@@ -249,6 +250,15 @@ export class AuthService {
       if (err instanceof SsoTokenError)
         throw new UnauthorizedException(err.message);
       throw err;
+    }
+
+    // Hồ sơ khoa học là của CÁN BỘ. Sinh viên có tài khoản PHYsoom, nhưng cho
+    // qua ở đây là tạo ra một LECTURER — người đó vào danh bạ cán bộ, rồi ACADsoom
+    // kéo về thành ngạch GV. Chặn trước khi ghi bất cứ gì.
+    if (laEmailSinhVien(payload.email)) {
+      throw new UnauthorizedException(
+        'Tài khoản sinh viên không dùng được hồ sơ khoa học cán bộ.',
+      );
     }
 
     const { firstName, lastName } = splitVietnameseName(
