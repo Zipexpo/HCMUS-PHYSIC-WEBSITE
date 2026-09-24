@@ -123,4 +123,13 @@ export const LISTING_ROSTER: Record<string, RosterEntry[]> = {
     { slug: '#', email: '', roleVi: 'Cán bộ thỉnh giảng', roleEn: 'Visiting Lecturer' },
     { slug: '#', email: '', roleVi: 'Cán bộ thỉnh giảng', roleEn: 'Visiting Lecturer' },
   ],
+  // Hạt nhân: thầy Trần Thiện Thanh mang positionKey cấp KHOA (Phó Trưởng khoa)
+  // nên chức TRƯỞNG BỘ MÔN phải lấy từ roster — đè hiển thị ở trang bộ môn, còn
+  // chức cấp Khoa vẫn giữ cho mục "Ban lãnh đạo Khoa" (facultyRole). Một người có
+  // thể giữ cả hai chức. Sang/Hảo ghim để đúng thứ tự Ban chủ nhiệm.
+  'vat-ly-hat-nhan': [
+    { slug: '#', email: 'ttthanh@hcmus.edu.vn', roleVi: 'Trưởng bộ môn', roleEn: 'Head of Department' },
+    { slug: '#', email: 'plhsang@hcmus.edu.vn', roleVi: 'Phó bộ môn', roleEn: 'Deputy Head' },
+    { slug: '#', email: 'lchao@hcmus.edu.vn', roleVi: 'Trưởng phòng thí nghiệm', roleEn: 'Head of Laboratory' },
+  ],
 };

@@ -404,6 +404,32 @@ export const CreatePublicationBodySchema = z.object({
   reprint: z.boolean().optional(),
   fromProject: z.boolean().optional(),
   stage: z.number().int().min(0).max(2).optional(),
+}).superRefine((d, ctx) => {
+  // BẮT BUỘC THÁNG của năm dùng để tính (countYear = publishedYear ?? acceptedYear).
+  // Thiếu tháng thì hệ thống tạm coi là tháng 1 → bài rơi nhầm năm học (xem
+  // resolveCountYear + cong-bo-thieu-thang). Năm/tháng có thể do người dùng nhập
+  // hoặc lấy từ `work` (import DOI/ORCID) — nên xét giá trị HIỆU DỤNG của cả hai.
+  const py = d.publishedYear ?? d.work.publishedYear;
+  const pm = d.publishedMonth ?? d.work.publishedMonth;
+  const ay = d.acceptedYear ?? d.work.acceptedYear;
+  const am = d.acceptedMonth ?? d.work.acceptedMonth;
+  if (py != null && pm == null) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ['publishedMonth'],
+      message:
+        'Cần điền THÁNG xuất bản — tháng quyết định bài thuộc năm học nào; ' +
+        'để trống sẽ bị tạm tính là tháng 1 và có thể lệch năm.',
+    });
+  } else if (py == null && ay != null && am == null) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ['acceptedMonth'],
+      message:
+        'Bài chưa in: cần điền THÁNG được chấp nhận để tính đúng năm học ' +
+        '(để trống sẽ bị tạm tính là tháng 1).',
+    });
+  }
 });
 export type CreatePublicationBodyType = z.infer<
   typeof CreatePublicationBodySchema
