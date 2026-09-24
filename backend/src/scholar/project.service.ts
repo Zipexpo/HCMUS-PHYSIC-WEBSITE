@@ -517,7 +517,10 @@ export class ProjectService {
         (t, m) => t + (m.sharePercent ?? 0),
         0,
       );
-      if (tong > 100) throw ShareOverflowException(0, tong);
+      // +1e-6: phần chia là số lẻ (Float) nên tổng có thể lệch epsilon (vd
+      // 100.0000001) dù thực chất đúng 100 — đừng chặn nhầm.
+      if (tong > 100 + 1e-6)
+        throw ShareOverflowException(0, Math.round(tong * 10) / 10);
       for (const m of body.memberUpdates) {
         await this.prisma.projectMember.updateMany({
           // Khoá theo id DÒNG, không theo userId: người ngoài không có userId.
@@ -768,7 +771,9 @@ export class ProjectService {
       select: { sharePercent: true },
     });
     const daChia = others.reduce((s, m) => s + (m.sharePercent ?? 0), 0);
-    if (daChia + share > 100) throw ShareOverflowException(daChia, share);
+    // +1e-6: share Float, tránh chặn nhầm do lệch epsilon khi tổng đúng 100.
+    if (daChia + share > 100 + 1e-6)
+      throw ShareOverflowException(Math.round(daChia * 10) / 10, share);
   }
 
   // ── Minh chứng đề tài: tải lên → OCR điền sẵn → gắn khi lưu ────────────────

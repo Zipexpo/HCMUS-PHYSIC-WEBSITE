@@ -375,62 +375,64 @@ export const ExternalAuthorSchema = z.object({
   sharePercent: z.number().nullish(),
 });
 
-export const CreatePublicationBodySchema = z.object({
-  work: ResolvedWorkSchema,
-  /** Mặc định PUBLISHED — phần lớn bài được khai sau khi đã in. */
-  status: z.enum(PUBLICATION_STATUSES).default('PUBLISHED'),
-  publishedYear: YearNum.nullish(),
-  publishedMonth: MonthNum.nullish(),
-  acceptedYear: YearNum.nullish(),
-  acceptedMonth: MonthNum.nullish(),
-  me: MyAuthorshipSchema,
-  /** Đồng tác giả trong Khoa — họ sẽ ở PENDING cho tới khi tự xác nhận. */
-  coAuthorUserIds: z.array(z.string()).max(50).default([]),
-  /** Tác giả ngoài Trường + cờ vị trí — để đếm mainAuthors (tổng tác giả chính
-   *  của bài, kể cả ngoài Trường). Giao diện vốn đã gửi, trước đây bị Zod bỏ. */
-  externalAuthors: z.array(ExternalAuthorSchema).max(2000).default([]),
-  totalAuthors: z.number().int().min(1).max(2000).optional(),
-  /** SỐ tác giả thuộc Trường — cho phép 0 (mục 1b: bài không ai thuộc Trường).
-   *  Thiếu trong schema này thì Zod bỏ số app gửi → mọi bài về mặc định 1. */
-  schoolAuthors: z.number().int().min(0).max(2000).optional(),
+export const CreatePublicationBodySchema = z
+  .object({
+    work: ResolvedWorkSchema,
+    /** Mặc định PUBLISHED — phần lớn bài được khai sau khi đã in. */
+    status: z.enum(PUBLICATION_STATUSES).default('PUBLISHED'),
+    publishedYear: YearNum.nullish(),
+    publishedMonth: MonthNum.nullish(),
+    acceptedYear: YearNum.nullish(),
+    acceptedMonth: MonthNum.nullish(),
+    me: MyAuthorshipSchema,
+    /** Đồng tác giả trong Khoa — họ sẽ ở PENDING cho tới khi tự xác nhận. */
+    coAuthorUserIds: z.array(z.string()).max(50).default([]),
+    /** Tác giả ngoài Trường + cờ vị trí — để đếm mainAuthors (tổng tác giả chính
+     *  của bài, kể cả ngoài Trường). Giao diện vốn đã gửi, trước đây bị Zod bỏ. */
+    externalAuthors: z.array(ExternalAuthorSchema).max(2000).default([]),
+    totalAuthors: z.number().int().min(1).max(2000).optional(),
+    /** SỐ tác giả thuộc Trường — cho phép 0 (mục 1b: bài không ai thuộc Trường).
+     *  Thiếu trong schema này thì Zod bỏ số app gửi → mọi bài về mặc định 1. */
+    schoolAuthors: z.number().int().min(0).max(2000).optional(),
 
-  // ── Phân loại Phụ lục 2, chọn NGAY lúc khai ──────────────────────────────
-  // Bắt quay lại lần hai nghĩa là nhiều người sẽ không quay lại, mà chưa phân
-  // loại thì không được tính vào NV2. Vẫn cho để trống: người không chắc mình
-  // thuộc mục nào thì đừng chặn họ lưu bài.
-  catalogCode: OptionalText(20),
-  quartile: z.enum(QUARTILES).nullish(),
-  satellite: z.boolean().optional(),
-  reprint: z.boolean().optional(),
-  fromProject: z.boolean().optional(),
-  stage: z.number().int().min(0).max(2).optional(),
-}).superRefine((d, ctx) => {
-  // BẮT BUỘC THÁNG của năm dùng để tính (countYear = publishedYear ?? acceptedYear).
-  // Thiếu tháng thì hệ thống tạm coi là tháng 1 → bài rơi nhầm năm học (xem
-  // resolveCountYear + cong-bo-thieu-thang). Năm/tháng có thể do người dùng nhập
-  // hoặc lấy từ `work` (import DOI/ORCID) — nên xét giá trị HIỆU DỤNG của cả hai.
-  const py = d.publishedYear ?? d.work.publishedYear;
-  const pm = d.publishedMonth ?? d.work.publishedMonth;
-  const ay = d.acceptedYear ?? d.work.acceptedYear;
-  const am = d.acceptedMonth ?? d.work.acceptedMonth;
-  if (py != null && pm == null) {
-    ctx.addIssue({
-      code: z.ZodIssueCode.custom,
-      path: ['publishedMonth'],
-      message:
-        'Cần điền THÁNG xuất bản — tháng quyết định bài thuộc năm học nào; ' +
-        'để trống sẽ bị tạm tính là tháng 1 và có thể lệch năm.',
-    });
-  } else if (py == null && ay != null && am == null) {
-    ctx.addIssue({
-      code: z.ZodIssueCode.custom,
-      path: ['acceptedMonth'],
-      message:
-        'Bài chưa in: cần điền THÁNG được chấp nhận để tính đúng năm học ' +
-        '(để trống sẽ bị tạm tính là tháng 1).',
-    });
-  }
-});
+    // ── Phân loại Phụ lục 2, chọn NGAY lúc khai ──────────────────────────────
+    // Bắt quay lại lần hai nghĩa là nhiều người sẽ không quay lại, mà chưa phân
+    // loại thì không được tính vào NV2. Vẫn cho để trống: người không chắc mình
+    // thuộc mục nào thì đừng chặn họ lưu bài.
+    catalogCode: OptionalText(20),
+    quartile: z.enum(QUARTILES).nullish(),
+    satellite: z.boolean().optional(),
+    reprint: z.boolean().optional(),
+    fromProject: z.boolean().optional(),
+    stage: z.number().int().min(0).max(2).optional(),
+  })
+  .superRefine((d, ctx) => {
+    // BẮT BUỘC THÁNG của năm dùng để tính (countYear = publishedYear ?? acceptedYear).
+    // Thiếu tháng thì hệ thống tạm coi là tháng 1 → bài rơi nhầm năm học (xem
+    // resolveCountYear + cong-bo-thieu-thang). Năm/tháng có thể do người dùng nhập
+    // hoặc lấy từ `work` (import DOI/ORCID) — nên xét giá trị HIỆU DỤNG của cả hai.
+    const py = d.publishedYear ?? d.work.publishedYear;
+    const pm = d.publishedMonth ?? d.work.publishedMonth;
+    const ay = d.acceptedYear ?? d.work.acceptedYear;
+    const am = d.acceptedMonth ?? d.work.acceptedMonth;
+    if (py != null && pm == null) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['publishedMonth'],
+        message:
+          'Cần điền THÁNG xuất bản — tháng quyết định bài thuộc năm học nào; ' +
+          'để trống sẽ bị tạm tính là tháng 1 và có thể lệch năm.',
+      });
+    } else if (py == null && ay != null && am == null) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['acceptedMonth'],
+        message:
+          'Bài chưa in: cần điền THÁNG được chấp nhận để tính đúng năm học ' +
+          '(để trống sẽ bị tạm tính là tháng 1).',
+      });
+    }
+  });
 export type CreatePublicationBodyType = z.infer<
   typeof CreatePublicationBodySchema
 >;
@@ -1070,7 +1072,7 @@ export const ProjectMemberResSchema = z.object({
   /** Cơ quan của người ngoài, nếu có khai. */
   externalOrg: z.string().nullable(),
   role: z.enum(PROJECT_ROLES),
-  sharePercent: z.number().int().nullable(),
+  sharePercent: z.number().nullable(),
   /** Diện học viên — CHỈ ghi nhận cho thống kê, không tính giờ. */
   studentType: z.enum(STUDENT_TYPES).nullable(),
   /** Diện cơ quan — ghi nhận giống bài báo, không tính giờ. */
@@ -1125,7 +1127,7 @@ export const ProjectResSchema = z.object({
   myRole: z.enum(PROJECT_ROLES).nullable(),
   myClaimStatus: z.enum(CLAIM_STATUSES).nullable(),
   myShowOnWeb: z.boolean(),
-  mySharePercent: z.number().int().nullable(),
+  mySharePercent: z.number().nullable(),
   /**
    * Người gọi bấm Sửa được không: chủ nhiệm đã xác nhận, hoặc người khai khi đề
    * tài chưa có chủ nhiệm nào xác nhận. Tính bằng CÙNG hàm với chốt chặn ở máy
@@ -1169,7 +1171,7 @@ export const CreateProjectBodySchema = z.object({
   months: z.number().int().min(1).max(240).nullish(),
   note: OptionalText(2000),
   myRole: z.enum(PROJECT_ROLES).optional(),
-  mySharePercent: z.number().int().min(1).max(100).nullish(),
+  mySharePercent: z.number().min(0).max(100).nullish(),
   /** Diện cơ quan của chính tôi — ghi nhận giống bài báo, không tính giờ. */
   myAffiliation: AffiliationField,
   /** Hiện đề tài này trên trang nhân sự của tôi. */
@@ -1184,7 +1186,7 @@ export const CreateProjectBodySchema = z.object({
       z.object({
         userId: z.string(),
         role: z.enum(PROJECT_ROLES).optional(),
-        sharePercent: z.number().int().min(1).max(100).nullish(),
+        sharePercent: z.number().min(0).max(100).nullish(),
         /** Diện học viên — CHỈ ghi nhận cho thống kê, không tính giờ. */
         studentType: StudentTypeField,
         /** Diện cơ quan — ghi nhận giống bài báo, không tính giờ. */
@@ -1204,7 +1206,7 @@ export const CreateProjectBodySchema = z.object({
         name: z.string().min(1).max(200),
         org: OptionalText(300),
         role: z.enum(PROJECT_ROLES).optional(),
-        sharePercent: z.number().int().min(1).max(100).nullish(),
+        sharePercent: z.number().min(0).max(100).nullish(),
         /** Diện học viên — CHỈ ghi nhận cho thống kê, không tính giờ. */
         studentType: StudentTypeField,
         /** Diện cơ quan — ghi nhận giống bài báo, không tính giờ. */
@@ -1242,7 +1244,7 @@ export const UpdateProjectBodySchema = CreateProjectBodySchema.partial().extend(
         z.object({
           userId: z.string(),
           role: z.enum(PROJECT_ROLES).optional(),
-          sharePercent: z.number().int().min(1).max(100).nullish(),
+          sharePercent: z.number().min(0).max(100).nullish(),
           /**
            * Diện học viên — CHỈ ghi nhận cho thống kê, không tính giờ. Người
            * trong Khoa thêm LÚC SỬA đi đường này, nên thiếu trường này là diện
@@ -1268,7 +1270,7 @@ export const UpdateProjectBodySchema = CreateProjectBodySchema.partial().extend(
           /** Id của DÒNG thành viên — dùng được cho cả người ngoài hệ thống. */
           memberId: z.string(),
           role: z.enum(PROJECT_ROLES).optional(),
-          sharePercent: z.number().int().min(1).max(100).nullish(),
+          sharePercent: z.number().min(0).max(100).nullish(),
           /** Diện học viên — CHỈ ghi nhận cho thống kê, không tính giờ. */
           studentType: StudentTypeField,
           affiliation: AffiliationField,
@@ -1317,7 +1319,7 @@ export const ParsedMemberResSchema = z.object({
   role: z.enum(PROJECT_ROLES),
   org: z.string().nullable(),
   laborMonths: z.number().nullable(),
-  sharePercent: z.number().int().nullable(),
+  sharePercent: z.number().nullable(),
   userId: z.string().nullable(),
   /** Tên tài khoản khớp được (để hiển thị), null nếu không khớp. */
   matchedName: z.string().nullable(),
@@ -1388,7 +1390,7 @@ export const IntegrationProjectResSchema = z.object({
       finishedMonth: z.number().int().nullable(),
       role: z.enum(PROJECT_ROLES),
       isLead: z.boolean(),
-      sharePercent: z.number().int().nullable(),
+      sharePercent: z.number().nullable(),
       /**
        * MẪU SỐ chia giờ: số thành viên mà giờ quy đổi của đề tài được chia cho.
        * Giống nhau trên mọi dòng của cùng một `projectId`.

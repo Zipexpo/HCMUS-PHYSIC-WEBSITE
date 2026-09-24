@@ -1264,7 +1264,8 @@ model ProjectMember {
   externalOrg  String?
   role         ProjectRole       @default(MEMBER)
   /// Tỷ lệ chia giờ do nhóm thoả thuận; chủ nhiệm là người khai (Phụ lục 2 tr. 2.8).
-  sharePercent Int?
+  /// FLOAT: chia theo tháng công/giờ ra số lẻ (vd 42.8%) — không ép số nguyên.
+  sharePercent Float?
   /// Diện học viên sau đại học của thành viên: "cao_hoc" | "ncs" | null. CHỈ để
   /// GHI NHẬN cho thống kê — KHÔNG dùng vào quy đổi giờ/điểm, và kênh tích hợp
   /// sang ACADsoom không phát trường này.
