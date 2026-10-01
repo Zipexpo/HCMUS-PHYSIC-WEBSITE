@@ -140,6 +140,21 @@ export function StaffListView() {
     },
   });
 
+  const statsMut = useMutation({
+    mutationKey: ["STAFF", "STATS_ACCESS"],
+    mutationFn: (v: { id: string; on: boolean }) =>
+      adminApi.setStatsAccess(v.id, v.on),
+    onSuccess: (_, v) => {
+      toast.success(
+        v.on ? "Đã cấp quyền xem thống kê" : "Đã thu hồi quyền xem thống kê",
+      );
+      queryClient.invalidateQueries({ queryKey: ["STAFF"] });
+    },
+    onError: (err: { message?: string }) => {
+      toast.error(err.message || "Thao tác thất bại");
+    },
+  });
+
   const items = data?.items ?? [];
   const openMenuFor = items.find((a) => a.id === menuOpenId);
   const total = data?.total ?? 0;
@@ -160,6 +175,11 @@ export function StaffListView() {
               Quản lý hồ sơ nhân sự của cán bộ, giảng viên trong Khoa (ngạch,
               học vị, chức vụ quản lý, đơn vị). Cán bộ không có tài khoản đăng
               nhập CMS.
+            </p>
+            <p className="mt-1 text-sm text-slate-500 dark:text-slate-400 max-w-2xl">
+              Muốn ai xem và xuất báo cáo NCKH toàn Khoa ở phys-profile thì
+              chọn <b>Cấp quyền xem thống kê</b> ở menu thao tác — người đó
+              vẫn không vào được trang quản trị này.
             </p>
           </div>
           <button
@@ -260,6 +280,11 @@ export function StaffListView() {
                         <p className="text-xs text-slate-500 dark:text-slate-400 truncate">
                           {a.email}
                         </p>
+                        {a.canViewStats && (
+                          <span className="mt-1 inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-medium border text-sky-700 bg-sky-50 border-sky-200 dark:text-sky-300 dark:bg-sky-500/10 dark:border-sky-500/30">
+                            Xem thống kê
+                          </span>
+                        )}
                       </div>
                     </div>
                     <div className="text-sm text-slate-700 dark:text-slate-300 min-w-0">
@@ -321,7 +346,7 @@ export function StaffListView() {
               anchorRef={menuTriggerRef}
               open={true}
               onClose={() => setMenuOpenId(null)}
-              widthPx={200}
+              widthPx={230}
             >
               <button
                 type="button"
@@ -332,6 +357,21 @@ export function StaffListView() {
                 className="w-full px-3 py-2 text-left text-xs text-slate-700 dark:text-slate-200 hover:bg-slate-50 dark:hover:bg-[#202c44]"
               >
                 Sửa hồ sơ
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  statsMut.mutate({
+                    id: openMenuFor.id,
+                    on: !openMenuFor.canViewStats,
+                  });
+                  setMenuOpenId(null);
+                }}
+                className="w-full px-3 py-2 text-left text-xs text-slate-700 dark:text-slate-200 hover:bg-slate-50 dark:hover:bg-[#202c44]"
+              >
+                {openMenuFor.canViewStats
+                  ? "Thu hồi quyền xem thống kê"
+                  : "Cấp quyền xem thống kê"}
               </button>
               {openMenuFor.isActive ? (
                 <button

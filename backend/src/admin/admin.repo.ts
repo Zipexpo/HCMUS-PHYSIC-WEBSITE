@@ -55,6 +55,7 @@ const STAFF_SELECT = {
   positionFrom: true,
   positionTo: true,
   employmentType: true,
+  canViewStats: true,
 } satisfies Prisma.UserSelect;
 
 @Injectable()
@@ -150,6 +151,14 @@ export class AdminRepository {
       where: { id },
       data: { isActive },
       select: { id: true, email: true, isActive: true },
+    });
+  }
+
+  setStatsAccess(id: string, canViewStats: boolean) {
+    return this.prisma.user.update({
+      where: { id },
+      data: { canViewStats },
+      select: STAFF_SELECT,
     });
   }
 

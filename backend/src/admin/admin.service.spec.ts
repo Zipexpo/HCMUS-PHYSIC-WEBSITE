@@ -19,6 +19,7 @@ const makeRepoMock = (): RepoMock => ({
   findById: vi.fn(),
   updateProfile: vi.fn(),
   setActive: vi.fn(),
+  setStatsAccess: vi.fn(),
   setPassword: vi.fn(),
   findByEmail: vi.fn(),
   createStaff: vi.fn(),
@@ -137,6 +138,28 @@ describe('AdminService mutations', () => {
         CannotMutateSuperAdminException,
       );
       expect(repo.setActive).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('setStatsAccess', () => {
+    it('bật quyền xem thống kê cho cán bộ', async () => {
+      repo.findById.mockResolvedValue({ ...sampleAdmin, role: 'LECTURER' });
+      await service.setStatsAccess('admin-1', true);
+      expect(repo.setStatsAccess).toHaveBeenCalledWith('admin-1', true);
+    });
+
+    it('thu hồi được', async () => {
+      repo.findById.mockResolvedValue({ ...sampleAdmin, role: 'LECTURER' });
+      await service.setStatsAccess('admin-1', false);
+      expect(repo.setStatsAccess).toHaveBeenCalledWith('admin-1', false);
+    });
+
+    it('throws AdminNotFound when id missing', async () => {
+      repo.findById.mockResolvedValue(null);
+      await expect(service.setStatsAccess('missing', true)).rejects.toBe(
+        AdminNotFoundException,
+      );
+      expect(repo.setStatsAccess).not.toHaveBeenCalled();
     });
   });
 

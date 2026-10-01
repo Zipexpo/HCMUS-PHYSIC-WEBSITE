@@ -15,6 +15,7 @@ import {
   UnprocessableEntityException,
   UploadedFile,
   UploadedFiles,
+  UseGuards,
   UseInterceptors,
 } from '@nestjs/common';
 import type { Response } from 'express';
@@ -74,6 +75,7 @@ import {
   UpdateScholarProfileBodyDTO,
 } from './scholar.dto';
 import { ScholarService } from './scholar.service';
+import { XemThongKeGuard } from './xem-thong-ke.guard';
 import { StaffPageService } from './staff-page.service';
 import { ProjectService } from './project.service';
 import { EVIDENCE_DIR } from './project-doc.service';
@@ -680,33 +682,41 @@ export class ScholarController {
     return this.service.stats(userId);
   }
 
-  /** Toàn Khoa — chỉ quản trị. */
+  // Bốn route thống kê toàn Khoa dưới đây: quản trị HOẶC người được cấp quyền
+  // xem thống kê (`canViewStats`). @Roles mở cho giảng viên đi tới
+  // XemThongKeGuard; guard mới là nơi quyết định.
+
+  /** Toàn Khoa (phys-profile dò quyền bằng route này: 200 = được xem). */
   @Get('stats/faculty')
-  @Roles(RoleName.Admin, RoleName.SuperAdmin)
+  @Roles(RoleName.Lecturer, RoleName.Admin, RoleName.SuperAdmin)
+  @UseGuards(XemThongKeGuard)
   @ZodSerializerDto(StatsResDTO)
   facultyStats() {
     return this.service.stats();
   }
 
-  /** Dữ liệu thô toàn Khoa (công bố + đề tài) cho trang thống kê — chỉ quản trị. */
+  /** Dữ liệu thô toàn Khoa (công bố + đề tài) cho trang thống kê. */
   @Get('stats/faculty/detail')
-  @Roles(RoleName.Admin, RoleName.SuperAdmin)
+  @Roles(RoleName.Lecturer, RoleName.Admin, RoleName.SuperAdmin)
+  @UseGuards(XemThongKeGuard)
   @ZodSerializerDto(FacultyDetailResDTO)
   facultyDetail() {
     return this.service.facultyDetail();
   }
 
-  /** Báo cáo chi tiết toàn Khoa (danh sách công bố + đề tài) để xuất Excel — chỉ quản trị. */
+  /** Báo cáo chi tiết toàn Khoa (danh sách công bố + đề tài) để xuất Excel. */
   @Get('stats/faculty/report')
-  @Roles(RoleName.Admin, RoleName.SuperAdmin)
+  @Roles(RoleName.Lecturer, RoleName.Admin, RoleName.SuperAdmin)
+  @UseGuards(XemThongKeGuard)
   @ZodSerializerDto(FacultyReportResDTO)
   facultyReport() {
     return this.service.facultyReport();
   }
 
-  /** Tiến độ khai báo toàn Khoa (ai đã khai công bố/đề tài, ai đã cập nhật hồ sơ) — chỉ quản trị. */
+  /** Tiến độ khai báo toàn Khoa (ai đã khai công bố/đề tài, ai đã cập nhật hồ sơ). */
   @Get('stats/faculty/declare-progress')
-  @Roles(RoleName.Admin, RoleName.SuperAdmin)
+  @Roles(RoleName.Lecturer, RoleName.Admin, RoleName.SuperAdmin)
+  @UseGuards(XemThongKeGuard)
   @ZodSerializerDto(DeclareProgressResDTO)
   declareProgress() {
     return this.service.declareProgress();

@@ -407,6 +407,16 @@ export const CreatePublicationBodySchema = z
     stage: z.number().int().min(0).max(2).optional(),
   })
   .superRefine((d, ctx) => {
+    // BẮT BUỘC TÊN: khai tay từng lưu được công trình tên trống (gặp thật
+    // 1/10/2026) — lên báo cáo của Khoa thành một dòng không ai nhận ra. Sửa
+    // bài thì UpdatePublicationBodySchema đã chặn bằng min(1).
+    if (!d.work.title.trim()) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['work', 'title'],
+        message: 'Cần điền TÊN công trình.',
+      });
+    }
     // BẮT BUỘC THÁNG của năm dùng để tính (countYear = publishedYear ?? acceptedYear).
     // Thiếu tháng thì hệ thống tạm coi là tháng 1 → bài rơi nhầm năm học (xem
     // resolveCountYear + cong-bo-thieu-thang). Năm/tháng có thể do người dùng nhập

@@ -178,6 +178,8 @@ export type AdminListItem = {
   positionFrom: string | null;
   positionTo: string | null;
   employmentType: string | null;
+  // Quyền xem thống kê NCKH ở phys-profile — tách khỏi `role`.
+  canViewStats: boolean;
 };
 
 export type StaffUnit = { id: string; name: string };
@@ -277,6 +279,12 @@ export const adminApi = {
     return authFetch<AdminListItem>(`/admins/${id}/profile`, {
       method: "PATCH",
       body: JSON.stringify(body),
+    });
+  },
+  setStatsAccess(id: string, canViewStats: boolean) {
+    return authFetch<AdminListItem>(`/admins/${id}/stats-access`, {
+      method: "PATCH",
+      body: JSON.stringify({ canViewStats }),
     });
   },
 };

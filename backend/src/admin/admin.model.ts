@@ -35,6 +35,8 @@ export const AdminItemSchema = z.object({
   positionFrom: z.date().nullable(),
   positionTo: z.date().nullable(),
   employmentType: z.string().nullable(),
+  /** Quyền xem thống kê NCKH (phys-profile) — tách khỏi `role`. */
+  canViewStats: z.boolean(),
 });
 
 export type AdminItemType = z.infer<typeof AdminItemSchema>;
@@ -64,6 +66,11 @@ export const UpdateAdminProfileBodySchema = z.object({
 export type UpdateAdminProfileBodyType = z.infer<
   typeof UpdateAdminProfileBodySchema
 >;
+
+/** Bật/tắt quyền xem thống kê NCKH — không đổi vai trò, không mở trang quản trị. */
+export const SetStatsAccessBodySchema = z.object({
+  canViewStats: z.boolean(),
+});
 
 /**
  * Tạo CÁN BỘ (giảng viên) — hồ sơ nhân sự, KHÔNG có mật khẩu (không đăng nhập

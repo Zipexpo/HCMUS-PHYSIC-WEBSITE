@@ -19,6 +19,7 @@ import {
   CreateStaffBodyDTO,
   HeroBackgroundListResDTO,
   ResetAdminPasswordBodyDTO,
+  SetStatsAccessBodyDTO,
   UpdateAdminProfileBodyDTO,
 } from './admin.dto';
 import { Roles } from '../shared/decorators/roles.decorator';
@@ -98,6 +99,16 @@ export class AdminController {
     @Body() body: ResetAdminPasswordBodyDTO,
   ) {
     return this.adminService.resetPassword(id, body);
+  }
+
+  /** Bật/tắt quyền xem thống kê NCKH (phys-profile) — không đổi vai trò. */
+  @Patch(':id/stats-access')
+  @ZodSerializerDto(AdminItemDTO)
+  setStatsAccess(
+    @Param('id') id: string,
+    @Body() body: SetStatsAccessBodyDTO,
+  ) {
+    return this.adminService.setStatsAccess(id, body.canViewStats);
   }
 
   /** Sửa hồ sơ tài khoản (Mục 10): ngạch/chức vụ/học vị/MSCB/đơn vị… */

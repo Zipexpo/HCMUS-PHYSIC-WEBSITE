@@ -1235,8 +1235,9 @@ export class ScholarService {
   }
 
   /**
-   * TIẾN ĐỘ KHAI BÁO toàn Khoa cho tab theo dõi (admin). Mỗi cán bộ — giảng
-   * viên, cộng tài khoản quản trị mà là cán bộ thật (có MSCB):
+   * TIẾN ĐỘ KHAI BÁO toàn Khoa cho tab theo dõi (admin). Mỗi cán bộ giảng dạy /
+   * nghiên cứu — giảng viên, cộng tài khoản quản trị mà là cán bộ thật (có MSCB);
+   * không gồm văn phòng, chuyên viên, thỉnh giảng (xem phép lọc bên dưới):
    *  - đã khai công bố/đề tài chưa: đếm bản ghi đã XÁC NHẬN của chính họ — bài
    *    người khác gắn tên mà họ chưa xác nhận (PENDING) không tính;
    *  - hồ sơ trên web: `updated` = đã tự bổ sung (giới thiệu / hướng nghiên cứu /
@@ -1296,7 +1297,7 @@ export class ScholarService {
       return photo || html ? 'legacy' : 'empty';
     };
 
-    const [users, pubCounts, projCounts] = await Promise.all([
+    const [taiKhoan, pubCounts, projCounts] = await Promise.all([
       this.prisma.user.findMany({
         where: {
           isActive: true,
@@ -1308,8 +1309,11 @@ export class ScholarService {
           firstName: true,
           lastName: true,
           rank: true,
-          department: { select: { name: true } },
-          scholarProfile: { select: { staffPageSlug: true } },
+          employmentType: true,
+          department: { select: { name: true, kind: true } },
+          scholarProfile: {
+            select: { staffPageSlug: true, affiliationType: true },
+          },
         },
       }),
       this.prisma.publicationAuthor.groupBy({
@@ -1325,6 +1329,21 @@ export class ScholarService {
     ]);
     const pubBy = new Map(pubCounts.map((r) => [r.userId, r._count._all]));
     const projBy = new Map(projCounts.map((r) => [r.userId, r._count._all]));
+
+    // Chỉ cán bộ GIẢNG DẠY / NGHIÊN CỨU. Bỏ: tài khoản thuộc đơn vị không phải bộ
+    // môn (kind 'unit': Văn phòng Khoa — có cả tài khoản nhóm "BCN Khoa" —, CLB,
+    // Đoàn–Hội), chuyên viên/nhân viên (không có nhiệm vụ NCKH), và thỉnh giảng
+    // (không tính vào thống kê của Khoa — xem AffiliationType). Lọc ở đây chứ
+    // không ở `where`: rank/employmentType có thể NULL, mà NOT IN của SQL loại
+    // luôn dòng NULL.
+    const KHONG_NCKH = new Set(['CV', 'NV']);
+    const users = taiKhoan.filter(
+      (u) =>
+        u.department?.kind !== 'unit' &&
+        !KHONG_NCKH.has(u.rank ?? '') &&
+        u.employmentType !== 'thinh_giang' &&
+        u.scholarProfile?.affiliationType !== 'VISITING',
+    );
 
     const slugs = [
       ...new Set(

@@ -133,6 +133,17 @@ export class AdminService {
     return { message: 'Admin restored' };
   }
 
+  /**
+   * Quyền XEM THỐNG KÊ NCKH (phys-profile /thong-ke) — tách khỏi vai trò: người
+   * được bật xem/xuất báo cáo nhưng không vào được trang quản trị web. Không chặn
+   * SUPER_ADMIN như suspend: admin vốn xem được, cờ này vô hại với họ.
+   */
+  async setStatsAccess(id: string, canViewStats: boolean) {
+    const user = await this.adminRepository.findById(id);
+    if (!user) throw AdminNotFoundException;
+    return this.adminRepository.setStatsAccess(id, canViewStats);
+  }
+
   async resetPassword(id: string, body: ResetAdminPasswordBodyType) {
     await this.loadAdminOrThrow(id);
     const hashed = await this.hashingService.hash(body.password);

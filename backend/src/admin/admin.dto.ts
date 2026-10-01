@@ -8,6 +8,7 @@ import {
   CreateStaffBodySchema,
   HeroBackgroundListResSchema,
   ResetAdminPasswordBodySchema,
+  SetStatsAccessBodySchema,
   UpdateAdminProfileBodySchema,
 } from './admin.model';
 
@@ -21,6 +22,9 @@ export class ResetAdminPasswordBodyDTO extends createZodDto(
 ) {}
 export class UpdateAdminProfileBodyDTO extends createZodDto(
   UpdateAdminProfileBodySchema,
+) {}
+export class SetStatsAccessBodyDTO extends createZodDto(
+  SetStatsAccessBodySchema,
 ) {}
 export class HeroBackgroundListResDTO extends createZodDto(
   HeroBackgroundListResSchema,

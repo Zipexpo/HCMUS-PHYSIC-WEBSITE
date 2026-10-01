@@ -197,6 +197,11 @@ model User {
   positionTo        DateTime?
   /// bien_che · hop_dong · thinh_giang.
   employmentType    String?
+  /// Quyền XEM THỐNG KÊ NCKH (phys-profile /thong-ke: thống kê, báo cáo Excel,
+  /// tiến độ khai báo) — tách khỏi `role`: cấp cho Ban chủ nhiệm / trưởng bộ môn
+  /// mà KHÔNG mở trang quản trị web. Admin thì vốn đã xem được. Super Admin bật
+  /// tắt ở "Quản lý cán bộ". Thêm cột bằng SQL tay, không `db push`.
+  canViewStats      Boolean   @default(false)
   createdAt         DateTime  @default(now())
   updatedAt         DateTime  @updatedAt
   lastLoginAt       DateTime?
