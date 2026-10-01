@@ -1,4 +1,13 @@
-import { Controller, Get, Query, UseGuards } from '@nestjs/common';
+import {
+  Controller,
+  Get,
+  Param,
+  Query,
+  Res,
+  StreamableFile,
+  UseGuards,
+} from '@nestjs/common';
+import type { Response } from 'express';
 import { ZodSerializerDto } from 'nestjs-zod';
 import { IsPublic } from '../shared/decorators/auth.decorator';
 import {
@@ -54,6 +63,31 @@ export class ScholarIntegrationController {
   @ZodSerializerDto(IntegrationProjectResDTO)
   listProjects(@Query() query: IntegrationQueryDTO) {
     return this.projects.integrationList(query);
+  }
+
+  /**
+   * Tệp MINH CHỨNG của đề tài — để ACADsoom proxy cho người duyệt xem thẳng,
+   * khỏi bắt tải lại thứ đã có bên web Khoa. Chắn bằng x-acadsoom-secret
+   * (IntegrationSecretGuard) chứ không phải phiên người dùng; `inline` để mở
+   * ngay trong trình duyệt.
+   */
+  @Get('projects/:projectId/evidences/:evidenceId/file')
+  async projectEvidenceFile(
+    @Param('projectId') projectId: string,
+    @Param('evidenceId') evidenceId: string,
+    @Res({ passthrough: true }) res: Response,
+  ): Promise<StreamableFile> {
+    const f = await this.projects.integrationEvidenceFile(
+      projectId,
+      evidenceId,
+    );
+    res.set({
+      'Content-Type': f.mimeType,
+      'Content-Disposition': `inline; filename*=UTF-8''${encodeURIComponent(
+        f.originalName,
+      )}`,
+    });
+    return new StreamableFile(f.stream);
   }
 
   /**

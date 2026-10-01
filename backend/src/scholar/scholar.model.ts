@@ -1392,6 +1392,23 @@ export const IntegrationProjectResSchema = z.object({
       isLead: z.boolean(),
       sharePercent: z.number().nullable(),
       /**
+       * Minh chứng đề tài (hợp đồng / thuyết minh / nghiệm thu). ACADsoom lấy
+       * LINK về hiển thị + coi như đã có minh chứng, KHÔNG bắt upload lại. Tải
+       * tệp qua GET /integration/projects/:projectId/evidences/:id/file (cùng
+       * `x-acadsoom-secret`).
+       */
+      evidences: z
+        .array(
+          z.object({
+            id: z.string(),
+            kind: z.string(),
+            name: z.string(),
+            mimeType: z.string().nullable(),
+            size: z.number().int().nullable(),
+          }),
+        )
+        .default([]),
+      /**
        * MẪU SỐ chia giờ: số thành viên mà giờ quy đổi của đề tài được chia cho.
        * Giống nhau trên mọi dòng của cùng một `projectId`.
        *

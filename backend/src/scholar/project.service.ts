@@ -1012,6 +1012,23 @@ export class ProjectService {
     };
   }
 
+  /**
+   * Tệp minh chứng cho KÊNH TÍCH HỢP ACADsoom — KHÔNG kiểm thành viên: đã chắn
+   * bằng `x-acadsoom-secret` ở IntegrationSecretGuard. ACADsoom proxy tệp này để
+   * người duyệt xem thẳng, khỏi bắt tải lại minh chứng đã có bên web Khoa.
+   */
+  async integrationEvidenceFile(projectId: string, evidenceId: string) {
+    const e = await this.prisma.projectEvidence.findFirst({
+      where: { id: evidenceId, projectId },
+    });
+    if (!e) throw EvidenceNotFoundException;
+    return {
+      stream: createReadStream(join(EVIDENCE_DIR, e.storedName)),
+      mimeType: e.mimeType,
+      originalName: e.originalName,
+    };
+  }
+
   /** Tải thẳng một minh chứng lên đề tài đã có (vd biên bản nghiệm thu). */
   async addEvidence(
     userId: string,
@@ -1187,6 +1204,17 @@ export class ProjectService {
               where: { claimStatus: 'CONFIRMED' },
               select: { id: true },
             },
+            // Minh chứng để ACADsoom lấy link về (xem mapped.evidences dưới).
+            evidences: {
+              select: {
+                id: true,
+                kind: true,
+                originalName: true,
+                mimeType: true,
+                size: true,
+              },
+              orderBy: { createdAt: 'asc' },
+            },
           },
         },
         user: { select: { email: true } },
@@ -1225,6 +1253,14 @@ export class ProjectService {
           role: r.role,
           isLead: r.role === 'LEAD',
           sharePercent: r.sharePercent,
+          // Minh chứng đề tài — ACADsoom lấy LINK, không bắt upload lại.
+          evidences: p.evidences.map((e) => ({
+            id: e.id,
+            kind: e.kind,
+            name: e.originalName,
+            mimeType: e.mimeType,
+            size: e.size,
+          })),
           // Tối thiểu 1: đề tài một mình chủ nhiệm vẫn là một mẫu số hợp lệ, và
           // 0 lọt sang bên kia thành phép chia cho không.
           memberCount: Math.max(1, p.members.length),
