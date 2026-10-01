@@ -1064,6 +1064,7 @@ export class ScholarService {
         },
       }),
       this.prisma.researchProject.findMany({
+        where: { deletedAt: null },
         select: {
           status: true,
           startYear: true,
@@ -1114,11 +1115,14 @@ export class ScholarService {
           issn: true,
           doi: true,
           url: true,
+          publisher: true,
+          isbn: true,
           totalAuthors: true,
           authorsRaw: true,
           authors: {
             where: { claimStatus: 'CONFIRMED' },
             select: {
+              authorIndex: true,
               isFirst: true,
               isCorresponding: true,
               user: { select: { firstName: true, lastName: true } },
@@ -1127,9 +1131,13 @@ export class ScholarService {
         },
       }),
       this.prisma.researchProject.findMany({
+        // Đề tài đã xoá (vd bản khai trùng đã dọn) không được lên báo cáo.
+        where: { deletedAt: null },
         orderBy: [{ startYear: 'desc' }, { startMonth: 'desc' }],
         select: {
+          code: true,
           decisionNo: true,
+          catalogCode: true,
           title: true,
           status: true,
           startYear: true,
@@ -1137,6 +1145,8 @@ export class ScholarService {
           endYear: true,
           endMonth: true,
           members: {
+            // Người đã TỪ CHỐI lời mời không còn là thành viên.
+            where: { claimStatus: { not: 'REJECTED' } },
             select: {
               role: true,
               externalName: true,
@@ -1160,6 +1170,14 @@ export class ScholarService {
           .filter(Boolean);
         const first = p.authors.find((a) => a.isFirst);
         const corr = p.authors.find((a) => a.isCorresponding);
+        // Tác giả trong hệ thống đã xác nhận, theo thứ tự trong bài (chưa rõ vị
+        // trí thì xếp cuối) — để bên nhận còn có tên mà ghi khi bài khai tay
+        // không kèm danh sách tác giả (authorsRaw rỗng).
+        const viTri = (i: number) => (i < 0 ? Number.MAX_SAFE_INTEGER : i);
+        const systemAuthors = [...p.authors]
+          .sort((a, b) => viTri(a.authorIndex) - viTri(b.authorIndex))
+          .map((a) => vietName(a.user))
+          .filter(Boolean);
         return {
           type: p.type,
           countYear: p.countYear,
@@ -1178,8 +1196,11 @@ export class ScholarService {
           issn: p.issn,
           doi: p.doi,
           url: p.url,
+          publisher: p.publisher,
+          isbn: p.isbn,
           totalAuthors: p.totalAuthors,
           authorNames,
+          systemAuthors,
           firstAuthor: vietName(first?.user) || authorNames[0] || '',
           correspondingAuthor: vietName(corr?.user),
         };
@@ -1192,7 +1213,9 @@ export class ScholarService {
           )
           .filter(Boolean);
         return {
+          code: pr.code,
           decisionNo: pr.decisionNo,
+          catalogCode: pr.catalogCode,
           title: pr.title,
           status: pr.status,
           startYear: pr.startYear,

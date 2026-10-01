@@ -893,15 +893,23 @@ export const FacultyReportResSchema = z.object({
       issn: z.string().nullable(),
       doi: z.string().nullable(),
       url: z.string().nullable(),
+      publisher: z.string().nullable(),
+      isbn: z.string().nullable(),
       totalAuthors: z.number().int(),
       authorNames: z.array(z.string()),
+      /** Tác giả trong hệ thống đã xác nhận — dùng khi authorNames rỗng (bài khai tay). */
+      systemAuthors: z.array(z.string()),
       firstAuthor: z.string(),
       correspondingAuthor: z.string(),
     }),
   ),
   projects: z.array(
     z.object({
+      /** Mã số đề tài (vd T2025-36, C2026-18-07) — khác số quyết định. */
+      code: z.string().nullable(),
       decisionNo: z.string().nullable(),
+      /** Mục Bảng 2 (B2-1.1 … B2-2.2) — chính là CẤP đề tài. */
+      catalogCode: z.string().nullable(),
       title: z.string(),
       status: z.string(),
       startYear: z.number().int().nullable(),
