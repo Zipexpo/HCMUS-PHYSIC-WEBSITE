@@ -68,6 +68,7 @@ import {
   StatsResDTO,
   FacultyDetailResDTO,
   FacultyReportResDTO,
+  DeclareProgressResDTO,
   UpdateStaffPageBodyDTO,
   UpdatePublicationBodyDTO,
   UpdateScholarProfileBodyDTO,
@@ -701,5 +702,13 @@ export class ScholarController {
   @ZodSerializerDto(FacultyReportResDTO)
   facultyReport() {
     return this.service.facultyReport();
+  }
+
+  /** Tiến độ khai báo toàn Khoa (ai đã khai công bố/đề tài, ai đã cập nhật hồ sơ) — chỉ quản trị. */
+  @Get('stats/faculty/declare-progress')
+  @Roles(RoleName.Admin, RoleName.SuperAdmin)
+  @ZodSerializerDto(DeclareProgressResDTO)
+  declareProgress() {
+    return this.service.declareProgress();
   }
 }

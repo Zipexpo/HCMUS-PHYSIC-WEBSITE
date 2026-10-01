@@ -1211,6 +1211,149 @@ export class ScholarService {
     };
   }
 
+  /**
+   * TIẾN ĐỘ KHAI BÁO toàn Khoa cho tab theo dõi (admin). Mỗi cán bộ — giảng
+   * viên, cộng tài khoản quản trị mà là cán bộ thật (có MSCB):
+   *  - đã khai công bố/đề tài chưa: đếm bản ghi đã XÁC NHẬN của chính họ — bài
+   *    người khác gắn tên mà họ chưa xác nhận (PENDING) không tính;
+   *  - hồ sơ trên web: `updated` = đã tự bổ sung (giới thiệu / hướng nghiên cứu /
+   *    giảng dạy / mục thêm / danh sách bài / ảnh tải mới). Ảnh `/uploads/legacy/`
+   *    và khối `html` KHÔNG tính: lượt migrate từ web cũ chép nguyên hai thứ đó
+   *    sang, nên có chúng chưa chứng tỏ người đó đã động tay (`legacy`). `empty` =
+   *    trang hệ thống tự dựng còn trống, `nopage` = chưa có trang.
+   * Lưu trang cá nhân không để lại lịch sử ai sửa, nên chỉ suy được từ nội dung.
+   */
+  async declareProgress() {
+    type ProfileState = 'updated' | 'legacy' | 'empty' | 'nopage';
+    const STAFF_TYPES = new Set(['StaffProfileEditorial', 'StaffProfile']);
+    const asStr = (v: unknown): string => {
+      if (typeof v === 'string') return v.trim();
+      if (v && typeof v === 'object') {
+        const o = v as Record<string, unknown>;
+        return String(o.vi ?? '').trim() || String(o.en ?? '').trim();
+      }
+      return '';
+    };
+    const listFilled = (v: unknown): boolean =>
+      Array.isArray(v) &&
+      v.some(
+        (e) =>
+          !!e &&
+          typeof e === 'object' &&
+          Object.values(e as Record<string, unknown>).some((x) => !!asStr(x)),
+      );
+    // Props của khối hồ sơ trong cây Puck (trang cá nhân chỉ có một khối).
+    const staffProps = (x: unknown): Record<string, unknown> | null => {
+      if (!x || typeof x !== 'object') return null;
+      const node = x as { type?: unknown; props?: Record<string, unknown> };
+      if (typeof node.type === 'string' && STAFF_TYPES.has(node.type)) {
+        return node.props ?? {};
+      }
+      for (const v of Array.isArray(x) ? x : Object.values(x)) {
+        const hit = staffProps(v);
+        if (hit) return hit;
+      }
+      return null;
+    };
+    const classify = (p: Record<string, unknown>): ProfileState => {
+      const photo = asStr(p.photo);
+      if (
+        asStr(p.intro) ||
+        listFilled(p.research) ||
+        listFilled(p.teaching) ||
+        listFilled(p.extras) ||
+        listFilled(p.publications) ||
+        (photo && !photo.includes('/uploads/legacy/'))
+      ) {
+        return 'updated';
+      }
+      const html = asStr(p.html)
+        .replace(/<[^>]*>|&nbsp;/g, ' ')
+        .trim();
+      return photo || html ? 'legacy' : 'empty';
+    };
+
+    const [users, pubCounts, projCounts] = await Promise.all([
+      this.prisma.user.findMany({
+        where: {
+          isActive: true,
+          OR: [{ role: 'LECTURER' }, { teacherId: { gt: '' } }],
+        },
+        select: {
+          id: true,
+          email: true,
+          firstName: true,
+          lastName: true,
+          rank: true,
+          department: { select: { name: true } },
+          scholarProfile: { select: { staffPageSlug: true } },
+        },
+      }),
+      this.prisma.publicationAuthor.groupBy({
+        by: ['userId'],
+        where: { claimStatus: 'CONFIRMED' },
+        _count: { _all: true },
+      }),
+      this.prisma.projectMember.groupBy({
+        by: ['userId'],
+        where: { claimStatus: 'CONFIRMED', userId: { not: null } },
+        _count: { _all: true },
+      }),
+    ]);
+    const pubBy = new Map(pubCounts.map((r) => [r.userId, r._count._all]));
+    const projBy = new Map(projCounts.map((r) => [r.userId, r._count._all]));
+
+    const slugs = [
+      ...new Set(
+        users
+          .map((u) => u.scholarProfile?.staffPageSlug)
+          .filter((s): s is string => !!s),
+      ),
+    ];
+    const pages = slugs.length
+      ? await this.prisma.pageLayout.findMany({
+          where: { slug: { in: slugs }, deletedAt: null },
+          select: { slug: true, puckData: true, publishedPuckData: true },
+        })
+      : [];
+    const stateBySlug = new Map<string, ProfileState>();
+    for (const pg of pages) {
+      // Bản đã xuất bản là thứ người xem thấy; trang chưa xuất bản thì xét nháp.
+      const props =
+        staffProps(pg.publishedPuckData) ?? staffProps(pg.puckData);
+      if (props && !stateBySlug.has(pg.slug)) {
+        stateBySlug.set(pg.slug, classify(props));
+      }
+    }
+
+    const people = users
+      .map((u) => {
+        const pubCount = pubBy.get(u.id) ?? 0;
+        const projCount = projBy.get(u.id) ?? 0;
+        const slug = u.scholarProfile?.staffPageSlug;
+        const profile: ProfileState =
+          (slug && stateBySlug.get(slug)) || 'nopage';
+        return {
+          email: u.email,
+          name: [u.lastName, u.firstName].filter(Boolean).join(' ').trim(),
+          department: u.department?.name ?? '',
+          rank: u.rank ?? '',
+          pubCount,
+          projCount,
+          declared: pubCount + projCount > 0,
+          profile,
+        };
+      })
+      // Theo bộ môn rồi tên; người CHƯA gán bộ môn xếp cuối.
+      .sort(
+        (a, b) =>
+          Number(!a.department) - Number(!b.department) ||
+          a.department.localeCompare(b.department, 'vi') ||
+          a.name.localeCompare(b.name, 'vi'),
+      );
+    return { people };
+  }
+
   // ── API tích hợp cho ACADsoom ─────────────────────────────────────────────
   /**
    * CHỈ trả bài đã phân loại và tác giả đã xác nhận. Không trả giờ quy đổi —

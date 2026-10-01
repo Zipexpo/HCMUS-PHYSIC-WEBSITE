@@ -1,4 +1,5 @@
 import { createZodDto } from 'nestjs-zod';
+import { z } from 'zod';
 import {
   ClaimResponseBodySchema,
   CreatePublicationBodySchema,
@@ -104,6 +105,29 @@ export class IntegrationStaffResDTO extends createZodDto(
 export class StatsResDTO extends createZodDto(StatsResSchema) {}
 export class FacultyDetailResDTO extends createZodDto(FacultyDetailResSchema) {}
 export class FacultyReportResDTO extends createZodDto(FacultyReportResSchema) {}
+
+/**
+ * Tiến độ khai báo (tab theo dõi của admin). `profile`: updated = đã tự cập nhật
+ * hồ sơ · legacy = trang chỉ còn nội dung chuyển từ web cũ · empty = trang tự
+ * dựng còn trống · nopage = chưa có trang cá nhân.
+ */
+const DeclareProgressResSchema = z.object({
+  people: z.array(
+    z.object({
+      email: z.string(),
+      name: z.string(),
+      department: z.string(),
+      rank: z.string(),
+      pubCount: z.number().int(),
+      projCount: z.number().int(),
+      declared: z.boolean(),
+      profile: z.enum(['updated', 'legacy', 'empty', 'nopage']),
+    }),
+  ),
+});
+export class DeclareProgressResDTO extends createZodDto(
+  DeclareProgressResSchema,
+) {}
 
 export class StaffPageResDTO extends createZodDto(StaffPageResSchema) {}
 export class DepartmentStaffResDTO extends createZodDto(
