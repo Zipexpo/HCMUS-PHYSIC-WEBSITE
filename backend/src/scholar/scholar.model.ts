@@ -206,6 +206,14 @@ export const ResolvedAuthorSchema = z.object({
    * NV2 xử lý y hệt isForeign (KHÔNG tính) — chỉ để schoolAuthors đếm đúng.
    */
   isNonSchool: z.boolean().nullish(),
+  /**
+   * Tác giả liên hệ — CHỈ lưu cho người CHƯA có tài khoản (người có tài khoản
+   * giữ cờ trên dòng PublicationAuthor). Thiếu trường này thì Zod xoá nó, và mỗi
+   * lần sửa bài tác giả liên hệ ngoài hệ thống (không đứng đầu/cuối) rơi khỏi
+   * `externalMainAuthors` → phần 1/3 của tác giả chính chia cho ít người hơn thật
+   * (soát 3/10/2026: IJHE, MLST, JoCS).
+   */
+  isCorresponding: z.boolean().nullish(),
 });
 
 export const ResolvedWorkSchema = z.object({
@@ -238,6 +246,21 @@ export const AuthorSuggestionSchema = z.object({
   reason: z.enum(['orcid', 'variant', 'loose']),
   /** Gợi ý này chính là người đang gọi — giao diện tick sẵn "tôi là người này". */
   isMe: z.boolean(),
+  /**
+   * Đủ chắc để gắn sẵn (và gửi lời mời khi lưu). false = chỉ GỢI Ý — tên mơ hồ,
+   * hoặc một hàng khớp nhiều người; người khai tự bấm. Xem name-match.ts.
+   */
+  chac: z.boolean(),
+  /** ORCID trên bài khác ORCID hồ sơ (nhiều người có 2 ORCID) — chỉ để ghi chú. */
+  orcidKhac: z.boolean().optional(),
+});
+
+/** Bản ĐÃ ĐĂNG của một bản thảo (arXiv…) — Phụ lục 2 không tính bản thảo. */
+export const BanDaDangSchema = z.object({
+  doi: z.string(),
+  title: z.string(),
+  containerTitle: z.string().nullable(),
+  year: z.number().int().nullable(),
 });
 
 export const ResolvePreviewResSchema = z.object({
@@ -245,6 +268,10 @@ export const ResolvePreviewResSchema = z.object({
   /** Bài đã có sẵn trong CSDL (trùng DOI) — để không tạo bản thứ hai. */
   existingPublicationId: z.string().nullable(),
   suggestions: z.array(AuthorSuggestionSchema),
+  /** Bản thảo (arXiv, Research Square…) — Phụ lục 2 không tính. */
+  laBanThao: z.boolean().optional(),
+  /** Bản đã đăng tạp chí/hội nghị tìm được theo tên (Crossref), nếu có. */
+  banDaDang: BanDaDangSchema.nullable().optional(),
 });
 
 export const ResolveBodySchema = z.object({
@@ -265,6 +292,7 @@ export const ImportPreviewResSchema = z.object({
       work: ResolvedWorkSchema,
       existingPublicationId: z.string().nullable(),
       suggestions: z.array(AuthorSuggestionSchema),
+      laBanThao: z.boolean().optional(),
     }),
   ),
   skipped: z.number().int(),
@@ -340,6 +368,11 @@ export const PublicationResSchema = z.object({
   totalAuthors: z.number().int(),
   schoolAuthors: z.number().int(),
   mainAuthorAtSchool: z.boolean(),
+  /**
+   * Số tác giả chính NGOÀI hệ thống — form sửa bài cần để dựng lại đủ hàng cho bài
+   * khai tay cũ (chưa lưu tên đồng tác giả) mà không làm rơi số tác giả chính.
+   */
+  externalMainAuthors: z.number().int(),
   createdBy: z.string().nullable(),
   createdAt: z.date(),
   updatedAt: z.date(),
@@ -375,6 +408,37 @@ export const ExternalAuthorSchema = z.object({
   sharePercent: z.number().nullish(),
 });
 
+/**
+ * Vai trò (First/Corresponding/Last) của một ĐỒNG TÁC GIẢ trong Khoa trên cùng
+ * bài. Bảng tác giả ở phys-profile gửi kèm mảng này mỗi lần lưu, nhưng trước
+ * 2/10/2026 cả hai schema bên dưới đều không có trường này nên Zod lặng lẽ bỏ:
+ * bỏ tick "Corresponding" của người kia rồi lưu, mở lại vẫn thấy tick (báo
+ * thật — bài Radiation Physics and Chemistry 114162 có hai người cùng "liên hệ").
+ *
+ * TỶ LỆ CHIA GIỜ (Cách 1) CỦA ĐỒNG TÁC GIẢ — Khoa chốt 10/10/2026, theo Phụ lục
+ * 2 tr. 2.5: nhóm tự thoả thuận tỷ lệ, NGƯỜI ĐẠI DIỆN (tác giả chính) khai cho CẢ
+ * NHÓM. Bản trước không nhận trường này ("chính chủ khai"), trong khi người không
+ * phải tác giả chính lại bị chặn tự khai — nên đồng tác giả thường KHÔNG BAO GIỜ
+ * có tỷ lệ, và ACADsoom tính họ Cách 2 trên bài cả nhóm đã chọn Cách 1 (đo
+ * 10/10/2026: 4 công trình). Chỉ áp khi NGƯỜI LƯU là tác giả chính — xem
+ * ganVaiTroDongTacGia. `null` = xoá (nhóm quay về Cách 2), bỏ trống = giữ nguyên.
+ */
+export const CoAuthorRoleSchema = z.object({
+  userId: z.string().min(1),
+  isFirst: z.boolean().optional(),
+  isCorresponding: z.boolean().optional(),
+  isLast: z.boolean().optional(),
+  sharePercent: z.number().int().min(1).max(100).nullish(),
+  /**
+   * HÀNG của người này trong danh sách tác giả người lưu gửi lên (5/10/2026).
+   * Lời mời trước đây luôn ở hàng −1 nên người được mời có vai trò chính mà chưa
+   * bấm thì không vào mẫu số tác giả chính; và khi danh sách bị sửa (bớt/thêm
+   * hàng) thì hàng của đồng tác giả lệch theo mà không ai biết.
+   */
+  authorIndex: z.number().int().min(-1).optional(),
+});
+export type CoAuthorRoleType = z.infer<typeof CoAuthorRoleSchema>;
+
 export const CreatePublicationBodySchema = z
   .object({
     work: ResolvedWorkSchema,
@@ -387,6 +451,8 @@ export const CreatePublicationBodySchema = z
     me: MyAuthorshipSchema,
     /** Đồng tác giả trong Khoa — họ sẽ ở PENDING cho tới khi tự xác nhận. */
     coAuthorUserIds: z.array(z.string()).max(50).default([]),
+    /** Vai trò người khai gán cho các đồng tác giả vừa mời — CoAuthorRoleSchema. */
+    memberUpdates: z.array(CoAuthorRoleSchema).max(50).default([]),
     /** Tác giả ngoài Trường + cờ vị trí — để đếm mainAuthors (tổng tác giả chính
      *  của bài, kể cả ngoài Trường). Giao diện vốn đã gửi, trước đây bị Zod bỏ. */
     externalAuthors: z.array(ExternalAuthorSchema).max(2000).default([]),
@@ -405,6 +471,14 @@ export const CreatePublicationBodySchema = z
     reprint: z.boolean().optional(),
     fromProject: z.boolean().optional(),
     stage: z.number().int().min(0).max(2).optional(),
+
+    // ── Chốt chống khai sai (5/10/2026) — xem scholar.error.ts ─────────────
+    /** Khai tay một tác giả: người khai xác nhận công trình chỉ có mình. */
+    motTacGia: z.boolean().optional(),
+    /** Đã thấy công trình cùng tên trên hệ thống và khẳng định là công trình KHÁC. */
+    khongTrung: z.boolean().optional(),
+    /** Gắn tên mình vào công trình cùng tên đã có thay vì tạo bản mới. */
+    ganVaoBai: z.string().min(1).max(40).optional(),
   })
   .superRefine((d, ctx) => {
     // BẮT BUỘC TÊN: khai tay từng lưu được công trình tên trống (gặp thật
@@ -481,6 +555,8 @@ export const UpdatePublicationBodySchema = z.object({
 
   me: MyAuthorshipSchema.partial().optional(),
   coAuthorUserIds: z.array(z.string()).max(50).optional(),
+  /** Sửa vai trò của đồng tác giả trong Khoa — xem CoAuthorRoleSchema. */
+  memberUpdates: z.array(CoAuthorRoleSchema).max(50).optional(),
 
   /**
    * Danh sách tác giả gốc, gửi lên KHI cần ghi lại `studentType` (diện học viên)
@@ -491,6 +567,12 @@ export const UpdatePublicationBodySchema = z.object({
   authorsRaw: z.array(ResolvedAuthorSchema).max(2000).optional(),
   /** Tác giả ngoài Trường + cờ vị trí — cập nhật lại số tác giả chính ngoài Trường. */
   externalAuthors: z.array(ExternalAuthorSchema).max(2000).optional(),
+  /**
+   * Người lưu RÚT lời mời CHÍNH MÌNH đã gửi (người đó chưa bấm) — vd mời nhầm theo
+   * gợi ý tên na ná. Chỉ lời mời do chính người lưu gửi; lời mời của người khác,
+   * hay người đã xác nhận, đều không đụng được ở đây (5/10/2026).
+   */
+  rutMoi: z.array(z.string().min(1)).max(50).optional(),
 });
 export type UpdatePublicationBodyType = z.infer<
   typeof UpdatePublicationBodySchema
@@ -527,8 +609,101 @@ export const PendingClaimListResSchema = z.array(
     invitedByName: z.string().nullable(),
     authorsRaw: z.array(ResolvedAuthorSchema),
     suggestedAuthorIndex: z.number().int(),
+    /** Gợi ý hàng là CHẮC (tên khớp rõ) hay chỉ đoán — giao diện nói rõ cho người bấm. */
+    goiYChac: z.boolean(),
+    /**
+     * Có hàng nào mang tên (kể cả viết tắt) của người được mời không. false → giao
+     * diện cảnh báo mạnh: có thể bị mời nhầm — hoặc danh sách đang thiếu tên.
+     */
+    tenCoTrenBai: z.boolean(),
+    /** Số tác giả ghi lớn hơn số hàng của danh sách — danh sách có thể đang thiếu tên. */
+    danhSachThieu: z.boolean(),
+    /** Hàng đã có người khác nhận — không chọn được. */
+    hangDaNhan: z.array(
+      z.object({ authorIndex: z.number().int(), displayName: z.string() }),
+    ),
   }),
 );
+
+// ── Công trình trùng tên (5/10/2026) ────────────────────────────────────────
+export const TrungQuerySchema = z.object({
+  title: z.string().min(1).max(1000),
+  doi: z.string().max(300).optional(),
+});
+export type TrungQueryType = z.infer<typeof TrungQuerySchema>;
+
+export const TrungResSchema = z.object({
+  items: z.array(
+    z.object({
+      id: z.string(),
+      title: z.string(),
+      doi: z.string().nullable(),
+      containerTitle: z.string().nullable(),
+      year: z.number().int().nullable(),
+      source: z.string(),
+      totalAuthors: z.number().int(),
+      /** Người trong Khoa đã có tên trên bài (đã xác nhận). */
+      tacGia: z.array(z.string()),
+      nguoiKhai: z.string().nullable(),
+      /** Người gọi đã có tên (xác nhận hoặc đang chờ) trên bài này chưa. */
+      daCoToi: z.boolean(),
+    }),
+  ),
+});
+
+// ── Soát nhận diện tác giả cho Khoa (5/10/2026) ─────────────────────────────
+const ThangSoat = z.string().regex(/^\d{4}-(0[1-9]|1[0-2])$/, 'Dạng YYYY-MM');
+export const SoatTacGiaQuerySchema = z.object({
+  tu: ThangSoat.optional(),
+  den: ThangSoat.optional(),
+});
+export type SoatTacGiaQueryType = z.infer<typeof SoatTacGiaQuerySchema>;
+
+export const LOAI_SOAT = [
+  'nham-hang',
+  'trung-hang',
+  'chua-chi-hang',
+  'lech-so-tac-gia',
+  'moi-nham',
+  'trung-ten',
+  'khai-tay-mot-tac-gia',
+  'ngoai-truong-dia-chi-truong',
+  'bien-the-la',
+] as const;
+
+export const SoatTacGiaResSchema = z.object({
+  tu: z.string().nullable(),
+  den: z.string().nullable(),
+  soBai: z.number().int(),
+  dem: z.record(z.string(), z.number().int()),
+  items: z.array(
+    z.object({
+      loai: z.enum(LOAI_SOAT),
+      publicationId: z.string().nullable(),
+      title: z.string(),
+      nam: z.number().int().nullable(),
+      thang: z.number().int().nullable(),
+      moTa: z.string(),
+      /** Tài khoản liên quan (nếu có) — để gọi thao tác sửa. */
+      userId: z.string().nullable(),
+      /**
+       * Thao tác Khoa bấm được (KHÔNG lấy đi quyền lợi của ai — chỉ gán hàng); null =
+       * phải người trong cuộc tự sửa. Không có thao tác huỷ lời mời (5/10/2026).
+       */
+      thaoTac: z.enum(['gan-hang']).nullable(),
+      /** Bài khác cùng nhóm (trùng tên) — id + tiêu đề ngắn. */
+      lienQuan: z.array(z.object({ id: z.string(), moTa: z.string() })),
+    }),
+  ),
+});
+
+export const SoatThaoTacBodySchema = z.object({
+  publicationId: z.string().min(1),
+  userId: z.string().min(1),
+});
+export type SoatThaoTacBodyType = z.infer<typeof SoatThaoTacBodySchema>;
+
+export const SoatThaoTacResSchema = z.object({ ok: z.boolean(), moTa: z.string() });
 
 // ── API tích hợp cho ACADsoom ───────────────────────────────────────────────
 /**
@@ -873,6 +1048,9 @@ export const FacultyDetailResSchema = z.object({
       startMonth: z.number().int().nullable(),
       endYear: z.number().int().nullable(),
       endMonth: z.number().int().nullable(),
+      /** Mốc chốt thực tế: tháng nghiệm thu (COMPLETED) / khai không hoàn thành (FAILED). */
+      finishedYear: z.number().int().nullable(),
+      finishedMonth: z.number().int().nullable(),
       budget: z.number().nullable(),
     }),
   ),
@@ -883,6 +1061,32 @@ export const FacultyDetailResSchema = z.object({
  * dựng file danh sách (khớp mẫu Khoa). Tên tác giả / chủ nhiệm / thành viên đã
  * ghép sẵn ở máy chủ; bên nhận chỉ trải ra bảng. Admin-gated.
  */
+/**
+ * Một tác giả trong báo cáo xuất Excel — DỮ KIỆN để phys-profile tự xếp loại
+ * (xem report-authors.ts). Trường nào không khai ở đây thì bộ lọc phản hồi xoá.
+ */
+const ReportAuthorSchema = z.object({
+  name: z.string(),
+  /** Thứ tự trên bài (1 = đứng đầu); null = có tài khoản nhưng chưa chỉ hàng. */
+  order: z.number().int().nullable(),
+  /** Địa chỉ in trên bài, nguyên văn. */
+  affiliation: z.string().nullable(),
+  isNonSchool: z.boolean().nullable(),
+  isVnu: z.boolean().nullable(),
+  isForeign: z.boolean().nullable(),
+  studentType: z.enum(STUDENT_TYPES).nullable(),
+  /** Tài khoản đã xác nhận ở hàng này — vai trò liên hệ CHỈ biết qua đây. */
+  account: z
+    .object({
+      name: z.string(),
+      rank: z.string().nullable(),
+      isFirst: z.boolean(),
+      isCorresponding: z.boolean(),
+      isLast: z.boolean(),
+    })
+    .nullable(),
+});
+
 export const FacultyReportResSchema = z.object({
   publications: z.array(
     z.object({
@@ -911,6 +1115,8 @@ export const FacultyReportResSchema = z.object({
       systemAuthors: z.array(z.string()),
       firstAuthor: z.string(),
       correspondingAuthor: z.string(),
+      /** Từng tác giả: thứ tự, cơ quan, diện học viên, tài khoản + vai trò. */
+      authorDetails: z.array(ReportAuthorSchema),
     }),
   ),
   projects: z.array(
@@ -926,6 +1132,9 @@ export const FacultyReportResSchema = z.object({
       startMonth: z.number().int().nullable(),
       endYear: z.number().int().nullable(),
       endMonth: z.number().int().nullable(),
+      /** Mốc chốt thực tế: tháng nghiệm thu (COMPLETED) / khai không hoàn thành (FAILED). */
+      finishedYear: z.number().int().nullable(),
+      finishedMonth: z.number().int().nullable(),
       leadName: z.string(),
       memberNames: z.array(z.string()),
       memberCount: z.number().int(),
@@ -1438,8 +1647,17 @@ export const IntegrationProjectResSchema = z.object({
        *
        * Bên nhận KHÔNG suy ra được: đếm số dòng cùng `projectId` chỉ ra số người
        * CÓ TÀI KHOẢN. Cùng loại với `mainAuthorsAtSchool` ở công bố.
+       *
+       * ĐẾM CẢ người chưa bấm xác nhận; chỉ bỏ người đã bấm "không phải tôi"
+       * (Khoa chốt 4/10/2026).
        */
       memberCount: z.number().int().min(1),
+      /**
+       * Chủ nhiệm THUỘC TRƯỜNG — kể cả chủ nhiệm chưa bấm xác nhận, và người khoa
+       * khác của KHTN ghi "Thuộc Trường"/"Đồng thời…". ACADsoom dùng làm cờ "có
+       * tác giả chính thuộc Trường" thay vì tự đếm các dòng LEAD nó nhận được.
+       */
+      leadAtSchool: z.boolean().optional(),
 
       email: z.string().nullable(),
       /** Bản ghi này KHÔNG còn được tính nữa (xoá / rút phân loại / rút xác nhận). */

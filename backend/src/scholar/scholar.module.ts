@@ -8,12 +8,15 @@ import { ProjectService } from './project.service';
 import { ProjectDocOcrService } from './project-doc.service';
 import { ActivityService } from './activity.service';
 import { StaffPageService } from './staff-page.service';
+import { XepHangController } from './xep-hang.controller';
+import { XepHangService } from './xep-hang.service';
 
 @Module({
   controllers: [
     ScholarController,
     ScholarIntegrationController,
     PhysoomIntegrationController,
+    XepHangController,
   ],
   providers: [
     ScholarService,
@@ -22,6 +25,7 @@ import { StaffPageService } from './staff-page.service';
     ProjectService,
     ProjectDocOcrService,
     ActivityService,
+    XepHangService,
   ],
   // StaffPageService.ensureStaffPage() được AdminModule dùng để tự dựng trang
   // nhân sự khi tạo cán bộ / gán đơn vị.

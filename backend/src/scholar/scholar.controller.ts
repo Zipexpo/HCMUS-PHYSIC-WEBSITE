@@ -73,6 +73,12 @@ import {
   UpdateStaffPageBodyDTO,
   UpdatePublicationBodyDTO,
   UpdateScholarProfileBodyDTO,
+  TrungQueryDTO,
+  TrungResDTO,
+  SoatTacGiaQueryDTO,
+  SoatTacGiaResDTO,
+  SoatThaoTacBodyDTO,
+  SoatThaoTacResDTO,
 } from './scholar.dto';
 import { ScholarService } from './scholar.service';
 import { XemThongKeGuard } from './xem-thong-ke.guard';
@@ -221,6 +227,16 @@ export class ScholarController {
     @Query() query: ListPublicationsQueryDTO,
   ) {
     return this.service.list(userId, query);
+  }
+
+  /**
+   * Công trình CÙNG TÊN đã có — giao diện hỏi trước khi lưu, để người khai gắn
+   * tên mình vào bài đó thay vì tạo bản thứ hai. Đặt TRƯỚC 'publications/:id'.
+   */
+  @Get('publications/trung')
+  @ZodSerializerDto(TrungResDTO)
+  trung(@ActiveUser('userId') userId: string, @Query() q: TrungQueryDTO) {
+    return this.service.trung(userId, q);
   }
 
   @Get('publications/:id')
@@ -720,5 +736,32 @@ export class ScholarController {
   @ZodSerializerDto(DeclareProgressResDTO)
   declareProgress() {
     return this.service.declareProgress();
+  }
+
+  /**
+   * Soát nhận diện tác giả toàn Khoa (5/10/2026): nhầm hàng, chưa chỉ hàng, lời
+   * mời nhầm, số tác giả lệch, bài trùng tên… — xem soat-tac-gia.ts.
+   */
+  @Get('stats/faculty/soat-tac-gia')
+  @Roles(RoleName.Lecturer, RoleName.Admin, RoleName.SuperAdmin)
+  @UseGuards(XemThongKeGuard)
+  @ZodSerializerDto(SoatTacGiaResDTO)
+  soatTacGia(@Query() q: SoatTacGiaQueryDTO) {
+    return this.service.soatTacGia(q);
+  }
+
+  /**
+   * Gán hàng cho người đã xác nhận mà chưa chỉ hàng (tên khớp chắc, hàng trống,
+   * không cờ ngoài Trường) — từng người một, không đổi giờ ai. CHỈ quản trị.
+   * KHÔNG có route huỷ lời mời: Khoa không quyết thay ai là tác giả (5/10/2026).
+   */
+  @Post('stats/faculty/soat-tac-gia/gan-hang')
+  @Roles(RoleName.Admin, RoleName.SuperAdmin)
+  @ZodSerializerDto(SoatThaoTacResDTO)
+  soatGanHang(
+    @ActiveUser('userId') adminId: string,
+    @Body() body: SoatThaoTacBodyDTO,
+  ) {
+    return this.service.soatGanHang(adminId, body);
   }
 }

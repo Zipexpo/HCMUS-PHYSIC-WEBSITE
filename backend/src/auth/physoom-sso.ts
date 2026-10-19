@@ -93,6 +93,16 @@ export function laEmailSinhVien(email: string | null | undefined): boolean {
   return /@student\.hcmus\.edu\.vn$/i.test(String(email ?? '').trim());
 }
 
+/**
+ * Email Gmail cá nhân. Người PHYsoom đưa sang mà dùng Gmail là người NGOÀI biên
+ * chế Khoa — giảng viên thỉnh giảng, học viên được nhờ dạy thực hành — nên mặc
+ * định loại công tác "thỉnh giảng" (Khoa chốt 2/10/2026). Cán bộ Khoa dùng email
+ * @hcmus.edu.vn.
+ */
+export function laEmailGmail(email: string | null | undefined): boolean {
+  return /@(gmail|googlemail)\.com$/i.test(String(email ?? '').trim());
+}
+
 /** Tách tên tiếng Việt: từ cuối là tên gọi, phần còn lại là họ + đệm. */
 export function splitVietnameseName(full: string): {
   firstName: string;

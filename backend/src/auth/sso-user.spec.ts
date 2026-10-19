@@ -87,6 +87,51 @@ describe('AuthRepository.upsertSsoUser — không ghi đè họ tên', () => {
       'Nguyễn',
       'LECTURER',
     ]);
+    expect(create).not.toHaveProperty('employmentType');
+  });
+
+  // Khoa chốt 2/10/2026: người từ PHYsoom dùng Gmail là người ngoài biên chế.
+  it('Gmail lần đầu: tạo kèm loại công tác thỉnh giảng', async () => {
+    const { repo, prisma } = dung({ firstName: 'Tú', lastName: 'Lê Anh' });
+    await repo.upsertSsoUser({
+      email: 'vnvstq@gmail.com',
+      firstName: 'Tú',
+      lastName: 'Lê Anh',
+    });
+    const { create } = prisma.user.upsert.mock.calls[0][0];
+    expect(create.employmentType).toBe('thinh_giang');
+  });
+
+  it('Gmail đã có, loại công tác trống → điền thỉnh giảng', async () => {
+    const { repo, prisma } = dung({ firstName: 'Tú', lastName: 'Lê Anh' });
+    await repo.upsertSsoUser({
+      email: 'vnvstq@gmail.com',
+      firstName: 'Tú',
+      lastName: 'Lê Anh',
+    });
+    expect(prisma.user.update.mock.calls[0][0].data).toEqual({
+      employmentType: 'thinh_giang',
+    });
+  });
+
+  it('Gmail đã được quản trị chọn loại khác → KHÔNG ghi đè', async () => {
+    const prisma = {
+      user: {
+        upsert: vi.fn().mockResolvedValue({
+          id: 'u1',
+          firstName: 'Tú',
+          lastName: 'Lê Anh',
+          employmentType: 'hop_dong',
+        }),
+        update: vi.fn(),
+      },
+    };
+    await new AuthRepository(prisma as never).upsertSsoUser({
+      email: 'vnvstq@gmail.com',
+      firstName: 'Tú',
+      lastName: 'Lê Anh',
+    });
+    expect(prisma.user.update).not.toHaveBeenCalled();
   });
 });
 
@@ -180,5 +225,37 @@ describe('ScholarService.upsertUserFromPhysoom — PHYsoom đẩy người sang'
       'Ngân',
       'Nguyễn Vương Thùy',
     ]);
+    expect(data).not.toHaveProperty('employmentType');
+  });
+
+  it('người mới dùng Gmail → thỉnh giảng', async () => {
+    const { svc, prisma } = dung(null);
+    await svc.upsertUserFromPhysoom({
+      email: 'vnvstq@gmail.com',
+      name: 'Lê Anh Tú',
+      teacherId: '25C37003',
+    });
+    const { data } = prisma.user.create.mock.calls[0][0];
+    expect(data.employmentType).toBe('thinh_giang');
+  });
+
+  it('người đã có dùng Gmail, loại công tác trống → điền thỉnh giảng', async () => {
+    const { svc, prisma } = dung({ firstName: 'Tú', lastName: 'Lê Anh' });
+    await svc.upsertUserFromPhysoom({ email: 'vnvstq@gmail.com', name: 'X' });
+    const { data } = prisma.user.update.mock.calls[0][0];
+    expect(data.employmentType).toBe('thinh_giang');
+  });
+
+  it('người đã có dùng Gmail nhưng quản trị chọn loại khác → KHÔNG ghi đè', async () => {
+    const { svc, prisma } = dung({ firstName: 'Tú', lastName: 'Lê Anh' });
+    prisma.user.findUnique.mockResolvedValue({
+      id: 'u1',
+      firstName: 'Tú',
+      lastName: 'Lê Anh',
+      employmentType: 'bien_che',
+    });
+    await svc.upsertUserFromPhysoom({ email: 'vnvstq@gmail.com', name: 'X' });
+    const { data } = prisma.user.update.mock.calls[0][0];
+    expect(data).not.toHaveProperty('employmentType');
   });
 });

@@ -1,6 +1,7 @@
 import { Injectable } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import { Role, VerificationCodeType } from '../generated/prisma/client';
+import { laEmailGmail } from './physoom-sso';
 
 @Injectable()
 export class AuthRepository {
@@ -157,6 +158,9 @@ export class AuthRepository {
    * nhập đè tên theo PHYsoom — mà PHYsoom lấy tên tài khoản Google, ghi kiểu Tây
    * ("Hồng Huỳnh Thị Yến"). Nên sửa tay xong, lần đăng nhập sau lại đảo, và bản
    * đảo lan tiếp sang ACADsoom qua /integration/staff. Nay chỉ ĐIỀN ô đang trống.
+   *
+   * Email Gmail → loại công tác "thỉnh giảng" (cũng chỉ điền khi đang trống):
+   * người ngoài biên chế Khoa, xem laEmailGmail.
    */
   async upsertSsoUser(data: {
     email: string;
@@ -177,6 +181,7 @@ export class AuthRepository {
         role: 'LECTURER',
         isActive: true,
         lastLoginAt: new Date(),
+        ...(laEmailGmail(data.email) ? { employmentType: 'thinh_giang' } : {}),
       },
       omit: { password: true },
     });
@@ -185,6 +190,9 @@ export class AuthRepository {
         ? { firstName: data.firstName }
         : {}),
       ...(!user.lastName && data.lastName ? { lastName: data.lastName } : {}),
+      ...(!user.employmentType && laEmailGmail(data.email)
+        ? { employmentType: 'thinh_giang' }
+        : {}),
     };
     if (!Object.keys(dien).length) return user;
     return this.prisma.user.update({

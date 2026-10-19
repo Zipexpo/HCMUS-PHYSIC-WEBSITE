@@ -4,39 +4,70 @@ import { PrismaService } from '../prisma/prisma.service';
 import { EventBusService } from '../shared/services/event-bus.service';
 import { PublicRevalidateService } from '../shared/services/public-revalidate.service';
 import {
+  danhGiaCap,
+  hangCuaNguoi,
+  joinAuthorName,
   matchAuthors,
   normalizeName,
   suggestNameVariants,
   type CandidateProfile,
 } from './name-match';
+import {
+  laKhaiTay,
+  soatTacGia,
+  type BaiSoat,
+  type NguoiSoat,
+} from './soat-tac-gia';
 import { laterOf, pageBySince } from './integration-cursor';
-import { laEmailSinhVien, splitVietnameseName } from '../auth/physoom-sso';
+import { tacGiaBaoCao } from './report-authors';
+import {
+  laEmailGmail,
+  laEmailSinhVien,
+  splitVietnameseName,
+} from '../auth/physoom-sso';
 import { parseBibliographyFile } from './resolve/bibliography';
 import { ResolveService } from './resolve/resolve.service';
 import { StaffPageService } from './staff-page.service';
 import {
+  khoaTieuDe,
+  laBanThao,
   normalizeDoi,
   resolveCountYear,
   type ResolvedWork,
 } from './resolve/work';
 import {
   CannotResolveException,
+  HangDaCoNguoiException,
+  HangNgoaiDanhSachException,
+  KhongPhaiBanTrungException,
+  LastSaiViTriException,
+  MotTacGiaChuaXacNhanException,
+  SoatKhongConDungException,
+  SoTacGiaLechException,
+  TrungCongBoException,
   NoClaimException,
   NoOrcidException,
   NotAnAuthorException,
   NotEligibleRepresentativeException,
   OrcidTakenException,
+  PositionalRoleException,
   PublicationNotFoundException,
+  ShareSetByRepresentativeException,
   TooFewAuthorsException,
+  TotalShareExceededException,
 } from './scholar.error';
 import type {
   ClaimResponseBodyType,
+  CoAuthorRoleType,
   CreatePublicationBodyType,
   IntegrationQueryType,
   ListPublicationsQueryType,
   OrcidImportBodyType,
   SetEducationBodyType,
   SetNameVariantsBodyType,
+  SoatTacGiaQueryType,
+  SoatThaoTacBodyType,
+  TrungQueryType,
   UpdatePublicationBodyType,
   UpdateScholarProfileBodyType,
 } from './scholar.model';
@@ -48,6 +79,15 @@ type AuthorRow = {
   orcid?: string | null;
   sequence?: 'first' | 'additional' | null;
   affiliation?: string | null;
+  isNonSchool?: boolean | null;
+};
+
+/** Một tài khoản trên bài, sau khi áp các thay đổi hàng của lần lưu này. */
+type HangTaiKhoan = {
+  userId: string;
+  authorIndex: number;
+  /** Hàng đổi trong lần lưu này — chỉ hàng ĐỔI mới bị soát trùng/ngoài danh sách. */
+  doi: boolean;
 };
 
 /** Một chỗ khai báo duy nhất cho phần include, để kiểu suy ra được thay vì `any`. */
@@ -63,6 +103,15 @@ const AUTHOR_INCLUDE = {
 type PublicationWithAuthors = Prisma.PublicationGetPayload<{
   include: typeof AUTHOR_INCLUDE;
 }>;
+
+/** First / Corresponding / Last — người được làm ĐẠI DIỆN nhóm khai Cách 1. */
+const laTacGiaChinh = (
+  x?: {
+    isFirst?: boolean | null;
+    isCorresponding?: boolean | null;
+    isLast?: boolean | null;
+  } | null,
+) => !!(x?.isFirst || x?.isCorresponding || x?.isLast);
 
 @Injectable()
 export class ScholarService {
@@ -260,7 +309,7 @@ export class ScholarService {
   async resolveOne(userId: string, input: string) {
     const work = await this.resolver.resolve(input);
     if (!work) throw CannotResolveException;
-    return this.decorate(work, userId);
+    return this.decorate(work, userId, true);
   }
 
   async importFile(userId: string, content: string) {
@@ -295,7 +344,11 @@ export class ScholarService {
    * Gắn thêm hai thứ vào kết quả tra: bài này đã có trong CSDL chưa (trùng DOI),
    * và những ai trong Khoa có thể đang đứng tên trong đó.
    */
-  private async decorate(work: ResolvedWork, userId: string) {
+  private async decorate(
+    work: ResolvedWork,
+    userId: string,
+    timBanDaDang = false,
+  ) {
     const doi = normalizeDoi(work.doi);
     const existing = doi
       ? await this.prisma.publication.findFirst({
@@ -308,6 +361,14 @@ export class ScholarService {
     const byId = new Map(candidates.map((c) => [c.userId, c]));
     const matches = matchAuthors(work.authors ?? [], candidates);
 
+    // Bản thảo (arXiv…) không được tính — tra luôn bản đã đăng khi xem MỘT bài
+    // (nhập hàng loạt từ ORCID thì chỉ gắn cờ, khỏi gọi Crossref trăm lần).
+    const banThao = laBanThao(work);
+    const banDaDang =
+      banThao && timBanDaDang
+        ? await this.resolver.timBanDaDang(work).catch(() => null)
+        : null;
+
     return {
       work,
       existingPublicationId: existing?.id ?? null,
@@ -317,6 +378,8 @@ export class ScholarService {
         email: byId.get(m.userId)?.email ?? '',
         isMe: m.userId === userId,
       })),
+      laBanThao: banThao,
+      ...(timBanDaDang ? { banDaDang } : {}),
     };
   }
 
@@ -399,6 +462,9 @@ export class ScholarService {
     const w = body.work;
     const doi = normalizeDoi(w.doi);
 
+    // Người khai đã thấy bài CÙNG TÊN trên hệ thống và chọn gắn tên mình vào đó.
+    if (body.ganVaoBai) return this.ganVaoBaiCo(userId, body);
+
     // Bài đã có (đồng nghiệp khai trước) → KHÔNG tạo bản thứ hai, chỉ gắn thêm
     // người gọi vào bài đó. Đây là điểm mấu chốt: một bài dùng chung cho cả nhóm.
     if (doi) {
@@ -407,6 +473,7 @@ export class ScholarService {
         select: { id: true },
       });
       if (existing) {
+        await this.kiemHangCuaToi(existing.id, userId, body.me);
         await this.attachSelf(existing.id, userId, body);
         // Bài đã có nhưng CHƯA phân loại (ví dụ do nhập hàng loạt từ trang nhân
         // sự) mà người khai có chọn mã — áp vào luôn, đừng bắt họ vào màn khác
@@ -424,6 +491,24 @@ export class ScholarService {
         }
         await this.recount(existing.id);
         return this.findOne(existing.id, userId);
+      }
+    }
+
+    // Chốt danh sách tác giả + chặn công trình trùng tên — trước MỌI lệnh ghi.
+    this.kiemKhaiMoi(body);
+    // Cách 1: đại diện (tác giả chính) khai tỷ lệ cho cả nhóm — xem kiemTyLe.
+    this.kiemTyLe({
+      daiDien: laTacGiaChinh(body.me),
+      cuaToi: body.me?.sharePercent,
+      dongTacGia: body.memberUpdates,
+      ngoai: body.externalAuthors,
+    });
+    if (!body.khongTrung) {
+      const trung = await this.timTrung(w.title, doi, userId);
+      if (trung.length) {
+        throw TrungCongBoException(
+          trung.map((b) => ({ title: b.title, nam: b.year, nguoiKhai: b.nguoiKhai })),
+        );
       }
     }
 
@@ -495,7 +580,18 @@ export class ScholarService {
           data: { ...pubData, deletedAt: null },
         });
         await this.attachSelf(dead.id, userId, body);
-        await this.invite(dead.id, userId, body.coAuthorUserIds ?? []);
+        await this.invite(
+          dead.id,
+          userId,
+          body.coAuthorUserIds ?? [],
+          body.memberUpdates,
+        );
+        await this.ganVaiTroDongTacGia(
+          dead.id,
+          userId,
+          body.memberUpdates,
+          laTacGiaChinh(body.me),
+        );
         await this.recount(dead.id);
         this.bus.emit('publication.changed', {
           id: dead.id,
@@ -522,7 +618,18 @@ export class ScholarService {
       });
 
     await this.attachSelf(created.id, userId, body);
-    await this.invite(created.id, userId, body.coAuthorUserIds ?? []);
+    await this.invite(
+      created.id,
+      userId,
+      body.coAuthorUserIds ?? [],
+      body.memberUpdates,
+    );
+    await this.ganVaiTroDongTacGia(
+      created.id,
+      userId,
+      body.memberUpdates,
+      laTacGiaChinh(body.me),
+    );
     await this.recount(created.id);
     this.bus.emit('publication.changed', {
       id: created.id,
@@ -538,7 +645,18 @@ export class ScholarService {
     body: { me: CreatePublicationBodyType['me'] },
   ) {
     const me = body.me;
-    this.assertRepresentative(me);
+    const cu = await this.prisma.publicationAuthor.findUnique({
+      where: { publicationId_userId: { publicationId, userId } },
+      select: { sharePercent: true },
+    });
+    this.kiemTyLe({
+      daiDien: laTacGiaChinh(me),
+      cuaToi: me.sharePercent,
+      cuaToiCu: cu ? cu.sharePercent : undefined,
+    });
+    // Không phải tác giả chính thì tỷ lệ của mình do ĐẠI DIỆN khai — giữ nguyên
+    // thứ đang có (kể cả khi form gửi null). Đại diện: null = xoá (về Cách 2).
+    const tyLe = laTacGiaChinh(me) ? me.sharePercent : undefined;
     await this.prisma.publicationAuthor.upsert({
       where: { publicationId_userId: { publicationId, userId } },
       create: {
@@ -548,7 +666,7 @@ export class ScholarService {
         isFirst: me.isFirst ?? false,
         isCorresponding: me.isCorresponding ?? false,
         isLast: me.isLast ?? false,
-        sharePercent: me.sharePercent ?? null,
+        sharePercent: tyLe ?? null,
         showOnWeb: me.showOnWeb ?? true,
         claimStatus: 'CONFIRMED',
         respondedAt: new Date(),
@@ -558,7 +676,7 @@ export class ScholarService {
         isFirst: me.isFirst ?? undefined,
         isCorresponding: me.isCorresponding ?? undefined,
         isLast: me.isLast ?? undefined,
-        sharePercent: me.sharePercent ?? undefined,
+        sharePercent: tyLe,
         showOnWeb: me.showOnWeb ?? undefined,
         claimStatus: 'CONFIRMED',
         respondedAt: new Date(),
@@ -575,24 +693,190 @@ export class ScholarService {
     publicationId: string,
     invitedBy: string,
     userIds: string[],
+    hang: CoAuthorRoleType[] = [],
   ) {
     const others = [...new Set(userIds)].filter((id) => id && id !== invitedBy);
     if (!others.length) return;
+    // Hàng người khai đã gắn cho từng người — để người chưa bấm vẫn có chỗ trên
+    // bài (vào mẫu số tác giả chính nếu có vai trò, Khoa chốt 4/10/2026).
+    const hangCua = new Map(
+      hang
+        .filter((m) => m.authorIndex != null && m.authorIndex >= 0)
+        .map((m) => [m.userId, m.authorIndex as number] as const),
+    );
     await this.prisma.publicationAuthor.createMany({
       data: others.map((userId) => ({
         publicationId,
         userId,
         invitedBy,
         claimStatus: 'PENDING' as const,
+        authorIndex: hangCua.get(userId) ?? -1,
       })),
       skipDuplicates: true,
     });
   }
 
-  private assertRepresentative(me?: Partial<CreatePublicationBodyType['me']>) {
-    if (!me?.sharePercent) return;
-    if (!me.isFirst && !me.isCorresponding && !me.isLast) {
-      throw NotEligibleRepresentativeException;
+  /**
+   * Ghi vai trò (First/Corresponding/Last) của ĐỒNG TÁC GIẢ trong Khoa theo bảng
+   * tác giả người đang lưu gửi lên — xem CoAuthorRoleSchema.
+   *
+   * Vai trò được IN TRÊN BÀI chứ không phải lời tự nhận, nên tác giả đã xác nhận
+   * nào cũng sửa được cho người khác, như sửa tên tạp chí. Đây là đường DUY NHẤT
+   * gỡ được một cờ nhận nhầm (vd hai người cùng tick "Corresponding" lúc xác
+   * nhận). Nhưng đổi vai trò là đổi giờ NCKH của người ta, nên mỗi lần sửa dòng
+   * của người ĐÃ XÁC NHẬN đều ghi AuditLog: ai sửa, của ai, trước/sau. Dòng còn
+   * chờ (lời mời) thì không ghi — chính người được mời sẽ chọn lại lúc xác nhận.
+   *
+   * Chừa ra: người gọi (vai trò của mình đi qua `me`), người đã TỪ CHỐI, và người
+   * không có trên bài — mảng này không thêm được ai, đó là việc của
+   * coAuthorUserIds. Chỉ ghi dòng thật sự đổi: lưu lại mà không sửa gì thì không
+   * chạm ai. Trả về userId của những người vừa đổi.
+   *
+   * `choChia` — người lưu là tác giả chính, tức ĐẠI DIỆN nhóm của Cách 1 (Phụ lục
+   * 2 tr. 2.5): khi đó áp luôn tỷ lệ chia giờ của từng đồng tác giả, kể cả người
+   * còn chờ xác nhận (tỷ lệ nằm sẵn trên dòng, lúc họ bấm đồng ý thì đi sang
+   * ACADsoom). Không phải đại diện thì tỷ lệ gửi kèm bị bỏ qua — form nạp lại
+   * tỷ lệ của mọi người mỗi lần mở, nên đó chỉ là con số cũ đi một vòng.
+   */
+  private async ganVaiTroDongTacGia(
+    publicationId: string,
+    callerId: string,
+    updates: CoAuthorRoleType[] = [],
+    choChia = false,
+  ): Promise<{ doi: string[]; boLienHe: string[] }> {
+    const theoNguoi = new Map(
+      updates
+        .filter((m) => m.userId !== callerId)
+        .map((m) => [m.userId, m] as const),
+    );
+    if (!theoNguoi.size) return { doi: [], boLienHe: [] };
+
+    const rows = await this.prisma.publicationAuthor.findMany({
+      where: {
+        publicationId,
+        userId: { in: [...theoNguoi.keys()] },
+        claimStatus: { not: 'REJECTED' },
+      },
+      select: {
+        userId: true,
+        claimStatus: true,
+        authorIndex: true,
+        isFirst: true,
+        isCorresponding: true,
+        isLast: true,
+        sharePercent: true,
+      },
+    });
+
+    const doi: string[] = [];
+    // Người đã xác nhận vừa bị NGƯỜI KHÁC bỏ cờ "liên hệ" — xem baoBoVaiTroLienHe.
+    const boLienHe: string[] = [];
+    const ghi: Prisma.PrismaPromise<unknown>[] = [];
+    for (const r of rows) {
+      const m = theoNguoi.get(r.userId);
+      if (!m) continue;
+      const before = {
+        isFirst: r.isFirst,
+        isCorresponding: r.isCorresponding,
+        isLast: r.isLast,
+        sharePercent: r.sharePercent,
+      };
+      const after = {
+        isFirst: m.isFirst ?? r.isFirst,
+        isCorresponding: m.isCorresponding ?? r.isCorresponding,
+        isLast: m.isLast ?? r.isLast,
+        sharePercent:
+          choChia && m.sharePercent !== undefined
+            ? m.sharePercent
+            : r.sharePercent,
+      };
+      // Hàng đổi khi danh sách tác giả được sửa (bớt/thêm/đổi thứ tự hàng) —
+      // đã soát trùng/ngoài danh sách ở kiemSuaDanhSach trước khi tới đây.
+      const doiHang =
+        m.authorIndex !== undefined && m.authorIndex !== r.authorIndex;
+      if (
+        !doiHang &&
+        after.isFirst === before.isFirst &&
+        after.isCorresponding === before.isCorresponding &&
+        after.isLast === before.isLast &&
+        after.sharePercent === before.sharePercent
+      ) {
+        continue;
+      }
+      doi.push(r.userId);
+      ghi.push(
+        this.prisma.publicationAuthor.update({
+          where: { publicationId_userId: { publicationId, userId: r.userId } },
+          data: doiHang ? { ...after, authorIndex: m.authorIndex } : after,
+        }),
+      );
+      if (r.claimStatus === 'CONFIRMED') {
+        if (before.isCorresponding && !after.isCorresponding) {
+          boLienHe.push(r.userId);
+        }
+        ghi.push(
+          this.prisma.auditLog.create({
+            data: {
+              userId: callerId,
+              action: 'publication.coauthor-role',
+              entityType: 'Publication',
+              entityId: publicationId,
+              changes: {
+                coAuthorUserId: r.userId,
+                before: doiHang ? { ...before, authorIndex: r.authorIndex } : before,
+                after: doiHang ? { ...after, authorIndex: m.authorIndex } : after,
+              },
+            },
+          }),
+        );
+      }
+    }
+    if (ghi.length) await this.prisma.$transaction(ghi);
+    return { doi, boLienHe };
+  }
+
+  /**
+   * CÁCH 1 — tỷ lệ chia giờ do ĐẠI DIỆN nhóm khai cho cả nhóm (Phụ lục 2 tr. 2.5,
+   * Khoa chốt 10/10/2026). Gọi TRƯỚC mọi lệnh ghi.
+   *
+   *   daiDien     người lưu là tác giả chính theo vai trò SAU lượt lưu này
+   *   cuaToi      tỷ lệ của chính mình gửi lên (undefined = không gửi)
+   *   cuaToiCu    tỷ lệ đang lưu; undefined = chưa có dòng (khai mới)
+   *   dongTacGia  tỷ lệ của đồng tác giả trong Khoa (memberUpdates)
+   *   ngoai       tỷ lệ của tác giả ngoài Khoa (externalAuthors)
+   *
+   * Không phải đại diện: được GỬI LẠI đúng con số đang có — form nạp sẵn tỷ lệ
+   * đại diện đã khai — nhưng không được tự đổi. Trước 10/10 chỗ này chặn mọi tỷ
+   * lệ của người không phải tác giả chính, nên đồng tác giả có tỷ lệ do đại diện
+   * khai sẽ không lưu được bài, cũng không xác nhận được lời mời.
+   * Đại diện: tổng cả nhóm không vượt 100%.
+   */
+  private kiemTyLe({
+    daiDien,
+    cuaToi,
+    cuaToiCu,
+    dongTacGia = [],
+    ngoai = [],
+  }: {
+    daiDien: boolean;
+    cuaToi?: number | null;
+    cuaToiCu?: number | null;
+    dongTacGia?: { sharePercent?: number | null }[];
+    ngoai?: { sharePercent?: number | null }[];
+  }) {
+    if (!daiDien) {
+      if (cuaToi != null && cuaToi !== (cuaToiCu ?? null)) {
+        throw cuaToiCu === undefined
+          ? NotEligibleRepresentativeException
+          : ShareSetByRepresentativeException;
+      }
+      return;
+    }
+    const cong = (ds: { sharePercent?: number | null }[]) =>
+      ds.reduce((t, x) => t + (x.sharePercent ?? 0), 0);
+    const cuaMinh = cuaToi === undefined ? (cuaToiCu ?? 0) : (cuaToi ?? 0);
+    if (cuaMinh + cong(dongTacGia) + cong(ngoai) > 100) {
+      throw TotalShareExceededException;
     }
   }
 
@@ -661,6 +945,9 @@ export class ScholarService {
         acceptedYear: true,
         catalogCode: true,
         schoolAuthors: true,
+        authorsRaw: true,
+        totalAuthors: true,
+        externalMainAuthors: true,
       },
     });
     if (!current) throw PublicationNotFoundException;
@@ -671,7 +958,34 @@ export class ScholarService {
     ) {
       throw TooFewAuthorsException;
     }
-    this.assertRepresentative(body.me);
+    // Cách 1 — đại diện (tác giả chính) khai tỷ lệ cho cả nhóm. Vai trò lấy theo
+    // lượt lưu này, không gửi thì theo dòng đang lưu. Soát TRƯỚC mọi lệnh ghi.
+    const meCu = await this.prisma.publicationAuthor.findUnique({
+      where: { publicationId_userId: { publicationId: id, userId } },
+      select: {
+        sharePercent: true,
+        isFirst: true,
+        isCorresponding: true,
+        isLast: true,
+      },
+    });
+    const daiDien = laTacGiaChinh(body.me ?? meCu);
+    this.kiemTyLe({
+      daiDien,
+      cuaToi: body.me?.sharePercent,
+      cuaToiCu: meCu?.sharePercent ?? null,
+      dongTacGia: body.memberUpdates,
+      ngoai: body.externalAuthors,
+    });
+    // Danh sách tác giả nhất quán (T = số hàng, hàng không trùng, Last đứng cuối).
+    await this.kiemSuaDanhSach(id, userId, body, current);
+    // Không ai bỏ được vai trò theo vị trí — kiểm TRƯỚC mọi lệnh ghi.
+    const chinhTheoViTriThuocTruong = await this.chotVaiTroTheoViTri(
+      id,
+      userId,
+      body,
+      current,
+    );
 
     const publishedYear =
       body.publishedYear === undefined
@@ -724,7 +1038,12 @@ export class ScholarService {
         stage: body.stage ?? undefined,
         totalAuthors: body.totalAuthors ?? undefined,
         schoolAuthors: body.schoolAuthors ?? undefined,
-        mainAuthorAtSchool: body.mainAuthorAtSchool ?? undefined,
+        // Tác giả đầu/cuối thuộc Trường thì bài CÓ tác giả chính thuộc Trường —
+        // form gửi `false` cũng không hạ được (xem chotVaiTroTheoViTri).
+        mainAuthorAtSchool:
+          body.mainAuthorAtSchool === undefined
+            ? undefined
+            : body.mainAuthorAtSchool || chinhTheoViTriThuocTruong,
         // Cập nhật số tác giả chính ngoài Trường khi giao diện gửi externalAuthors.
         externalMainAuthors:
           body.externalAuthors === undefined
@@ -737,12 +1056,658 @@ export class ScholarService {
 
     if (body.me) await this.attachSelf(id, userId, { me: body.me as never });
     if (body.coAuthorUserIds)
-      await this.invite(id, userId, body.coAuthorUserIds);
-    if (body.mainAuthorAtSchool === undefined) await this.recount(id);
+      await this.invite(id, userId, body.coAuthorUserIds, body.memberUpdates);
+    // SAU invite, để người vừa được thêm cũng nhận vai trò đã chọn cho họ.
+    const { doi: doiVaiTro, boLienHe } = await this.ganVaiTroDongTacGia(
+      id,
+      userId,
+      body.memberUpdates,
+      daiDien,
+    );
+    const daRut = body.rutMoi?.length
+      ? await this.rutLoiMoi(id, userId, body.rutMoi)
+      : [];
+    if (body.mainAuthorAtSchool === undefined || daRut.length) await this.recount(id);
 
     await this.revalidateStaffPages(id);
-    this.bus.emit('publication.changed', { id, userIds: [userId] });
+    this.bus.emit('publication.changed', {
+      id,
+      userIds: [userId, ...doiVaiTro, ...daRut],
+    });
+    if (boLienHe.length) await this.baoBoVaiTroLienHe(id, boLienHe);
     return this.findOne(id, userId);
+  }
+
+  /**
+   * Người lưu RÚT lời mời CHÍNH MÌNH đã gửi (người kia chưa bấm gì) — vd mời nhầm
+   * theo gợi ý tên na ná. Chỉ dòng PENDING có invitedBy = người lưu: không ai rút
+   * được lời mời của người khác, càng không gỡ được người đã xác nhận. Xoá hẳn dòng
+   * chờ (ghi REJECTED thì lời mời đúng sau này bị `skipDuplicates` nuốt) + AuditLog.
+   *
+   * Khoa KHÔNG có đường huỷ hộ (5/10/2026): soát từng lời mời nghi nhầm thấy có bài
+   * mà danh sách tác giả trên web Khoa thiếu người — huỷ hộ là tước bài của tác giả
+   * thật. Người trong cuộc tự quyết: người được mời bấm «Không phải tôi», người mời
+   * rút lời mời của mình.
+   */
+  private async rutLoiMoi(
+    publicationId: string,
+    userId: string,
+    ids: string[],
+  ): Promise<string[]> {
+    const rows = await this.prisma.publicationAuthor.findMany({
+      where: {
+        publicationId,
+        userId: { in: [...new Set(ids)] },
+        claimStatus: 'PENDING',
+        invitedBy: userId,
+      },
+      select: {
+        userId: true,
+        authorIndex: true,
+        isFirst: true,
+        isCorresponding: true,
+        isLast: true,
+      },
+    });
+    if (!rows.length) return [];
+    await this.prisma.$transaction([
+      this.prisma.publicationAuthor.deleteMany({
+        where: {
+          publicationId,
+          userId: { in: rows.map((r) => r.userId) },
+          claimStatus: 'PENDING',
+          invitedBy: userId,
+        },
+      }),
+      ...rows.map((r) =>
+        this.prisma.auditLog.create({
+          data: {
+            userId,
+            action: 'publication.withdraw-invite',
+            entityType: 'Publication',
+            entityId: publicationId,
+            changes: { invitedUserId: r.userId, before: r },
+          },
+        }),
+      ),
+    ]);
+    return rows.map((r) => r.userId);
+  }
+
+  /**
+   * Báo cho người VỪA BỊ đồng tác giả bỏ cờ "tác giả liên hệ" (Khoa chốt
+   * 4/10/2026): vai trò đó đổi giờ NCKH của chính họ, và trước đây họ chỉ biết
+   * khi số giờ tụt. Web Khoa không gửi thư; ACADsoom có email + thông báo đẩy,
+   * nên sự kiện mang theo ĐỊA CHỈ. Không bao giờ làm hỏng việc lưu.
+   */
+  private async baoBoVaiTroLienHe(publicationId: string, userIds: string[]) {
+    try {
+      const ds = await this.prisma.user.findMany({
+        where: { id: { in: userIds } },
+        select: { email: true },
+      });
+      const emails = ds.map((u) => u.email).filter(Boolean);
+      if (!emails.length) return;
+      this.bus.emit('publication.role-removed', {
+        id: publicationId,
+        userIds,
+        emails,
+        key: 'isCorresponding',
+      });
+    } catch {
+      // thông báo là phụ — lỗi thì thôi, bài vẫn lưu
+    }
+  }
+
+  /**
+   * KHÔNG AI BỎ ĐƯỢC VAI TRÒ THEO VỊ TRÍ (Khoa chốt 4/10/2026): người đứng đầu
+   * danh sách tác giả là tác giả đầu, người đứng cuối là tác giả cuối — sự thật
+   * in trên bài, và Phụ lục 2 tr. 2.5 tính cả hai là tác giả chính. Ca thật: một
+   * đồng tác giả bỏ cờ "tác giả cuối" của người đứng 4/4 trên hai bài, form ghi
+   * lại số tác giả chính ngoài hệ thống = 0, và giờ NCKH chuyển sang người sửa.
+   *
+   * Chỉ chặn việc BỎ (cờ đang có → tắt), không bắt sửa dữ liệu cũ đang thiếu cờ:
+   * lưu lại một bài không được vì lỗi người khác để lại từ trước thì vô lý. Người
+   * ngoài hệ thống không có dòng riêng, chỉ có SỐ (`externalMainAuthors`) — chặn
+   * số đó tụt xuống dưới số hàng đầu/cuối không gắn tài khoản.
+   *
+   * Trả về: bài có tác giả đầu/cuối THUỘC TRƯỜNG không — sàn cho
+   * `mainAuthorAtSchool` mà form gửi lên.
+   */
+  private async chotVaiTroTheoViTri(
+    publicationId: string,
+    userId: string,
+    body: UpdatePublicationBodyType,
+    hienTai: {
+      authorsRaw?: Prisma.JsonValue;
+      totalAuthors?: number | null;
+      externalMainAuthors?: number | null;
+    },
+  ): Promise<boolean> {
+    const raw = (
+      Array.isArray(body.authorsRaw)
+        ? body.authorsRaw
+        : Array.isArray(hienTai.authorsRaw)
+          ? hienTai.authorsRaw
+          : []
+    ) as unknown as Array<Record<string, unknown> | null>;
+    // Vị trí đếm theo DANH SÁCH TÁC GIẢ (hàng), giống form; chưa có danh sách thì
+    // chỉ còn số khai tay — vẫn đủ biết hàng cuối của người có tài khoản.
+    const soTacGia =
+      raw.length || body.totalAuthors || hienTai.totalAuthors || 0;
+    if (soTacGia < 1) return false;
+    const rows = await this.prisma.publicationAuthor.findMany({
+      where: { publicationId, claimStatus: { not: 'REJECTED' } },
+      select: { userId: true, authorIndex: true, isFirst: true, isLast: true },
+    });
+    const sua = new Map(
+      (body.memberUpdates ?? []).map((m) => [m.userId, m] as const),
+    );
+    const ten = (i: number) => {
+      const a = raw[i];
+      const t = a
+        ? String(a.name ?? [a.given, a.family].filter(Boolean).join(' ')).trim()
+        : '';
+      return t ? `«${t}»` : `Người đứng hàng ${i + 1}`;
+    };
+    const daGan = new Set<number>();
+    let thuocTruong = false;
+    for (const r of rows) {
+      const cuaToi = r.userId === userId;
+      const moi = cuaToi ? body.me : sua.get(r.userId);
+      const viTri =
+        cuaToi && body.me?.authorIndex != null
+          ? body.me.authorIndex
+          : r.authorIndex;
+      if (viTri == null || viTri < 0) continue;
+      daGan.add(viTri);
+      const can = vaiTroTheoViTri(viTri, soTacGia);
+      // Người tự dời hàng thì vai trò đi theo hàng mới — chỉ xét hàng giữ nguyên.
+      const giuHang = viTri === r.authorIndex;
+      if (giuHang && can.isFirst && r.isFirst && moi?.isFirst === false) {
+        throw PositionalRoleException(
+          `${ten(viTri)} đứng đầu danh sách tác giả`,
+        );
+      }
+      if (giuHang && can.isLast && r.isLast && moi?.isLast === false) {
+        throw PositionalRoleException(
+          `${ten(viTri)} đứng cuối danh sách tác giả (${viTri + 1}/${soTacGia})`,
+        );
+      }
+      if ((can.isFirst || can.isLast) && raw[viTri]?.isNonSchool !== true) {
+        thuocTruong = true;
+      }
+    }
+    // Hàng đầu/cuối KHÔNG gắn tài khoản = tác giả chính ngoài hệ thống.
+    const ngoai = (
+      raw.length ? [0, ...(soTacGia > 1 ? [soTacGia - 1] : [])] : []
+    ).filter((i) => !daGan.has(i));
+    if (body.externalAuthors !== undefined && ngoai.length) {
+      const moi = body.externalAuthors.filter(
+        (a) => a.isFirst || a.isCorresponding || a.isLast,
+      ).length;
+      const cu = hienTai.externalMainAuthors ?? 0;
+      if (moi < cu && moi < ngoai.length) {
+        const viTriChu =
+          ngoai.length > 1 ? 'đầu và cuối' : ngoai[0] === 0 ? 'đầu' : 'cuối';
+        throw PositionalRoleException(
+          `${ngoai.map(ten).join(', ')} đứng ${viTriChu} danh sách tác giả`,
+        );
+      }
+    }
+    if (ngoai.some((i) => raw[i]?.isNonSchool === false)) thuocTruong = true;
+    return thuocTruong;
+  }
+
+  // ── Chốt danh sách tác giả (5/10/2026) ────────────────────────────────────
+  // Mỗi chốt ứng với một lỗi đã gặp trên dữ liệu thật — xem soat-tac-gia.ts.
+
+  /**
+   * Khai MỚI: T = số hàng của danh sách; hàng của mình và của người được gắn nằm
+   * trong danh sách, không trùng nhau; Last Author đứng cuối; khai tay một tác
+   * giả phải tự xác nhận. Không đọc CSDL.
+   */
+  private kiemKhaiMoi(body: CreatePublicationBodyType) {
+    const w = body.work;
+    const soHang = w.authors?.length ?? 0;
+    const soTacGia = body.totalAuthors ?? Math.max(1, soHang);
+    if (soHang > 0 && soTacGia !== soHang) {
+      throw SoTacGiaLechException(soTacGia, soHang);
+    }
+    const n = soHang || soTacGia;
+    const ten = (i: number) => {
+      const a = w.authors?.[i];
+      return a ? joinAuthorName(a) : '';
+    };
+    const hang = [
+      { userId: '__toi__', authorIndex: body.me.authorIndex ?? -1, last: body.me.isLast },
+      ...(body.memberUpdates ?? []).map((m) => ({
+        userId: m.userId,
+        authorIndex: m.authorIndex ?? -1,
+        last: m.isLast === true,
+      })),
+    ];
+    const giu = new Map<number, string>();
+    for (const h of hang) {
+      if (h.authorIndex < 0) continue;
+      if (h.authorIndex >= n) throw HangNgoaiDanhSachException(h.authorIndex, n);
+      if (giu.has(h.authorIndex)) {
+        throw HangDaCoNguoiException(h.authorIndex, ten(h.authorIndex), 'người khác');
+      }
+      giu.set(h.authorIndex, h.userId);
+      if (h.last && n > 1 && h.authorIndex !== n - 1) {
+        throw LastSaiViTriException(
+          ten(h.authorIndex) || 'Người này',
+          h.authorIndex,
+          n,
+        );
+      }
+    }
+    if (laKhaiTay(w.source) && soTacGia === 1 && !body.motTacGia) {
+      throw MotTacGiaChuaXacNhanException;
+    }
+  }
+
+  /**
+   * SỬA bài: T khớp danh sách gửi lên; hàng ĐỔI trong lần lưu này (của mình,
+   * của đồng tác giả) không trùng ai và nằm trong danh sách; Last Author MỚI
+   * đánh dấu phải đứng cuối. Dữ liệu cũ đang lệch thì không chặn — chỉ chặn tạo
+   * lệch mới; lệch cũ hiện ở danh sách soát của Khoa.
+   */
+  private async kiemSuaDanhSach(
+    publicationId: string,
+    userId: string,
+    body: UpdatePublicationBodyType,
+    hienTai: { authorsRaw?: Prisma.JsonValue; totalAuthors?: number | null },
+  ) {
+    const raw = (
+      Array.isArray(body.authorsRaw)
+        ? body.authorsRaw
+        : Array.isArray(hienTai.authorsRaw)
+          ? hienTai.authorsRaw
+          : []
+    ) as AuthorRow[];
+    if (
+      Array.isArray(body.authorsRaw) &&
+      body.authorsRaw.length > 0 &&
+      body.totalAuthors !== undefined &&
+      body.totalAuthors !== body.authorsRaw.length
+    ) {
+      throw SoTacGiaLechException(body.totalAuthors, body.authorsRaw.length);
+    }
+    const n = raw.length || body.totalAuthors || hienTai.totalAuthors || 0;
+    const rows = await this.prisma.publicationAuthor.findMany({
+      where: { publicationId, claimStatus: { not: 'REJECTED' } },
+      select: {
+        userId: true,
+        authorIndex: true,
+        isLast: true,
+        user: { select: { firstName: true, lastName: true } },
+      },
+    });
+    const sua = new Map((body.memberUpdates ?? []).map((m) => [m.userId, m]));
+    const sau: Array<HangTaiKhoan & { ten: string; lastMoi: boolean }> =
+      rows.map((r) => {
+        const cuaToi = r.userId === userId;
+        const moi = cuaToi ? body.me : sua.get(r.userId);
+        const idx =
+          moi?.authorIndex != null && moi.authorIndex !== undefined
+            ? moi.authorIndex
+            : r.authorIndex;
+        return {
+          userId: r.userId,
+          authorIndex: idx,
+          doi: idx !== r.authorIndex,
+          ten: [r.user?.lastName, r.user?.firstName].filter(Boolean).join(' '),
+          lastMoi: moi?.isLast === true && !r.isLast,
+        };
+      });
+    const tenHang = (i: number) => (raw[i] ? joinAuthorName(raw[i]) : '');
+    for (const h of sau) {
+      if (h.authorIndex < 0) continue;
+      if (h.doi) {
+        if (n > 0 && h.authorIndex >= n) {
+          throw HangNgoaiDanhSachException(h.authorIndex, n);
+        }
+        const khac = sau.find(
+          (x) => x.userId !== h.userId && x.authorIndex === h.authorIndex,
+        );
+        if (khac) {
+          throw HangDaCoNguoiException(h.authorIndex, tenHang(h.authorIndex), khac.ten);
+        }
+      }
+      if (h.lastMoi && n > 1 && h.authorIndex !== n - 1) {
+        throw LastSaiViTriException(h.ten || tenHang(h.authorIndex), h.authorIndex, n);
+      }
+    }
+  }
+
+  /**
+   * Hàng người gọi chọn khi XÁC NHẬN lời mời / gắn mình vào bài đã có: nằm
+   * trong danh sách, chưa ai khác nhận, và tick Last thì phải đứng cuối.
+   */
+  private async kiemHangCuaToi(
+    publicationId: string,
+    userId: string,
+    a: { authorIndex?: number | null; isLast?: boolean | null },
+  ) {
+    const idx = a.authorIndex ?? -1;
+    if (idx < 0) return;
+    const pub = await this.prisma.publication.findUnique({
+      where: { id: publicationId },
+      select: { authorsRaw: true, totalAuthors: true },
+    });
+    const raw = (Array.isArray(pub?.authorsRaw) ? pub.authorsRaw : []) as AuthorRow[];
+    const n = raw.length || pub?.totalAuthors || 0;
+    if (n > 0 && idx >= n) throw HangNgoaiDanhSachException(idx, n);
+    const khac = await this.prisma.publicationAuthor.findFirst({
+      where: {
+        publicationId,
+        userId: { not: userId },
+        claimStatus: { not: 'REJECTED' },
+        authorIndex: idx,
+      },
+      select: { user: { select: { firstName: true, lastName: true } } },
+    });
+    if (khac) {
+      throw HangDaCoNguoiException(
+        idx,
+        raw[idx] ? joinAuthorName(raw[idx]) : '',
+        [khac.user.lastName, khac.user.firstName].filter(Boolean).join(' '),
+      );
+    }
+    if (a.isLast && n > 1 && idx !== n - 1) {
+      throw LastSaiViTriException(raw[idx] ? joinAuthorName(raw[idx]) : 'Người này', idx, n);
+    }
+  }
+
+  /** Hồ sơ khớp tên của MỘT người (tên thật + dạng tên + ORCID). */
+  private async hoSoNguoi(userId: string): Promise<CandidateProfile | null> {
+    const me = await this.prisma.scholarProfile.findUnique({
+      where: { userId },
+      select: {
+        orcid: true,
+        nameVariants: { select: { normalized: true } },
+        user: { select: { firstName: true, lastName: true } },
+      },
+    });
+    if (!me) return null;
+    return {
+      userId,
+      orcid: me.orcid,
+      normalizedVariants: me.nameVariants.map((v) => v.normalized),
+      displayName: [me.user.lastName, me.user.firstName].filter(Boolean).join(' '),
+    };
+  }
+
+  // ── Công trình trùng tên (5/10/2026) ──────────────────────────────────────
+  /**
+   * Bài CÙNG TÊN đang có trên hệ thống (khác DOI hoặc không DOI) — để người khai
+   * gắn tên mình vào bài đó thay vì tạo bản thứ hai. Ca thật: một bài khai tay ba
+   * lần (hai bản "1 tác giả"), một báo cáo hội nghị khai hai lần bởi hai người.
+   * So bằng khoá tên (bỏ dấu, bỏ ký tự đặc biệt) trên mọi bài chưa xoá — vài
+   * nghìn dòng, đọc thẳng nhanh hơn dựng chỉ mục.
+   */
+  async timTrung(title: string, doi: string | null, userId: string) {
+    const key = khoaTieuDe(title);
+    if (key.length < 15) return [];
+    const ds = await this.prisma.publication.findMany({
+      where: { deletedAt: null },
+      select: { id: true, title: true, doi: true },
+    });
+    const ids = ds
+      .filter((p) => khoaTieuDe(p.title) === key && (!doi || p.doi !== doi))
+      .map((p) => p.id)
+      .slice(0, 5);
+    if (!ids.length) return [];
+    const rows = await this.prisma.publication.findMany({
+      where: { id: { in: ids } },
+      select: {
+        id: true,
+        title: true,
+        doi: true,
+        containerTitle: true,
+        publishedYear: true,
+        acceptedYear: true,
+        source: true,
+        totalAuthors: true,
+        createdBy: true,
+        authors: {
+          where: { claimStatus: { not: 'REJECTED' } },
+          select: {
+            userId: true,
+            claimStatus: true,
+            user: { select: { firstName: true, lastName: true } },
+          },
+        },
+      },
+    });
+    const ten = (u: { firstName: string | null; lastName: string | null }) =>
+      [u.lastName, u.firstName].filter(Boolean).join(' ');
+    const nguoiKhai = new Map(
+      (
+        await this.prisma.user.findMany({
+          where: { id: { in: rows.map((r) => r.createdBy).filter((x): x is string => !!x) } },
+          select: { id: true, firstName: true, lastName: true },
+        })
+      ).map((u) => [u.id, ten(u)]),
+    );
+    return rows.map((r) => ({
+      id: r.id,
+      title: r.title,
+      doi: r.doi,
+      containerTitle: r.containerTitle,
+      year: r.publishedYear ?? r.acceptedYear,
+      source: r.source,
+      totalAuthors: r.totalAuthors,
+      tacGia: r.authors.filter((a) => a.claimStatus === 'CONFIRMED').map((a) => ten(a.user)),
+      nguoiKhai: r.createdBy ? (nguoiKhai.get(r.createdBy) ?? null) : null,
+      daCoToi: r.authors.some((a) => a.userId === userId),
+    }));
+  }
+
+  /** GET /scholar/publications/trung — giao diện hỏi trước khi lưu. */
+  async trung(userId: string, q: TrungQueryType) {
+    return { items: await this.timTrung(q.title, normalizeDoi(q.doi), userId) };
+  }
+
+  /**
+   * Gắn tên mình vào bài CÙNG TÊN đã có (người khai chọn ở hộp "đã có bài này").
+   * Hàng của mình dò bằng tên trên danh sách của BÀI ĐÃ CÓ (danh sách trong form
+   * có thể khác); không chắc thì để −1 — giao diện nhắc mở bài chọn hàng.
+   */
+  private async ganVaoBaiCo(userId: string, body: CreatePublicationBodyType) {
+    const bai = await this.prisma.publication.findFirst({
+      where: { id: body.ganVaoBai, deletedAt: null },
+      select: { id: true, title: true, authorsRaw: true, catalogCode: true },
+    });
+    if (!bai) throw PublicationNotFoundException;
+    if (khoaTieuDe(bai.title) !== khoaTieuDe(body.work.title)) {
+      throw KhongPhaiBanTrungException;
+    }
+    const raw = (Array.isArray(bai.authorsRaw) ? bai.authorsRaw : []) as AuthorRow[];
+    const toi = await this.hoSoNguoi(userId);
+    const hit = toi ? hangCuaNguoi(raw, toi) : null;
+    let idx = hit?.chac ? hit.authorIndex : -1;
+    if (idx >= 0) {
+      const khac = await this.prisma.publicationAuthor.count({
+        where: {
+          publicationId: bai.id,
+          userId: { not: userId },
+          claimStatus: { not: 'REJECTED' },
+          authorIndex: idx,
+        },
+      });
+      if (khac) idx = -1;
+    }
+    const n = raw.length;
+    await this.attachSelf(bai.id, userId, {
+      me: {
+        ...body.me,
+        authorIndex: idx,
+        isFirst: idx === 0 ? true : idx > 0 ? false : body.me.isFirst,
+        isLast: idx >= 0 ? n > 1 && idx === n - 1 : body.me.isLast,
+      },
+    });
+    if (body.catalogCode && !bai.catalogCode) {
+      await this.prisma.publication.update({
+        where: { id: bai.id },
+        data: {
+          catalogCode: body.catalogCode,
+          quartile: body.quartile ?? null,
+          classifiedBy: userId,
+          classifiedAt: new Date(),
+        },
+      });
+    }
+    await this.recount(bai.id);
+    await this.revalidateStaffPages(bai.id);
+    this.bus.emit('publication.changed', { id: bai.id, userIds: [userId] });
+    return this.findOne(bai.id, userId);
+  }
+
+  // ── Soát nhận diện tác giả cho Khoa (5/10/2026) ────────────────────────────
+  /** Mọi bài chưa xoá + mọi người có hồ sơ, đổ vào soatTacGia (hàm thuần). */
+  async soatTacGia(q: SoatTacGiaQueryType) {
+    const [bais, users] = await Promise.all([
+      this.prisma.publication.findMany({
+        where: { deletedAt: null },
+        select: {
+          id: true,
+          title: true,
+          doi: true,
+          source: true,
+          totalAuthors: true,
+          publishedYear: true,
+          publishedMonth: true,
+          acceptedYear: true,
+          acceptedMonth: true,
+          createdBy: true,
+          authorsRaw: true,
+          authors: {
+            select: {
+              userId: true,
+              authorIndex: true,
+              claimStatus: true,
+              invitedBy: true,
+            },
+          },
+        },
+      }),
+      this.prisma.user.findMany({
+        select: {
+          id: true,
+          firstName: true,
+          lastName: true,
+          scholarProfile: {
+            select: { orcid: true, nameVariants: { select: { raw: true, normalized: true } } },
+          },
+        },
+      }),
+    ]);
+    const nguoi = new Map<string, NguoiSoat>(
+      users.map((u) => [
+        u.id,
+        {
+          userId: u.id,
+          orcid: u.scholarProfile?.orcid ?? null,
+          normalizedVariants: u.scholarProfile?.nameVariants.map((v) => v.normalized) ?? [],
+          displayName: [u.lastName, u.firstName].filter(Boolean).join(' '),
+          bienThe: u.scholarProfile?.nameVariants.map((v) => v.raw) ?? [],
+        },
+      ]),
+    );
+    const thang = (b: BaiSoat) => {
+      const y = b.publishedYear ?? b.acceptedYear;
+      const m = (b.publishedYear ? b.publishedMonth : b.acceptedMonth) ?? 1;
+      return y ? `${y}-${String(m).padStart(2, '0')}` : null;
+    };
+    const trongKy = (b: BaiSoat) => {
+      if (!q.tu && !q.den) return true;
+      const t = thang(b);
+      if (!t) return false;
+      return (!q.tu || t >= q.tu) && (!q.den || t <= q.den);
+    };
+    const ds = bais.map(
+      (b): BaiSoat => ({
+        ...b,
+        authorsRaw: (Array.isArray(b.authorsRaw) ? b.authorsRaw : []) as BaiSoat['authorsRaw'],
+      }),
+    );
+    const items = soatTacGia(ds, nguoi, trongKy);
+    const dem: Record<string, number> = {};
+    for (const x of items) dem[x.loai] = (dem[x.loai] ?? 0) + 1;
+    return {
+      tu: q.tu ?? null,
+      den: q.den ?? null,
+      soBai: ds.filter(trongKy).length,
+      dem,
+      items,
+    };
+  }
+
+  /**
+   * Khoa GÁN HÀNG cho người đã xác nhận mà chưa chỉ hàng — chỉ khi tên khớp CHẮC
+   * đúng một hàng, hàng đó chưa ai nhận và không bị đánh dấu ngoài Trường (khi
+   * đó gán hàng đổi giờ của người ta — phải có người xem).
+   */
+  async soatGanHang(adminId: string, b: SoatThaoTacBodyType) {
+    const { publicationId, userId } = b;
+    const row = await this.prisma.publicationAuthor.findUnique({
+      where: { publicationId_userId: { publicationId, userId } },
+      select: { claimStatus: true, authorIndex: true },
+    });
+    if (!row || row.claimStatus !== 'CONFIRMED' || row.authorIndex >= 0) {
+      throw SoatKhongConDungException('Người này không còn ở trạng thái "đã xác nhận, chưa chỉ hàng".');
+    }
+    const pub = await this.prisma.publication.findFirst({
+      where: { id: publicationId, deletedAt: null },
+      select: { authorsRaw: true },
+    });
+    const raw = (Array.isArray(pub?.authorsRaw) ? pub.authorsRaw : []) as AuthorRow[];
+    const nguoi = await this.hoSoNguoi(userId);
+    const hit = nguoi ? hangCuaNguoi(raw, nguoi) : null;
+    if (!hit?.chac) {
+      throw SoatKhongConDungException('Không còn thấy đúng một hàng khớp chắc tên người này — sửa tay.');
+    }
+    if (raw[hit.authorIndex]?.isNonSchool === true) {
+      throw SoatKhongConDungException('Hàng khớp tên đang đánh dấu ngoài Trường — cần người xem trước khi gán.');
+    }
+    const khac = await this.prisma.publicationAuthor.count({
+      where: {
+        publicationId,
+        userId: { not: userId },
+        claimStatus: { not: 'REJECTED' },
+        authorIndex: hit.authorIndex,
+      },
+    });
+    if (khac) throw SoatKhongConDungException('Hàng khớp tên đã có người khác nhận — sửa tay.');
+    await this.prisma.$transaction([
+      this.prisma.publicationAuthor.update({
+        where: { publicationId_userId: { publicationId, userId } },
+        data: { authorIndex: hit.authorIndex },
+      }),
+      this.prisma.auditLog.create({
+        data: {
+          userId: adminId,
+          action: 'publication.admin-assign-row',
+          entityType: 'Publication',
+          entityId: publicationId,
+          changes: {
+            userId,
+            before: { authorIndex: -1 },
+            after: { authorIndex: hit.authorIndex },
+            tenHang: joinAuthorName(raw[hit.authorIndex]),
+          },
+        },
+      }),
+    ]);
+    await this.recount(publicationId);
+    this.bus.emit('publication.changed', { id: publicationId, userIds: [userId] });
+    return {
+      ok: true,
+      moTa: `Đã gán hàng ${hit.authorIndex + 1} («${joinAuthorName(raw[hit.authorIndex])}»).`,
+    };
   }
 
   /** Xoá mềm, và chỉ gỡ tên MÌNH nếu bài còn tác giả khác đã xác nhận. */
@@ -892,6 +1857,7 @@ export class ScholarService {
             countYear: true,
             doi: true,
             authorsRaw: true,
+            totalAuthors: true,
           },
         },
       },
@@ -934,9 +1900,31 @@ export class ScholarService {
         ]
       : [];
 
+    const daNhan = await this.prisma.publicationAuthor.findMany({
+      where: {
+        publicationId: { in: rows.map((r) => r.publication.id) },
+        userId: { not: userId },
+        claimStatus: { not: 'REJECTED' },
+        authorIndex: { gte: 0 },
+      },
+      select: {
+        publicationId: true,
+        authorIndex: true,
+        user: { select: { firstName: true, lastName: true } },
+      },
+    });
+
     return rows.map((r) => {
       const authors = (r.publication.authorsRaw ?? []) as AuthorRow[];
-      const hit = self.length ? matchAuthors(authors, self)[0] : undefined;
+      const hit = self.length ? hangCuaNguoi(authors, self[0]) : null;
+      const hangDaNhan = daNhan
+        .filter((x) => x.publicationId === r.publication.id)
+        .map((x) => ({
+          authorIndex: x.authorIndex,
+          displayName: [x.user.lastName, x.user.firstName]
+            .filter(Boolean)
+            .join(' '),
+        }));
       return {
         publicationId: r.publication.id,
         title: r.publication.title,
@@ -947,6 +1935,12 @@ export class ScholarService {
         invitedByName: r.invitedBy ? (nameOf.get(r.invitedBy) ?? null) : null,
         authorsRaw: authors,
         suggestedAuthorIndex: hit?.authorIndex ?? r.authorIndex,
+        goiYChac: Boolean(hit?.chac),
+        // Không có danh sách thì không kết luận được gì → không cảnh báo.
+        tenCoTrenBai: authors.length ? Boolean(hit) : true,
+        danhSachThieu:
+          authors.length > 0 && (r.publication.totalAuthors ?? 0) > authors.length,
+        hangDaNhan,
       };
     });
   }
@@ -958,12 +1952,23 @@ export class ScholarService {
   ) {
     const row = await this.prisma.publicationAuthor.findUnique({
       where: { publicationId_userId: { publicationId, userId } },
-      select: { claimStatus: true },
+      select: { claimStatus: true, sharePercent: true },
     });
     if (!row) throw NoClaimException;
 
     const a = body.authorship ?? {};
-    this.assertRepresentative(a);
+    // Tỷ lệ Cách 1 trên dòng này do ĐẠI DIỆN nhóm khai sẵn: người không phải tác
+    // giả chính xác nhận thì giữ nguyên nó (gửi lại đúng số cũ cũng được), tác
+    // giả chính thì được đặt lại. Xem kiemTyLe.
+    const daiDien = laTacGiaChinh(a);
+    if (body.accept) {
+      this.kiemTyLe({
+        daiDien,
+        cuaToi: a.sharePercent,
+        cuaToiCu: row.sharePercent,
+      });
+    }
+    if (body.accept) await this.kiemHangCuaToi(publicationId, userId, a);
 
     await this.prisma.publicationAuthor.update({
       where: { publicationId_userId: { publicationId, userId } },
@@ -974,7 +1979,11 @@ export class ScholarService {
         isFirst: body.accept ? (a.isFirst ?? undefined) : false,
         isCorresponding: body.accept ? (a.isCorresponding ?? undefined) : false,
         isLast: body.accept ? (a.isLast ?? undefined) : false,
-        sharePercent: body.accept ? (a.sharePercent ?? undefined) : null,
+        sharePercent: body.accept
+          ? daiDien
+            ? (a.sharePercent ?? undefined)
+            : undefined
+          : null,
         showOnWeb: body.accept ? (a.showOnWeb ?? undefined) : false,
       },
     });
@@ -1071,6 +2080,8 @@ export class ScholarService {
           startMonth: true,
           endYear: true,
           endMonth: true,
+          finishedYear: true,
+          finishedMonth: true,
           budget: true,
         },
       }),
@@ -1125,7 +2136,8 @@ export class ScholarService {
               authorIndex: true,
               isFirst: true,
               isCorresponding: true,
-              user: { select: { firstName: true, lastName: true } },
+              isLast: true,
+              user: { select: { firstName: true, lastName: true, rank: true } },
             },
           },
         },
@@ -1144,6 +2156,10 @@ export class ScholarService {
           startMonth: true,
           endYear: true,
           endMonth: true,
+          // Báo cáo liệt kê đề tài ĐANG THỰC HIỆN trong khoảng — đã nghiệm thu
+          // thì tới tháng nghiệm thu, không phải hạn kế hoạch.
+          finishedYear: true,
+          finishedMonth: true,
           members: {
             // Người đã TỪ CHỐI lời mời không còn là thành viên.
             where: { claimStatus: { not: 'REJECTED' } },
@@ -1203,6 +2219,17 @@ export class ScholarService {
           systemAuthors,
           firstAuthor: vietName(first?.user) || authorNames[0] || '',
           correspondingAuthor: vietName(corr?.user),
+          authorDetails: tacGiaBaoCao(
+            p.authorsRaw,
+            p.authors.map((a) => ({
+              authorIndex: a.authorIndex,
+              isFirst: a.isFirst,
+              isCorresponding: a.isCorresponding,
+              isLast: a.isLast,
+              name: vietName(a.user),
+              rank: a.user?.rank ?? null,
+            })),
+          ),
         };
       }),
       projects: projects.map((pr) => {
@@ -1222,6 +2249,8 @@ export class ScholarService {
           startMonth: pr.startMonth,
           endYear: pr.endYear,
           endMonth: pr.endMonth,
+          finishedYear: pr.finishedYear,
+          finishedMonth: pr.finishedMonth,
           leadName: lead
             ? lead.user
               ? vietName(lead.user)
@@ -1466,13 +2495,19 @@ export class ScholarService {
             }),
       },
       include: {
-        // Kèm các tác giả ĐÃ XÁC NHẬN để đếm được số tác giả chính — xem
-        // `mainAuthorsAtSchool` ở dưới.
+        // Kèm các tài khoản CHƯA TỪ CHỐI để đếm được số tác giả chính — xem
+        // `chinh` ở dưới.
         publication: {
           include: {
             authors: {
-              where: { claimStatus: 'CONFIRMED' },
-              select: { isFirst: true, isCorresponding: true, isLast: true },
+              where: { claimStatus: { not: 'REJECTED' } },
+              select: {
+                claimStatus: true,
+                authorIndex: true,
+                isFirst: true,
+                isCorresponding: true,
+                isLast: true,
+              },
             },
           },
         },
@@ -1499,6 +2534,29 @@ export class ScholarService {
             ? false
             : true
           : null;
+      // TÁC GIẢ CHÍNH CÓ TÀI KHOẢN — đã xác nhận HOẶC chưa bấm (Khoa chốt
+      // 4/10/2026: xác nhận hay chưa thì phần của họ vẫn phải giữ, chỉ "không
+      // phải tôi" mới trả phần đó lại). Người chưa bấm chỉ đếm khi đã được chỉ
+      // HÀNG: chưa chỉ hàng thì form phys-profile coi hàng của họ là người ngoài
+      // hệ thống và đã cộng vào `externalMainAuthors` — đếm thêm là đếm hai lần.
+      const laChinh = (a: {
+        isFirst: boolean;
+        isCorresponding: boolean;
+        isLast: boolean;
+      }) => a.isFirst || a.isCorresponding || a.isLast;
+      const chinh = p.authors.filter(
+        (a) =>
+          laChinh(a) &&
+          (a.claimStatus === 'CONFIRMED' || (a.authorIndex ?? -1) >= 0),
+      );
+      // Người chưa bấm mà hàng của họ ghi địa chỉ Trường. `mainAuthorAtSchool`
+      // lưu trong bài chỉ tính người đã xác nhận (recount), nên thiếu phần này
+      // thì đồng tác giả hưởng P/T thay vì 2/3·P/T cho tới khi người kia chịu bấm.
+      const chinhChuaBamThuocTruong = chinh.filter(
+        (a) =>
+          a.claimStatus !== 'CONFIRMED' &&
+          raw[a.authorIndex ?? -1]?.isNonSchool !== true,
+      );
       return {
         changedAt: laterOf(r.updatedAt, p.updatedAt),
         item: {
@@ -1525,23 +2583,22 @@ export class ScholarService {
           stage: p.stage,
           totalAuthors: p.totalAuthors,
           schoolAuthors: p.schoolAuthors,
-          mainAuthorAtSchool: p.mainAuthorAtSchool,
+          mainAuthorAtSchool:
+            p.mainAuthorAtSchool || chinhChuaBamThuocTruong.length > 0,
           // ĐẾM, không phải cờ đúng/sai. Cách 2 của Phụ lục 2 chia phần của tác
           // giả chính là `1/3 ÷ số tác giả chính thuộc Trường` — mẫu số đó không
           // suy ra được từ một boolean. ACADsoom trước đây buộc phải đoán bằng 1,
           // nên bài có HAI tác giả chính cùng thuộc Trường thì mỗi người nhận
           // 1/3 thay vì 1/6: cộng gấp đôi, và tổng phần chia cho Trường vượt 100%.
           //
-          // Đếm tại chỗ từ danh sách đã xác nhận thay vì thêm cột: `recount()` đã
-          // giữ đúng dữ liệu cần, thêm cột chỉ tạo thêm một chỗ để lệch.
-          mainAuthorsAtSchool: p.authors.filter(
-            (a) => a.isFirst || a.isCorresponding || a.isLast,
-          ).length,
+          // Đếm tại chỗ thay vì thêm cột: người đã xác nhận (như trước) + người
+          // chưa bấm có hàng ghi địa chỉ Trường — xem `chinh` ở trên.
+          mainAuthorsAtSchool:
+            chinh.filter((a) => a.claimStatus === 'CONFIRMED').length +
+            chinhChuaBamThuocTruong.length,
           // TỔNG tác giả chính CỦA BÀI = (chính thuộc Trường, đếm sống) + (chính
           // NGOÀI Trường, lưu lúc khai). Đây mới là mẫu số thật của phần 1/3 (mục 1).
-          mainAuthors:
-            p.authors.filter((a) => a.isFirst || a.isCorresponding || a.isLast)
-              .length + (p.externalMainAuthors ?? 0),
+          mainAuthors: chinh.length + (p.externalMainAuthors ?? 0),
           isMainAuthor: r.isFirst || r.isCorresponding || r.isLast,
           sharePercent: r.sharePercent,
 
@@ -1737,6 +2794,8 @@ export class ScholarService {
    *    thêm không được là ADMIN (default của schema là ADMIN — phải ép LECTURER).
    *  - ĐÃ CÓ: chỉ vá physoomId/teacherId, cập nhật tên; KHÔNG đụng role/isActive
    *    (đăng nhập lại mà bị hạ quyền là mất trang quản trị).
+   *  - Email Gmail → loại công tác "thỉnh giảng" (tạo mới, hoặc điền khi đang
+   *    trống — không ghi đè lựa chọn của quản trị). Xem laEmailGmail.
    */
   async upsertUserFromPhysoom(data: {
     email: string;
@@ -1774,15 +2833,22 @@ export class ScholarService {
     const teacherId = (data.teacherId ?? '').trim() || null;
 
     // Ưu tiên ghép theo physoomId; chưa có thì theo email.
+    const chon = {
+      id: true,
+      firstName: true,
+      lastName: true,
+      employmentType: true,
+    } as const;
     const existing = physoomId
       ? await this.prisma.user.findFirst({
           where: { OR: [{ physoomId }, { email }] },
-          select: { id: true, firstName: true, lastName: true },
+          select: chon,
         })
       : await this.prisma.user.findUnique({
           where: { email },
-          select: { id: true, firstName: true, lastName: true },
+          select: chon,
         });
+    const thinhGiang = laEmailGmail(email);
 
     if (existing) {
       const updated = await this.prisma.user.update({
@@ -1797,6 +2863,9 @@ export class ScholarService {
           ...(lastName && !existing.lastName ? { lastName } : {}),
           ...(physoomId ? { physoomId } : {}),
           ...(teacherId ? { teacherId } : {}),
+          ...(thinhGiang && !existing.employmentType
+            ? { employmentType: 'thinh_giang' }
+            : {}),
           // KHÔNG đặt role / isActive ở đây.
         },
         select: { id: true, email: true, physoomId: true },
@@ -1813,6 +2882,7 @@ export class ScholarService {
         teacherId,
         role: 'LECTURER',
         isActive: true,
+        ...(thinhGiang ? { employmentType: 'thinh_giang' } : {}),
       },
       select: { id: true, email: true, physoomId: true },
     });
@@ -1952,4 +3022,17 @@ function countEntries(content: string): number {
   const bib = content.match(/@\w+\s*\{/g)?.length ?? 0;
   const ris = content.match(/^\s*TY\s{2}-\s/gm)?.length ?? 0;
   return Math.max(bib, ris);
+}
+
+/**
+ * VAI TRÒ THEO VỊ TRÍ của một hàng trong danh sách tác giả: hàng đầu là tác giả
+ * đầu, hàng cuối (bài từ hai người) là tác giả cuối. Hàng giữa không bị ép gì —
+ * "(các) tác giả thứ nhất" có thể nhiều người (đồng tác giả đầu).
+ */
+export function vaiTroTheoViTri(
+  viTri: number | null | undefined,
+  soTacGia: number,
+): { isFirst: boolean; isLast: boolean } {
+  const i = viTri ?? -1;
+  return { isFirst: i === 0, isLast: soTacGia > 1 && i === soTacGia - 1 };
 }

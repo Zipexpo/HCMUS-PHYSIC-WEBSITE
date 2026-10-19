@@ -13,10 +13,19 @@ import {
   dateParts,
   dig,
   firstStr,
+  khoaTieuDe,
   type Json,
   type ResolvedAuthor,
   type ResolvedWork,
 } from './work';
+
+/** Bản ĐÃ ĐĂNG của một bản thảo, tìm theo tên trên Crossref. */
+export type BanDaDang = {
+  doi: string;
+  title: string;
+  containerTitle: string | null;
+  year: number | null;
+};
 
 /**
  * Tra dữ liệu thư mục từ một chuỗi người dùng dán vào: DOI, link DOI, arXiv ID,
@@ -82,7 +91,7 @@ export class ResolveService {
    * Crossref không có thì thử DataCite (Zenodo, Figshare, bộ dữ liệu).
    */
   async byDoi(doi: string): Promise<ResolvedWork | null> {
-    return this.cached(`scholar:doi:${doi}`, async () => {
+    return this.cached(`scholar:doi:v2:${doi}`, async () => {
       const [crossref, openalex] = await Promise.all([
         this.fetchCrossref(doi),
         this.fetchOpenAlex(doi),
@@ -102,9 +111,9 @@ export class ResolveService {
 
   /**
    * Giữ nguyên thứ tự tác giả của Crossref (đó mới là thứ tự in trên bài), chỉ
-   * mượn OpenAlex phần affiliation và ORCID còn thiếu. Ghép theo vị trí vì hai
-   * nguồn cùng lấy từ bản ghi của nhà xuất bản; lệch số lượng thì bỏ qua, thà
-   * thiếu affiliation còn hơn gán nhầm cơ quan cho người khác.
+   * mượn OpenAlex phần affiliation, ORCID và tác giả liên hệ còn thiếu. Ghép theo
+   * vị trí vì hai nguồn cùng lấy từ bản ghi của nhà xuất bản; lệch số lượng thì
+   * bỏ qua, thà thiếu affiliation còn hơn gán nhầm cơ quan cho người khác.
    */
   private mergeAffiliations(
     base: ResolvedAuthor[],
@@ -115,7 +124,46 @@ export class ResolveService {
       ...a,
       orcid: a.orcid ?? extra[i]?.orcid ?? null,
       affiliation: a.affiliation ?? extra[i]?.affiliation ?? null,
+      isCorresponding: a.isCorresponding ?? extra[i]?.isCorresponding ?? null,
     }));
+  }
+
+  /**
+   * Bản ĐÃ ĐĂNG của một bản thảo: tra Crossref theo tên, lấy bản KHÔNG phải
+   * preprint có tên trùng khớp (so bằng `khoaTieuDe`). Không chắc thì trả null —
+   * giao diện vẫn cảnh báo "bản thảo không được tính", chỉ thiếu gợi ý DOI.
+   */
+  async timBanDaDang(w: ResolvedWork): Promise<BanDaDang | null> {
+    const title = (w.title ?? '').trim();
+    const key = khoaTieuDe(title);
+    if (key.length < 20) return null;
+    return this.cached(`scholar:ban-da-dang:${key.slice(0, 200)}`, async () => {
+      const qs = new URLSearchParams({
+        'query.bibliographic': title,
+        rows: '8',
+        select: 'DOI,title,container-title,type,issued,published-online',
+      });
+      if (this.mailto) qs.set('mailto', this.mailto);
+      const json = await this.getJson(`https://api.crossref.org/works?${qs}`);
+      const goc = normalizeDoi(w.doi);
+      for (const raw of asArr(dig(json, 'message', 'items'))) {
+        const m = asObj(raw);
+        if (/posted-content|preprint/i.test(asStr(m.type) ?? '')) continue;
+        const doi = normalizeDoi(asStr(m.DOI));
+        if (!doi || doi === goc || doi.startsWith('10.48550/')) continue;
+        const ten = firstStr(m.title) ?? '';
+        if (khoaTieuDe(ten) !== key) continue;
+        return {
+          doi,
+          title: ten,
+          containerTitle: firstStr(m['container-title']),
+          year: parseYear(
+            asStr(dateParts(m['published-online'])[0] ?? dateParts(m.issued)[0]),
+          ),
+        };
+      }
+      return null;
+    });
   }
 
   private async fetchCrossref(doi: string): Promise<ResolvedWork | null> {
@@ -156,7 +204,9 @@ export class ResolveService {
           name: asStr(a.name),
           orcid: asStr(a.ORCID),
           sequence: asStr(a.sequence) === 'first' ? 'first' : 'additional',
-          affiliation: asStr(dig(asArr(a.affiliation)[0], 'name')),
+          affiliation: noiDiaChi(
+            asArr(a.affiliation).map((x) => asStr(dig(x, 'name'))),
+          ),
         };
       }),
       source: 'crossref',
@@ -212,16 +262,24 @@ export class ResolveService {
       publishedMonth: parseMonth(
         (asStr(w.publication_date) ?? '').split('-')[1],
       ),
-      authors: asArr(w.authorships).map((raw): ResolvedAuthor => {
-        const a = asObj(raw);
-        return {
-          name: asStr(dig(a, 'author', 'display_name')),
-          orcid: asStr(dig(a, 'author', 'orcid')),
-          sequence:
-            asStr(a.author_position) === 'first' ? 'first' : 'additional',
-          affiliation: asStr(dig(asArr(a.institutions)[0], 'display_name')),
-        };
-      }),
+      authors: lienHeDuyNhat(
+        asArr(w.authorships).map((raw): ResolvedAuthor => {
+          const a = asObj(raw);
+          const goc = asArr(a.raw_affiliation_strings).map(asStr);
+          return {
+            name: asStr(dig(a, 'author', 'display_name')),
+            orcid: asStr(dig(a, 'author', 'orcid')),
+            sequence:
+              asStr(a.author_position) === 'first' ? 'first' : 'additional',
+            affiliation: noiDiaChi(
+              goc.some(Boolean)
+                ? goc
+                : asArr(a.institutions).map((x) => asStr(dig(x, 'display_name'))),
+            ),
+            isCorresponding: a.is_corresponding === true ? true : null,
+          };
+        }),
+      ),
       source: 'openalex',
       raw: w,
     };
@@ -604,4 +662,22 @@ export class ResolveService {
       return null;
     }
   }
+}
+
+/** Nối các địa chỉ (bỏ trùng, bỏ rỗng) — null khi không có gì. */
+export function noiDiaChi(ds: Array<string | null>): string | null {
+  const sach = [...new Set(ds.map((x) => (x ?? '').trim()).filter(Boolean))];
+  return sach.length ? sach.join('; ') : null;
+}
+
+/**
+ * OpenAlex hay đánh dấu "liên hệ" cho cả nhóm (soát 3/10/2026: 6/11 người) — chỉ
+ * tin khi ĐÚNG MỘT tác giả được đánh dấu; còn lại để trống (không biết).
+ */
+export function lienHeDuyNhat(ds: ResolvedAuthor[]): ResolvedAuthor[] {
+  const so = ds.filter((a) => a.isCorresponding === true).length;
+  return ds.map((a) => ({
+    ...a,
+    isCorresponding: so === 1 && a.isCorresponding === true ? true : null,
+  }));
 }

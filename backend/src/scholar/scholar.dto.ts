@@ -48,6 +48,12 @@ import {
   UpdateStaffPageBodySchema,
   UpdatePublicationBodySchema,
   UpdateScholarProfileBodySchema,
+  TrungQuerySchema,
+  TrungResSchema,
+  SoatTacGiaQuerySchema,
+  SoatTacGiaResSchema,
+  SoatThaoTacBodySchema,
+  SoatThaoTacResSchema,
 } from './scholar.model';
 
 export class ScholarProfileResDTO extends createZodDto(
@@ -189,3 +195,11 @@ export class PeopleResDTO extends createZodDto(PeopleResSchema) {}
 export class SyncStaffPageBodyDTO extends createZodDto(
   SyncStaffPageBodySchema,
 ) {}
+
+// ── Nhận diện tác giả / trùng công trình (5/10/2026) ───────────────────────
+export class TrungQueryDTO extends createZodDto(TrungQuerySchema) {}
+export class TrungResDTO extends createZodDto(TrungResSchema) {}
+export class SoatTacGiaQueryDTO extends createZodDto(SoatTacGiaQuerySchema) {}
+export class SoatTacGiaResDTO extends createZodDto(SoatTacGiaResSchema) {}
+export class SoatThaoTacBodyDTO extends createZodDto(SoatThaoTacBodySchema) {}
+export class SoatThaoTacResDTO extends createZodDto(SoatThaoTacResSchema) {}

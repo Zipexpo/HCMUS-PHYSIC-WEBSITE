@@ -100,6 +100,7 @@ describe('thangGuiAcadsoom — số tháng gửi sang bên tính giờ', () => {
 const NGUOC = { startYear: 2025, startMonth: 2, endYear: 2024, endMonth: 2 };
 
 function dung(cur: {
+  status?: string;
   startYear: number | null;
   startMonth: number | null;
   endYear: number | null;
@@ -260,5 +261,57 @@ describe('ProjectService — mốc chốt khi đóng đề tài', () => {
     const { svc, prisma } = dung(DU);
     await svc.update('u1', 'p1', { title: 'Tên mới' });
     expect(prisma.researchProject.update).toHaveBeenCalledTimes(1);
+  });
+
+  // Mốc chốt chỉ có nghĩa khi ĐÓNG. Form từng gửi cả ô đã ẩn khi chuyển ngược
+  // về đang thực hiện → ACADsoom dồn giờ như nghiệm thu sớm (B2026-18-18, 3/10/2026).
+  it('tạo: đang thực hiện mà gửi kèm tháng chốt → KHÔNG lưu mốc chốt', async () => {
+    const { svc, prisma } = dung(DU);
+    await svc.create('u1', {
+      title: 'T',
+      ...DU,
+      status: 'ONGOING',
+      finishedYear: 2026,
+      finishedMonth: 4,
+      ...trong,
+    });
+    const { data } = prisma.researchProject.create.mock.calls[0][0];
+    expect([data.finishedYear, data.finishedMonth]).toEqual([null, null]);
+  });
+
+  it('sửa: chuyển về đang thực hiện → xoá mốc chốt đã lưu', async () => {
+    const { svc, prisma } = dung({
+      ...DU,
+      status: 'COMPLETED',
+      finishedYear: 2026,
+      finishedMonth: 10,
+    });
+    await svc.update('u1', 'p1', { status: 'ONGOING' });
+    const { data } = prisma.researchProject.update.mock.calls[0][0];
+    expect([data.finishedYear, data.finishedMonth]).toEqual([null, null]);
+  });
+
+  it('sửa: đang thực hiện còn sót mốc chốt cũ, sửa chỗ khác → dọn luôn', async () => {
+    const { svc, prisma } = dung({
+      ...DU,
+      status: 'ONGOING',
+      finishedYear: 2026,
+      finishedMonth: 4,
+    });
+    await svc.update('u1', 'p1', { title: 'Tên mới' });
+    const { data } = prisma.researchProject.update.mock.calls[0][0];
+    expect([data.finishedYear, data.finishedMonth]).toEqual([null, null]);
+  });
+
+  it('sửa: đã nghiệm thu, sửa chỗ khác → GIỮ mốc chốt (không đụng hai cột)', async () => {
+    const { svc, prisma } = dung({
+      ...DU,
+      status: 'COMPLETED',
+      finishedYear: 2026,
+      finishedMonth: 10,
+    });
+    await svc.update('u1', 'p1', { title: 'Tên mới' });
+    const { data } = prisma.researchProject.update.mock.calls[0][0];
+    expect([data.finishedYear, data.finishedMonth]).toEqual([undefined, undefined]);
   });
 });

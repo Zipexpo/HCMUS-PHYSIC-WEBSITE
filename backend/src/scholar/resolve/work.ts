@@ -16,7 +16,13 @@ export type ResolvedAuthor = {
   orcid?: string | null;
   /** Crossref đánh dấu tác giả đứng đầu; các nguồn khác thường không có. */
   sequence?: 'first' | 'additional' | null;
+  /** MỌI địa chỉ của tác giả trên bài, nối bằng "; " (trước 5/10/2026 chỉ lấy cái đầu). */
   affiliation?: string | null;
+  /**
+   * Tác giả liên hệ theo OpenAlex — CHỈ đặt khi OpenAlex đánh dấu ĐÚNG MỘT người
+   * (nguồn này hay đánh dấu cả nhóm; Crossref không có thông tin này).
+   */
+  isCorresponding?: boolean | null;
 };
 
 export type ResolvedWork = {
@@ -42,6 +48,42 @@ export type ResolvedWork = {
   source: string;
   raw?: unknown;
 };
+
+/**
+ * Khoá so TÊN công trình: bỏ dấu, chữ thường, bỏ mọi ký tự không phải chữ/số.
+ * "Room-Temperature Ferromagnetism…" và "Room temperature ferromagnetism…" cùng khoá.
+ */
+export function khoaTieuDe(title?: string | null): string {
+  return String(title ?? '')
+    .normalize('NFD')
+    .replace(/[̀-ͯ]/g, '')
+    .replace(/đ/gi, 'd')
+    .toLowerCase()
+    .replace(/<[^>]*>/g, '')
+    .replace(/[^a-z0-9]+/g, '');
+}
+
+/**
+ * Bản thảo (preprint) — Phụ lục 2 KHÔNG tính. Ca thật 4/10/2026: một bài đã đăng
+ * ApJS (Q1) nhưng web Khoa chỉ giữ bản arXiv (DOI 10.48550 của DataCite).
+ */
+export function laBanThao(w: {
+  doi?: string | null;
+  type?: string | null;
+  source?: string | null;
+  containerTitle?: string | null;
+  publisher?: string | null;
+}): boolean {
+  const doi = String(w.doi ?? '').toLowerCase();
+  return (
+    /^(posted-content|preprint)$/i.test(w.type ?? '') ||
+    doi.startsWith('10.48550/') ||
+    w.source === 'arxiv' ||
+    /\b(arxiv|research ?square|biorxiv|medrxiv|chemrxiv|ssrn|techrxiv|preprints\.org)\b/i.test(
+      `${w.containerTitle ?? ''} ${w.publisher ?? ''}`,
+    )
+  );
+}
 
 /** DOI về dạng chuẩn: bỏ tiền tố URL, bỏ khoảng trắng, hạ chữ thường. */
 export function normalizeDoi(input?: string | null): string | null {

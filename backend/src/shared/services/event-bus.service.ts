@@ -35,6 +35,12 @@ export type DomainEvent = {
   userIds?: string[];
   /** Chi tiết nhỏ, không nhạy cảm (vd slug trang vừa dựng lại). */
   key?: string | null;
+  /**
+   * Địa chỉ của chính những người bị ảnh hưởng — CHỈ cho sự kiện mà bên nhận
+   * phải BÁO TIN cho họ (vd `publication.role-removed`). userId của web Khoa
+   * không có nghĩa ở bên kia, còn địa chỉ công vụ thì vốn đã in trên trang nhân sự.
+   */
+  emails?: string[];
   at: string;
 };
 

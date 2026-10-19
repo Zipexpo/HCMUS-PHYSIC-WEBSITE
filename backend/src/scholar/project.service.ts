@@ -12,6 +12,7 @@ import {
   LastLeadLeavingException,
   NotAProjectMemberException,
   NotProjectLeadException,
+  ProjectCodeTakenException,
   ProjectDatesReversedException,
   ProjectNeedsAcceptanceException,
   ProjectNeedsFinishMonthException,
@@ -26,7 +27,7 @@ import {
   gopTruong,
   type ThanhVienOcr,
 } from './project-doc-parse';
-import { looselyMatches, normalizeName } from './name-match';
+import { khopHoTen, normalizeName } from './name-match';
 import type {
   CreateProjectBodyType,
   IntegrationQueryType,
@@ -263,6 +264,8 @@ export class ProjectService {
       body.endMonth,
     );
     if (mocTao.loai === 'nguoc') throw ProjectDatesReversedException;
+    // Một mã, một đề tài — xem chanTrungMa. Kiểm TRƯỚC khi ghi.
+    await this.chanTrungMa(body.code);
     // Minh chứng đính kèm (tải qua parse-documents) — nạp trước để biết loại, và
     // để chốt chặn KẾT THÚC thấy được nghiệm thu ngay từ lúc tạo. Chỉ chặn khi
     // NGƯỜI DÙNG CHỦ ĐỘNG đặt COMPLETED, không truy hồi đề tài đã kết thúc từ trước.
@@ -271,6 +274,7 @@ export class ProjectService {
       throw ProjectNeedsAcceptanceException;
     }
     this.soatMocChot(body.status, body.finishedYear, body.finishedMonth);
+    const dongKhiTao = daDong(body.status);
     const created = await this.prisma.researchProject.create({
       data: {
         code: body.code ?? null,
@@ -288,8 +292,9 @@ export class ProjectService {
         endYear: body.endYear ?? null,
         endMonth: body.endMonth ?? null,
         months: mocTao.loai === 'du' ? mocTao.soThang : (body.months ?? null),
-        finishedYear: body.finishedYear ?? null,
-        finishedMonth: body.finishedMonth ?? null,
+        // Mốc chốt chỉ lưu khi đề tài ĐÓNG — xem daDong().
+        finishedYear: dongKhiTao ? (body.finishedYear ?? null) : null,
+        finishedMonth: dongKhiTao ? (body.finishedMonth ?? null) : null,
         note: body.note ?? null,
         createdBy: userId,
         members: {
@@ -395,6 +400,62 @@ export class ProjectService {
     });
   }
 
+  /**
+   * MỘT MÃ, MỘT ĐỀ TÀI. Chú thích đầu lớp đã nói "một đề tài là MỘT dòng dùng
+   * chung cho cả nhóm", nhưng chưa có gì giữ điều đó: mỗi bản khai là một khoản
+   * NV2 bên ACADsoom, người duyệt xem từng khoản thì không thấy gì lạ, và giờ
+   * được cộng hai lần. Ca thật (T2025-44, 3/10/2026): cùng một người khai lúc
+   * 15:15, quên thêm thành viên, 15:33 khai lại bản mới thay vì sửa bản cũ —
+   * 2 × 90 giờ, cả hai khoản đều đã được duyệt.
+   *
+   * So theo mã đã chuẩn hoá (xem chuanHoaMaDeTai), chỉ với đề tài CHƯA XOÁ: xoá
+   * bản sai rồi khai lại là đường đúng. Không so số quyết định — một quyết định
+   * duyệt cả loạt đề tài cùng năm (4341/QĐ-KHTN).
+   */
+  private async chanTrungMa(
+    code: string | null | undefined,
+    boQuaId?: string,
+  ) {
+    const ma = chuanHoaMaDeTai(code);
+    if (!ma) return;
+    const ungVien = await this.prisma.researchProject.findMany({
+      where: {
+        deletedAt: null,
+        code: { not: null },
+        ...(boQuaId ? { id: { not: boQuaId } } : {}),
+      },
+      select: { id: true, code: true },
+    });
+    const trung = ungVien.find((p) => chuanHoaMaDeTai(p.code) === ma);
+    if (!trung) return;
+    // Nói rõ đề tài nào và ai làm chủ nhiệm — người khai phải biết hỏi ai để
+    // được thêm tên, không thì họ lại khai một bản nữa với mã gõ khác đi.
+    const chiTiet = await this.prisma.researchProject.findFirst({
+      where: { id: trung.id },
+      select: {
+        title: true,
+        members: {
+          where: { role: 'LEAD' },
+          select: {
+            externalName: true,
+            user: { select: { firstName: true, lastName: true } },
+          },
+          take: 1,
+        },
+      },
+    });
+    const cn = chiTiet?.members[0];
+    const chuNhiem = cn?.user
+      ? [cn.user.lastName, cn.user.firstName].filter(Boolean).join(' ')
+      : cn?.externalName?.trim();
+    const ten = chiTiet?.title ?? '';
+    throw ProjectCodeTakenException(
+      trung.code ?? ma,
+      ten.length > 120 ? `${ten.slice(0, 119)}…` : ten,
+      chuNhiem || null,
+    );
+  }
+
   async update(userId: string, id: string, body: UpdateProjectBodyType) {
     // CHỦ NHIỆM mới được sửa dữ liệu của đề tài. Phụ lục 2 tr. 2.8 đặt trách
     // nhiệm ở đó: "chủ nhiệm đề tài cung cấp cho Trường phương án để chia số giờ
@@ -424,6 +485,7 @@ export class ProjectService {
     const cur = await this.prisma.researchProject.findUnique({
       where: { id },
       select: {
+        code: true,
         catalogCode: true,
         status: true,
         startYear: true,
@@ -457,6 +519,14 @@ export class ProjectService {
     if (mocSua.loai === 'nguoc' && !chiDoiHienThi) {
       throw ProjectDatesReversedException;
     }
+    // Đổi sang mã của một đề tài KHÁC cũng là khai trùng — xem chanTrungMa. Chỉ
+    // kiểm khi mã ĐỔI: đề tài đang trùng sẵn từ trước vẫn phải sửa được để dọn.
+    if (
+      body.code !== undefined &&
+      chuanHoaMaDeTai(body.code) !== chuanHoaMaDeTai(cur.code)
+    ) {
+      await this.chanTrungMa(body.code, id);
+    }
     const thangSuyRa = mocSua.loai === 'du' ? mocSua.soThang : null;
 
     // Minh chứng đính kèm ở lượt sửa này (nếu có), và chốt chặn KẾT THÚC: chỉ khi
@@ -476,6 +546,9 @@ export class ProjectService {
       body.finishedYear === undefined ? cur.finishedYear : body.finishedYear,
       body.finishedMonth === undefined ? cur.finishedMonth : body.finishedMonth,
     );
+    // Trạng thái SAU khi sửa còn chưa đóng → xoá mốc chốt (cả số còn sót từ
+    // trước). Xem daDong().
+    const dongSauSua = daDong(body.status ?? cur.status);
 
     await this.prisma.researchProject.update({
       where: { id },
@@ -497,10 +570,16 @@ export class ProjectService {
         startMonth: body.startMonth === undefined ? undefined : body.startMonth,
         endYear: body.endYear === undefined ? undefined : body.endYear,
         endMonth: body.endMonth === undefined ? undefined : body.endMonth,
-        finishedYear:
-          body.finishedYear === undefined ? undefined : body.finishedYear,
-        finishedMonth:
-          body.finishedMonth === undefined ? undefined : body.finishedMonth,
+        finishedYear: !dongSauSua
+          ? null
+          : body.finishedYear === undefined
+            ? undefined
+            : body.finishedYear,
+        finishedMonth: !dongSauSua
+          ? null
+          : body.finishedMonth === undefined
+            ? undefined
+            : body.finishedMonth,
         months:
           thangSuyRa ?? (body.months === undefined ? undefined : body.months),
         note: body.note === undefined ? undefined : body.note,
@@ -854,8 +933,10 @@ export class ProjectService {
 
   /**
    * Khớp tên thành viên (rút từ thuyết minh) với tài khoản trong Khoa: chính xác
-   * theo tên chuẩn hoá trước, rồi tới giống lỏng (cùng chữ cái đầu + chung một từ
-   * — xem name-match.ts). Không khớp thì `userId` null → coi là cộng sự ngoài.
+   * theo tên chuẩn hoá trước, rồi tới khớp ĐỦ họ tên với đúng MỘT người (thuyết
+   * minh ghi họ tên đầy đủ). Luật lỏng cũ (cùng chữ cái đầu + chung một từ) ghép
+   * "Nguyễn Văn Thanh" với "Nguyễn Văn Thắng" — bỏ từ 5/10/2026. Không khớp thì
+   * `userId` null → coi là cộng sự ngoài, người khai tự chọn lại.
    */
   private async khopThanhVien(ds: ThanhVienOcr[]) {
     if (!ds.length) return [];
@@ -878,7 +959,10 @@ export class ProjectService {
     return ds.map((m) => {
       const nn = normalizeName(m.name);
       let hit = cands.find((c) => c.norms.includes(nn));
-      if (!hit) hit = cands.find((c) => looselyMatches(m.name, c.displayName));
+      if (!hit) {
+        const du = cands.filter((c) => khopHoTen(m.name, c.displayName) === 'du');
+        if (du.length === 1) hit = du[0];
+      }
       return {
         name: m.name,
         role: m.role,
@@ -1200,9 +1284,17 @@ export class ProjectService {
             //
             // Cố ý KHÔNG kèm `userId: { not: null }` như bộ lọc ở trên: chỗ đó
             // quyết định dòng nào được GỬI, còn đây là đếm ai được CHIA.
+            //
+            // ĐẾM CẢ NGƯỜI CHƯA BẤM XÁC NHẬN, chỉ bỏ người đã bấm "không phải
+            // tôi" (Khoa chốt 4/10/2026). Xác nhận quyết định CHÍNH NGƯỜI ĐÓ có
+            // được tính giờ không — dòng của họ chỉ được gửi khi CONFIRMED, xem
+            // `removed` — chứ không quyết định phần của họ có tồn tại hay không.
+            // Đếm riêng người đã xác nhận thì người khai hưởng trọn đề tài cho tới
+            // khi đồng nghiệp chịu vào bấm (đo 4/10: một chủ nhiệm hưởng 100% hai
+            // đề tài vì thành viên chưa bấm; cả Khoa dư 1.117 giờ).
             members: {
-              where: { claimStatus: 'CONFIRMED' },
-              select: { id: true },
+              where: { claimStatus: { not: 'REJECTED' } },
+              select: { id: true, role: true, userId: true, affiliation: true },
             },
             // Minh chứng để ACADsoom lấy link về (xem mapped.evidences dưới).
             evidences: {
@@ -1264,6 +1356,14 @@ export class ProjectService {
           // Tối thiểu 1: đề tài một mình chủ nhiệm vẫn là một mẫu số hợp lệ, và
           // 0 lọt sang bên kia thành phép chia cho không.
           memberCount: Math.max(1, p.members.length),
+          // Đề tài có "tác giả chính thuộc Trường" không (Phụ lục 2). ACADsoom
+          // không tự suy được: nó chỉ thấy dòng của tài khoản ĐÃ xác nhận, nên chủ
+          // nhiệm chưa bấm, hoặc chủ nhiệm là người khoa khác của KHTN (không có
+          // tài khoản ở đây), đều bị coi là ngoài Trường — thành viên hưởng P/T
+          // thay vì 2/3·P/T. Xem chuNhiemThuocTruong.
+          leadAtSchool: p.members.some(
+            (m) => m.role === 'LEAD' && chuNhiemThuocTruong(m),
+          ),
           email: r.user?.email ?? null,
           removed:
             p.deletedAt !== null ||
@@ -1276,4 +1376,46 @@ export class ProjectService {
     if (!since) return { items: mapped.map((m) => m.item) };
     return pageBySince(mapped, query.limit);
   }
+}
+
+/**
+ * Đề tài đã ĐÓNG (nghiệm thu / không hoàn thành) chưa — chỉ khi đó mốc chốt
+ * (finishedYear/finishedMonth) mới có nghĩa.
+ *
+ * Đang thực hiện mà còn mốc chốt là dữ liệu hỏng: form phys-profile từng gửi
+ * cả ô đã ẩn (chọn "Đã nghiệm thu" → tự điền tháng → bị chặn vì thiếu biên bản
+ * → chuyển ngược lại), và ACADsoom coi đó là nghiệm thu sớm, dồn hết phần tháng
+ * còn lại vào một kỳ (3/10/2026: B2026-18-18 bị dồn 24/24 tháng). Nên lúc ghi,
+ * trạng thái chưa đóng thì xoá mốc chốt — mọi bên gọi, không chỉ form.
+ */
+export function daDong(status: string | null | undefined): boolean {
+  return status === 'COMPLETED' || status === 'FAILED';
+}
+
+/**
+ * Mã đề tài để SO TRÙNG: bỏ mọi khoảng trắng, không phân biệt hoa thường —
+ * "t2025 - 44" là T2025-44. Ô không có chữ số ("N/A", "chưa có", "-") là điền
+ * cho có, không phải mã: trả null để không chặn nhầm hai đề tài cùng chưa có mã.
+ */
+export function chuanHoaMaDeTai(
+  code: string | null | undefined,
+): string | null {
+  const ma = (code ?? '').replace(/\s+/g, '').toUpperCase();
+  return ma.length >= 3 && /\d/.test(ma) ? ma : null;
+}
+
+/**
+ * Chủ nhiệm (một dòng thành viên) có THUỘC TRƯỜNG không. Có tài khoản ở web Khoa
+ * thì thuộc Trường, trừ khi chính dòng đó ghi cơ quan ngoài; người ngoài hệ
+ * thống thì chỉ khi ghi rõ "Thuộc Trường" / "Đồng thời Trường và nơi khác" —
+ * người khoa khác của KHTN làm chủ nhiệm (đề tài mã ĐHQG "-18-").
+ */
+export function chuNhiemThuocTruong(m: {
+  userId: string | null;
+  affiliation: string | null;
+}): boolean {
+  if (m.userId) {
+    return !['non_school', 'vnu', 'foreign'].includes(m.affiliation ?? '');
+  }
+  return m.affiliation === 'school' || m.affiliation === 'double';
 }

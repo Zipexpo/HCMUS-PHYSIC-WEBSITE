@@ -1331,3 +1331,43 @@ model StagedUpload {
   @@index([uploadedBy])
   @@index([createdAt])
 }
+
+/// Bảng xếp hạng tạp chí SCImago (SJR) MỘT năm — quản trị nạp tệp CSV ("Download
+/// data" ở journalrank.php) mỗi năm. Dùng để GỢI Ý mã Phụ lục 2 lúc khai (mục 1.1);
+/// hạng TRONG NGÀNH (TOP 20) tính lúc nạp theo SJR giảm dần, như trang SCImago.
+model JournalRanking {
+  id           String   @id @default(cuid())
+  year         Int
+  sourceId     String
+  title        String
+  /// journal · book series · conference and proceedings · trade journal
+  type         String
+  /// ISSN 8 ký tự, không gạch (cả bản in lẫn điện tử).
+  issns        String[]
+  sjr          Float?
+  bestQuartile String?
+  /// Mã Phụ lục 2 theo RIÊNG bảng năm này (1.1a…1.1e; 2.1e cho kỷ yếu).
+  code         String?
+  /// [{ name, quartile, rank, total }] — hạng trong từng ngành.
+  categories   Json
+  createdAt    DateTime @default(now())
+
+  @@unique([year, sourceId])
+  @@index([year])
+  @@index([issns], type: Gin)
+}
+
+/// Xếp hạng hội nghị CORE (portal.core.edu.au/conf-ranks) — Phụ lục 2 mục 2.1.
+/// Mỗi phiên bản (CORE2023, ICORE2026…) một nhóm dòng; nạp lại là thay trọn nhóm.
+model ConferenceRanking {
+  id        String   @id @default(cuid())
+  source    String
+  title     String
+  acronym   String?
+  /// A*, A, B, C, Australasian, National, Unranked…
+  rank      String
+  createdAt DateTime @default(now())
+
+  @@unique([source, title])
+  @@index([acronym])
+}
