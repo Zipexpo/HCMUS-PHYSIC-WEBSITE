@@ -11,12 +11,12 @@
 # so `docker compose up --no-build` expects images named hcmus-cms-{admin,backend}.
 set -euo pipefail
 
-HOST=103.88.121.212
+HOST=103.88.122.23
 PORT=63379
 USER=vlkt
 DIR='~/hcmus-cms'
-API=http://103.88.121.212:3001
-SITE=http://103.88.121.212:3002
+API=http://103.88.122.23:3001
+SITE=http://103.88.122.23:3002
 ARCHIVE=/tmp/hcmus-imgs.tar.gz
 
 # sshpass fast-path if SANDBOX_PASS is set and sshpass is installed
@@ -53,8 +53,8 @@ $SSH "$USER@$HOST" "cd $DIR && \
 
 echo
 echo "DONE. Verify:"
-echo "  http://103.88.121.212:3000            (admin — Help Center X/VI-EN, guides, composer status)"
-echo "  http://103.88.121.212:3002/vi         (public — news feed unchanged; orphan posts now hidden)"
+echo "  http://103.88.122.23:3000            (admin — Help Center X/VI-EN, guides, composer status)"
+echo "  http://103.88.122.23:3002/vi         (public — news feed unchanged; orphan posts now hidden)"
 echo
 echo "OPTIONAL DB cleanup (NOT required — app runs fine with the inert leftover"
 echo "enum value + 2 columns). Do NOT run the db-setup service: it re-seeds and"

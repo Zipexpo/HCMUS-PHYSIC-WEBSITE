@@ -1,12 +1,12 @@
 # Deploy — HCMUS Physics CMS on the CentOS 7.9 sandbox
 
-Target: `103.88.121.212`, SSH port `63379`, user `vlkt`. Specs: 4 vCPU / 4 GB / 50 GB.
+Target: `103.88.122.23`, SSH port `63379`, user `vlkt`. Specs: 4 vCPU / 4 GB / 50 GB.
 
 > **Before anything**: the server was unreachable (`ping` → *Destination host
 > unreachable*) from both this tool and the user's own machine. Confirm you can
 > reach it first — likely you must be on the campus network / school VPN, or ask
 > cô to open the firewall for your public IP. Nothing below works until
-> `ssh -p 63379 vlkt@103.88.121.212` connects.
+> `ssh -p 63379 vlkt@103.88.122.23` connects.
 
 ## Why Docker (not native)
 
@@ -35,7 +35,7 @@ From your machine (that can reach the box):
 # option A — rsync (excludes the big uploads/dump/node_modules)
 rsync -az -e "ssh -p 63379" --exclude node_modules --exclude .next \
   --exclude backend/uploads --exclude 'backend/initialScript/migrate-legacy/dump' \
-  ./ vlkt@103.88.121.212:~/hcmus-cms/
+  ./ vlkt@103.88.122.23:~/hcmus-cms/
 # option B — git clone on the box (if the repo is reachable/authorized)
 ```
 Legacy media (`backend/uploads/legacy`, ~3.9 GB) is excluded above. Body images
@@ -45,15 +45,15 @@ locally: `rsync -az -e "ssh -p 63379" backend/uploads/ vlkt@...:~/hcmus-cms/back
 ### 2. Create env files (on the box, in `~/hcmus-cms`)
 ```bash
 cp deploy/.env.prod.example .env
-nano .env            # set POSTGRES_PASSWORD + NEXT_PUBLIC_API_URL=http://103.88.121.212:3001
+nano .env            # set POSTGRES_PASSWORD + NEXT_PUBLIC_API_URL=http://103.88.122.23:3001
 ```
 `backend/.env` (app secrets) — start from the dev one but **override** these for the box:
 ```
 NODE_ENV=production
 REDIS_URL=redis://redis:6379
 # DATABASE_URL is overridden by compose (points at the db service) — value here is ignored
-FRONTEND_URL=http://103.88.121.212:3002
-FRONTEND_URLS=http://103.88.121.212:3002,http://103.88.121.212:3000
+FRONTEND_URL=http://103.88.122.23:3002
+FRONTEND_URLS=http://103.88.122.23:3002,http://103.88.122.23:3000
 PUBLIC_REVALIDATE_URL=http://public:3002
 REVALIDATE_TOKEN=<same token as frontend-public uses>
 ADMIN_EMAIL=...        # seeded super-admin login
@@ -74,9 +74,9 @@ is slow (~10–20 min on 4 GB; swap prevents OOM).
 
 ### 4. Verify
 ```
-http://103.88.121.212:3002/vi     # public site
-http://103.88.121.212:3000        # admin (login with ADMIN_EMAIL/PASSWORD)
-http://103.88.121.212:3001/page-layouts/slug/trang-chu   # API
+http://103.88.122.23:3002/vi     # public site
+http://103.88.122.23:3000        # admin (login with ADMIN_EMAIL/PASSWORD)
+http://103.88.122.23:3001/page-layouts/slug/trang-chu   # API
 ```
 
 ## ⚠️ Known risk — the `public` image build
@@ -112,5 +112,5 @@ pnpm workspace install. I could **not** test this build (no server access). If i
   public + admin origins.
 
 ## Optional — front with nginx (expose only :80)
-Put nginx in front so users hit `http://103.88.121.212/` (proxy `/` → public:3002,
+Put nginx in front so users hit `http://103.88.122.23/` (proxy `/` → public:3002,
 `/admin` → admin:3000, `/api` → backend:3001). Not required for a sandbox demo.

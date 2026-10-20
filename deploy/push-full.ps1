@@ -16,7 +16,7 @@
 $ErrorActionPreference = 'Stop'
 
 # --- server settings ---
-$HostIP    = '103.88.121.212'
+$HostIP    = '103.88.122.23'
 $Port      = '63379'
 $User      = 'vlkt'
 $RemoteDir = '~/hcmus-cms'

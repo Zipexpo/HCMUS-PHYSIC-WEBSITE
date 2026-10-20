@@ -24,13 +24,13 @@ Repo → Settings → Secrets and variables → Actions.
 **Variables** (tab *Variables*):
 | Tên | Giá trị |
 |---|---|
-| `PUBLIC_API_URL` | `http://103.88.121.212:3001` |
-| `PUBLIC_SITE_URL` | `http://103.88.121.212:3002` |
+| `PUBLIC_API_URL` | `http://103.88.122.23:3001` |
+| `PUBLIC_SITE_URL` | `http://103.88.122.23:3002` |
 
 **Secrets** (tab *Secrets*):
 | Tên | Giá trị |
 |---|---|
-| `SANDBOX_HOST` | `103.88.121.212` |
+| `SANDBOX_HOST` | `103.88.122.23` |
 | `SANDBOX_PORT` | `63379` |
 | `SANDBOX_USER` | `vlkt` |
 | `SANDBOX_SSH_KEY` | **private key** của cặp khóa deploy (xem bên dưới) |
@@ -40,7 +40,7 @@ Repo → Settings → Secrets and variables → Actions.
 ```bash
 ssh-keygen -t ed25519 -f deploy_key -N "" -C "gh-actions-deploy"
 # thêm public key vào box:
-ssh -p 63379 vlkt@103.88.121.212 'mkdir -p ~/.ssh && cat >> ~/.ssh/authorized_keys' < deploy_key.pub
+ssh -p 63379 vlkt@103.88.122.23 'mkdir -p ~/.ssh && cat >> ~/.ssh/authorized_keys' < deploy_key.pub
 # dán NỘI DUNG deploy_key (private) vào secret SANDBOX_SSH_KEY, rồi xóa file local.
 ```
 

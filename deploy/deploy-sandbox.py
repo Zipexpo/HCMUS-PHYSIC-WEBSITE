@@ -17,7 +17,7 @@ import time
 
 import paramiko
 
-HOST, PORT, USER = "103.88.121.212", 63379, "vlkt"
+HOST, PORT, USER = "103.88.122.23", 63379, "vlkt"
 REMOTE_DIR = "/home/vlkt/hcmus-cms"
 COMPOSE = f"docker compose -f {REMOTE_DIR}/docker-compose.sandbox.yml"
 

@@ -7,7 +7,7 @@ Dùng: tunnel.py <local_port>   (chạy nền, Ctrl-C để dừng)
 """
 import select, socket, socketserver, sys, threading, pathlib, paramiko
 
-HOST, PORT, USER = "103.88.121.212", 63379, "vlkt"
+HOST, PORT, USER = "103.88.122.23", 63379, "vlkt"
 PW = pathlib.Path.home().joinpath(".hcmus-sbpass").read_text().strip()
 REMOTE = ("172.18.0.3", 5432)  # hcmus-cms-db-1 trong mạng docker của box
 LOCAL_PORT = int(sys.argv[1]) if len(sys.argv) > 1 else 15432

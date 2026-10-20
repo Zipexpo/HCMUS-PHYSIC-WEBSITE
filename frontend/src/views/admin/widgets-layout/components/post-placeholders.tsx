@@ -263,12 +263,32 @@ const balanceColumnWidths = (inner: string): string => {
 };
 
 const INLINE_TAGS = "span|strong|em|b|i|u|font";
+// Khoảng trắng ĐẦU đoạn: (1) thẻ mở, (2) dãy khoảng trắng, (3) phần đuôi khi đoạn CHỈ có khoảng trắng.
+//
+// Dãy (2) khớp NGUYÊN KHỐI bằng lookahead + backreference (JS không có atomic group). Bản cũ viết
+// `(?:&nbsp;|&#160;|\u00a0|\s)+(?!…)`: \u00a0 vốn nằm trong \s nên mỗi NBSP có HAI cách khớp, và khi
+// lookahead phía sau thất bại thì máy regex thử hết 2^n cách — 30 ký tự trắng là cả tỷ bước. Đo
+// 19/10/2026: 44 bài tin cũ có ≥30 ký tự trắng liền nhau; mở một bài là trang công khai đứng 100% CPU
+// hàng phút, watchdog phải khởi động lại 5–36 lần mỗi ngày suốt tháng 10.
 const LEADING_NBSP_RE = new RegExp(
   `(<p\\b[^>]*>(?:\\s*<(?:${INLINE_TAGS})\\b[^>]*>)*)` +
-    `(?:&nbsp;|&#160;|\\u00a0|\\s)+` +
-    `(?!(?:<\\/(?:${INLINE_TAGS})>|\\s)*<\\/p>)`,
+    `(?=((?:&nbsp;|&#160;|\\s)+))\\2` +
+    `((?:<\\/(?:${INLINE_TAGS})>|\\s)*<\\/p>)?`,
   "gi",
 );
+// Giữ đúng kết quả của bản cũ: có chữ phía sau → bỏ hết khoảng trắng đầu đoạn; đoạn CHỈ có khoảng
+// trắng → giữ từ thực thể &nbsp;/&#160; cuối cùng trở đi (bản cũ quay lui đúng tới chỗ đó).
+const stripLeadingNbsp = (
+  _m: string,
+  open: string,
+  run: string,
+  tail?: string,
+): string => {
+  if (tail === undefined) return open;
+  const lower = run.toLowerCase();
+  const last = Math.max(lower.lastIndexOf("&nbsp;"), lower.lastIndexOf("&#160;"));
+  return open + (last >= 0 ? run.slice(last) : run) + tail;
+};
 
 import { DynamicIcon } from "@/components/admin/icons";
 import { type LocalizedString, t } from "@/lib/i18n";
@@ -458,8 +478,8 @@ function PostBodyRender({
   }
   const rawSource = injectedSource || t(defaultMarkdown, locale) || "";
   const source = markNumericCells(replaceBrokenMathImages(rawSource))
-    .replace(/(?:<p>(?:&nbsp;|&#160;| |\s)*<\/p>\s*){2,}/gi, "<p>&nbsp;</p>")
-    .replace(LEADING_NBSP_RE, "$1")
+    .replace(/(?:<p>(?:&nbsp;|&#160;|\s)*<\/p>\s*){2,}/gi, "<p>&nbsp;</p>")
+    .replace(LEADING_NBSP_RE, stripLeadingNbsp)
     .replace(
       /<iframe[^>]*src=["']https?:\/\/phys\.hcmus\.edu\.vn[^"']*["'][^>]*><\/iframe>/gi,
       "",
@@ -705,8 +725,8 @@ export function LegacyHtmlRender({
   const source = markNumericCells(replaceBrokenMathImages(raw))
     // Gộp CHUỖI đoạn rỗng "<p>&nbsp;</p>" (rác Word/Joomla) — nhiều trang legacy
     // có 20-30 đoạn nbsp liên tiếp giữa 2 bảng → khoảng trống khổng lồ. Gộp về 1.
-    .replace(/(?:<p>(?:&nbsp;|&#160;| |\s)*<\/p>\s*){2,}/gi, "<p>&nbsp;</p>")
-    .replace(LEADING_NBSP_RE, "$1")
+    .replace(/(?:<p>(?:&nbsp;|&#160;|\s)*<\/p>\s*){2,}/gi, "<p>&nbsp;</p>")
+    .replace(LEADING_NBSP_RE, stripLeadingNbsp)
     .replace(
       /(<(?:img|iframe)[^>]+src=["'])(\/uploads\/[^"']+)(["'])/gi,
       (_m, pre: string, src: string, post: string) =>

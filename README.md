@@ -120,7 +120,7 @@ NEXT_PUBLIC_IMAGE_FETCH_ORIGIN=http://backend:3001
 ### 4.5. Trang quản trị chạy HTTPS
 Admin được phục vụ qua Caddy ở **https://phys.hcmus.edu.vn:3000** (Caddy giữ cổng 3000 trên host — container admin KHÔNG map cổng 3000 nữa; Caddy proxy nội bộ tới `admin:3000`). App tự chuyển `/` → `/admin` nên chỉ cần gõ `:3000`. Có thêm `:8443` làm dự phòng. Bắt buộc HTTPS vì trình duyệt tự nâng http→https; admin build với API `https://phys.hcmus.edu.vn/be` để tránh mixed-content.
 
-*(Muốn URL không cần cổng: thêm DNS `admin.phys.hcmus.edu.vn → 103.88.121.212` rồi thêm khối `admin.phys.hcmus.edu.vn { reverse_proxy admin:3000 }` vào `deploy/Caddyfile`.)*
+*(Muốn URL không cần cổng: thêm DNS `admin.phys.hcmus.edu.vn → 103.88.122.23` rồi thêm khối `admin.phys.hcmus.edu.vn { reverse_proxy admin:3000 }` vào `deploy/Caddyfile`.)*
 
 ---
 
