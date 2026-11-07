@@ -290,14 +290,28 @@ export function vietTatUngVien(s: string): string[] {
 }
 
 const tu = (s: string) => new Set(chuanTenHoiNghi(s).split(' ').filter(Boolean));
-const giongNhau = (a: string, b: string) => {
-  const x = tu(a);
-  const y = tu(b);
+const tiLeChung = (x: Set<string>, y: Set<string>) => {
   if (!x.size || !y.size) return 0;
   let chung = 0;
   for (const t of x) if (y.has(t)) chung++;
   return chung / (x.size + y.size - chung);
 };
+const giongNhau = (a: string, b: string) => tiLeChung(tu(a), tu(b));
+
+/** Chữ có ở tên hội nghị nào cũng được, không nói lên đây là hội nghị nào. */
+const TU_CHUNG = new Set([
+  'international', 'conference', 'conferences', 'symposium', 'workshop',
+  'congress', 'meeting', 'forum', 'annual', 'ieee', 'acm',
+]);
+const tuRieng = (s: string) => new Set([...tu(s)].filter((t) => !TU_CHUNG.has(t)));
+
+/**
+ * Hai hội nghị cùng chữ viết tắt phải trùng cả phần tên RIÊNG. Đo trên cả tên thì
+ * "International Conference on" đã đủ qua ngưỡng: ATC 2025 (Advanced Technologies
+ * for Communications, không có trong CORE) từng khớp ATC của CORE (Advanced and
+ * Trusted Computing, hạng C) và gợi ý nâng 2.1e → 2.1d cho cả ba bài.
+ */
+const giongTenRieng = (a: string, b: string) => tiLeChung(tuRieng(a), tuRieng(b));
 
 /**
  * Hội nghị trong CORE khớp với tên kỷ yếu. Ưu tiên chữ viết tắt (kèm ít nhiều chữ
@@ -318,7 +332,13 @@ export function khopHoiNghi(venue: string, ds: HoiNghiCore[]): HoiNghiCore[] {
     const h = nhom[0];
     const g = giongNhau(venue, h.title);
     const trungVietTat = nhom.some((x) => x.acronym && vt.has(x.acronym.toUpperCase()));
-    const diem = trungVietTat ? (g >= 0.3 ? 1 + g : 0) : g >= 0.85 ? g : 0;
+    const diem = trungVietTat
+      ? giongTenRieng(venue, h.title) >= 0.3
+        ? 1 + g
+        : 0
+      : g >= 0.85
+        ? g
+        : 0;
     if (diem > tot.diem) tot = { diem, ds: nhom };
   }
   return tot.ds;

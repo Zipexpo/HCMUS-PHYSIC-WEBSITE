@@ -153,6 +153,21 @@ describe('CORE — hội nghị (Phụ lục 2 mục 2.1)', () => {
     // Bài 2025: ICORE2026 chưa ra → chỉ CORE2023 (B) → 2.1c.
     expect(goiYTheoCore(khop, 2025).ma).toBe('2.1c');
   });
+  it('cùng viết tắt mà khác tên riêng thì không khớp, dù trùng "International Conference on"', () => {
+    const atc = [
+      {
+        title:
+          'International Conference on Advanced and Trusted Computing (was International Conference on Autonomic and Trusted Computing)',
+        acronym: 'ATC',
+        source: 'CORE2023',
+        rank: 'C',
+      },
+    ];
+    expect(
+      khopHoiNghi('2025 International Conference on Advanced Technologies for Communications (ATC)', atc),
+    ).toEqual([]);
+    expect(khopHoiNghi('2025 IEEE International Conference on Advanced and Trusted Computing (ATC)', atc)).toHaveLength(1);
+  });
   it('không bắt nhầm hội nghị khác tên dù trùng vài chữ', () => {
     expect(khopHoiNghi('International Conference on Image Processing and Machine Vision (IPMV 2026)', ds)).toEqual([]);
   });
