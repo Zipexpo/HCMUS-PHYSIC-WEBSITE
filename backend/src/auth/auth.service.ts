@@ -16,6 +16,7 @@ import {
   SetStarredBodyType,
 } from './auth.model';
 import { RoleName } from '../shared/constants/role.constants';
+import { isFacultyWide } from '../shared/helpers';
 import { VerificationMethod } from '../shared/constants/auth.constants';
 import {
   InvalidEmailException,
@@ -57,6 +58,12 @@ export class AuthService {
     this.authRepository.touchLastLogin(userId).catch(() => undefined);
     return {
       ...user,
+      // Tai khoan nay dang bai co phai cho Khoa duyet khong. Tinh o day bang
+      // DUNG luat ma PostService.needsApproval dung, de giao dien khoi tu suy
+      // dien va khoi lech voi backend.
+      mustSubmitForReview:
+        !isFacultyWide(user.role, user.departmentId) &&
+        (user.department?.requiresApproval ?? false),
       starredLayoutIds: user.preference?.starredLayoutIds ?? [],
       starredWidgetIds: user.preference?.starredWidgetIds ?? [],
     };
@@ -79,6 +86,40 @@ export class AuthService {
       user.password,
     );
     if (!isPasswordMatch) throw InvalidPasswordException;
+    await this.authRepository.touchLastLogin(user.id);
+    return this.generateTokens({
+      userId: user.id,
+      roleName: user.role as RoleName,
+      departmentId: user.departmentId,
+    });
+  }
+
+  /**
+   * Dang nhap bang MA GUI QUA EMAIL, khong can mat khau.
+   *
+   * Nhieu giang vien chua bao gio dat mat khau cho tai khoan web Khoa — ho vao
+   * cac he khac bang SSO. Khong co duong nay thi ho khong dung duoc he phieu ho
+   * tro, du tai khoan van ton tai.
+   *
+   * Ma phai dung loai LOGIN: ma xin cho viec quen mat khau KHONG dang nhap
+   * duoc, de mot ma lo lot ra ngoai cung chi lam duoc dung mot viec.
+   */
+  async loginWithOtp(body: { email: string; code: string }) {
+    await this.validateVerificationCode({
+      email: body.email,
+      code: body.code,
+      type: VerificationMethod.Login,
+    });
+    const user = await this.authRepository.findUniqueUserByEmail(body.email);
+    if (!user) throw InvalidEmailException;
+    if (!user.isActive) throw InactiveAccountException;
+
+    // Dung xong XOA ngay: ma chi dung duoc MOT lan, ai doc trom email cung
+    // khong vao lai duoc.
+    await this.authRepository.deleteVerificationCode({
+      email: body.email,
+      type: VerificationMethod.Login,
+    });
     await this.authRepository.touchLastLogin(user.id);
     return this.generateTokens({
       userId: user.id,

@@ -5,14 +5,16 @@ import { Image as ImageIcon, Mail, Search, User } from "lucide-react";
 import { usePathname } from "next/navigation";
 import { useEffect, useRef, useState } from "react";
 import { DynamicIcon } from "@/components/admin/icons";
-import {
-  type DeptStaffPerson,
-  departmentStaffApi,
-} from "@/lib/api";
+import { type DeptStaffPerson, departmentStaffApi } from "@/lib/api";
 import { type LocalizedString, t } from "@/lib/i18n";
 import { useLocale } from "@/lib/locale-context";
 import { colorField } from "../fields/color-field";
 import { localizedSummary } from "../fields/item-summary";
+import {
+  localizedTextareaField,
+  localizedTextField,
+} from "../fields/localized-text-field";
+import { mediaPickerField } from "../fields/media-picker-field";
 import {
   resolveSizeStyle,
   type SizeStyle,
@@ -23,11 +25,6 @@ import {
   type TextStyle,
   textStyleField,
 } from "../fields/text-style-field";
-import {
-  localizedTextareaField,
-  localizedTextField,
-} from "../fields/localized-text-field";
-import { mediaPickerField } from "../fields/media-picker-field";
 import { resolveMediaSrc } from "./media-src";
 
 const withLocalePrefix = (
@@ -1257,7 +1254,11 @@ function DepartmentStaffAutoRender({
   // trống thì dựng từ tên bộ môn (backend trả về).
   const heroTitle =
     titleText ||
-    (deptName ? (en ? `${deptName} Department` : `Đội ngũ Bộ môn ${deptName}`) : "");
+    (deptName
+      ? en
+        ? `${deptName} Department`
+        : `Đội ngũ Bộ môn ${deptName}`
+      : "");
   const heroEyebrowText = t(heroEyebrow, locale) || (en ? "Staff" : "Nhân sự");
 
   const cat = (c: string) => people.filter((p) => p.category === c);
@@ -1268,6 +1269,11 @@ function DepartmentStaffAutoRender({
   const mainStaff = people.filter(
     (p) => p.category === "giang-vien" || p.category === "giao-vu",
   );
+  // Con số "N nhân sự" KHÔNG tính thỉnh giảng: họ không thuộc biên chế bộ môn,
+  // gộp vào làm bộ môn trông đông hơn thực tế. Thỉnh giảng vẫn có ô riêng bên
+  // cạnh, nên không ai bị giấu đi — chỉ là không cộng vào tổng.
+  // Nhờ vậy tổng cũng khớp với các ô còn lại: 2 + 19 + 1 = 22.
+  const staffCount = people.length - visiting.length;
 
   const matchQ = (p: DeptStaffPerson) => {
     const q = deaccent(query.trim());
@@ -1281,10 +1287,26 @@ function DepartmentStaffAutoRender({
 
   const TABS = [
     { k: "all", label: en ? "All" : "Tất cả", n: people.length },
-    { k: "lanh-dao", label: en ? "Leadership" : "Ban chủ nhiệm", n: leaders.length },
-    { k: "giang-vien", label: en ? "Lecturers" : "Giảng viên", n: lecturers.length },
-    { k: "giao-vu", label: en ? "Academic Admin" : "Giáo vụ", n: admins.length },
-    { k: "thinh-giang", label: en ? "Visiting" : "Thỉnh giảng", n: visiting.length },
+    {
+      k: "lanh-dao",
+      label: en ? "Leadership" : "Ban chủ nhiệm",
+      n: leaders.length,
+    },
+    {
+      k: "giang-vien",
+      label: en ? "Lecturers" : "Giảng viên",
+      n: lecturers.length,
+    },
+    {
+      k: "giao-vu",
+      label: en ? "Academic Admin" : "Giáo vụ",
+      n: admins.length,
+    },
+    {
+      k: "thinh-giang",
+      label: en ? "Visiting" : "Thỉnh giảng",
+      n: visiting.length,
+    },
   ].filter((c) => c.k === "all" || c.n > 0);
 
   const statBits = [
@@ -1360,7 +1382,7 @@ function DepartmentStaffAutoRender({
             {people.length > 0 && (
               <div className="mt-7 flex flex-wrap items-center justify-center gap-2 md:gap-2.5">
                 <span className="rounded-full bg-white/20 px-3.5 py-1.5 text-[13px] font-semibold ring-1 ring-white/15 backdrop-blur-sm">
-                  {people.length} {en ? "staff" : "nhân sự"}
+                  {staffCount} {en ? "staff" : "nhân sự"}
                 </span>
                 {statBits.map((b) => (
                   <span
@@ -1389,164 +1411,167 @@ function DepartmentStaffAutoRender({
           </div>
         )}
 
-      {!slug ? (
-        <p className="text-center text-sm text-slate-500 dark:text-slate-400 py-10">
-          {isEditing
-            ? "Khối “Đội ngũ bộ môn”: đặt trên trang “…/nhan-su” để tự nhận bộ môn, hoặc nhập slug bộ môn ở ô bên phải để xem thử."
-            : ""}
-        </p>
-      ) : status === "loading" ? (
-        <div className="grid grid-cols-2 gap-x-5 gap-y-8 sm:grid-cols-3 md:gap-x-7 md:gap-y-10">
-          {Array.from({ length: 6 }).map((_, i) => (
-            <div key={i} className="animate-pulse">
-              <div className="w-full aspect-[3/4] rounded-2xl bg-slate-200 dark:bg-slate-800" />
-              <div className="mt-3 h-3 w-3/4 mx-auto rounded bg-slate-200 dark:bg-slate-800" />
-              <div className="mt-2 h-3 w-1/2 mx-auto rounded bg-slate-200 dark:bg-slate-800" />
-            </div>
-          ))}
-        </div>
-      ) : status === "error" ? (
-        <p className="text-center text-sm text-slate-500 dark:text-slate-400 py-10">
-          {en
-            ? "Unable to load the staff list."
-            : "Không tải được danh sách nhân sự."}
-        </p>
-      ) : people.length === 0 ? (
-        <p className="text-center text-sm text-slate-500 dark:text-slate-400 py-10">
-          {en ? "No staff yet." : "Chưa có nhân sự."}
-        </p>
-      ) : (
-        <>
-          {/* Số liệu ĐỘNG — khi có hero thì số liệu đã nằm trong hero, khỏi lặp. */}
-          {!showHero && (
-            <p className="text-center text-[13.5px] text-slate-500 dark:text-slate-400 mb-6">
-              <span className="font-bold text-slate-700 dark:text-slate-200">
-                {people.length}
-              </span>{" "}
-              {en ? "staff" : "nhân sự"}
-              {statBits.map((b) => (
-                <span key={b.label}>
-                  {" · "}
-                  <span className="font-semibold text-slate-600 dark:text-slate-300">
-                    {b.n}
-                  </span>{" "}
-                  {b.label}
-                </span>
-              ))}
-            </p>
-          )}
-
-          {/* Thanh lọc + ô tìm kiếm */}
-          <div className="mb-9 flex flex-col gap-3 sm:flex-row sm:items-center">
-            <div className="flex flex-wrap gap-2">
-              {TABS.map((c) => {
-                const active = tab === c.k;
-                return (
-                  <button
-                    key={c.k}
-                    type="button"
-                    onClick={() => setTab(c.k)}
-                    className={`inline-flex items-center gap-1.5 rounded-full px-3.5 py-1.5 text-[13px] font-semibold transition-colors ${
-                      active
-                        ? "text-white shadow-sm"
-                        : "bg-slate-100 text-slate-600 hover:bg-slate-200 dark:bg-slate-800 dark:text-slate-300 dark:hover:bg-slate-700"
-                    }`}
-                    style={active ? { backgroundColor: accent } : undefined}
-                  >
-                    {c.label}
-                    <span
-                      className={`text-[11px] ${active ? "text-white/80" : "text-slate-400"}`}
-                    >
-                      {c.n}
-                    </span>
-                  </button>
-                );
-              })}
-            </div>
-            <div className="relative sm:ml-auto sm:w-64">
-              <Search className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
-              <input
-                value={query}
-                onChange={(e) => setQuery(e.target.value)}
-                placeholder={en ? "Search by name…" : "Tìm theo tên…"}
-                className="w-full rounded-full border border-slate-200 bg-white pl-9 pr-3 py-2 text-[13px] text-slate-700 placeholder:text-slate-400 focus:border-blue-400 focus:outline-none focus:ring-2 focus:ring-blue-500/30 dark:border-slate-700 dark:bg-[#141d2e] dark:text-slate-200"
-              />
-            </div>
+        {!slug ? (
+          <p className="text-center text-sm text-slate-500 dark:text-slate-400 py-10">
+            {isEditing
+              ? "Khối “Đội ngũ bộ môn”: đặt trên trang “…/nhan-su” để tự nhận bộ môn, hoặc nhập slug bộ môn ở ô bên phải để xem thử."
+              : ""}
+          </p>
+        ) : status === "loading" ? (
+          <div className="grid grid-cols-2 gap-x-5 gap-y-8 sm:grid-cols-3 md:gap-x-7 md:gap-y-10">
+            {Array.from({ length: 6 }).map((_, i) => (
+              <div key={i} className="animate-pulse">
+                <div className="w-full aspect-[3/4] rounded-2xl bg-slate-200 dark:bg-slate-800" />
+                <div className="mt-3 h-3 w-3/4 mx-auto rounded bg-slate-200 dark:bg-slate-800" />
+                <div className="mt-2 h-3 w-1/2 mx-auto rounded bg-slate-200 dark:bg-slate-800" />
+              </div>
+            ))}
           </div>
-
-          {/* Ban chủ nhiệm — nổi bật, nằm ngang */}
-          {vLeaders.length > 0 && (
-            <div className="mb-12">
-              {divider(en ? "Board of Management" : "Ban chủ nhiệm", vLeaders.length)}
-              {/* Căn giữa, 2 thẻ lớn — nổi bật hơn lưới giảng viên. */}
-              <div className="grid gap-5 sm:grid-cols-2 sm:gap-6 max-w-3xl mx-auto">
-                {vLeaders.map((p) => (
-                  <LeaderCard
-                    key={p.slug}
-                    person={p}
-                    locale={locale}
-                    isEditing={isEditing}
-                    accent={accent}
-                  />
+        ) : status === "error" ? (
+          <p className="text-center text-sm text-slate-500 dark:text-slate-400 py-10">
+            {en
+              ? "Unable to load the staff list."
+              : "Không tải được danh sách nhân sự."}
+          </p>
+        ) : people.length === 0 ? (
+          <p className="text-center text-sm text-slate-500 dark:text-slate-400 py-10">
+            {en ? "No staff yet." : "Chưa có nhân sự."}
+          </p>
+        ) : (
+          <>
+            {/* Số liệu ĐỘNG — khi có hero thì số liệu đã nằm trong hero, khỏi lặp. */}
+            {!showHero && (
+              <p className="text-center text-[13.5px] text-slate-500 dark:text-slate-400 mb-6">
+                <span className="font-bold text-slate-700 dark:text-slate-200">
+                  {staffCount}
+                </span>{" "}
+                {en ? "staff" : "nhân sự"}
+                {statBits.map((b) => (
+                  <span key={b.label}>
+                    {" · "}
+                    <span className="font-semibold text-slate-600 dark:text-slate-300">
+                      {b.n}
+                    </span>{" "}
+                    {b.label}
+                  </span>
                 ))}
+              </p>
+            )}
+
+            {/* Thanh lọc + ô tìm kiếm */}
+            <div className="mb-9 flex flex-col gap-3 sm:flex-row sm:items-center">
+              <div className="flex flex-wrap gap-2">
+                {TABS.map((c) => {
+                  const active = tab === c.k;
+                  return (
+                    <button
+                      key={c.k}
+                      type="button"
+                      onClick={() => setTab(c.k)}
+                      className={`inline-flex items-center gap-1.5 rounded-full px-3.5 py-1.5 text-[13px] font-semibold transition-colors ${
+                        active
+                          ? "text-white shadow-sm"
+                          : "bg-slate-100 text-slate-600 hover:bg-slate-200 dark:bg-slate-800 dark:text-slate-300 dark:hover:bg-slate-700"
+                      }`}
+                      style={active ? { backgroundColor: accent } : undefined}
+                    >
+                      {c.label}
+                      <span
+                        className={`text-[11px] ${active ? "text-white/80" : "text-slate-400"}`}
+                      >
+                        {c.n}
+                      </span>
+                    </button>
+                  );
+                })}
+              </div>
+              <div className="relative sm:ml-auto sm:w-64">
+                <Search className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
+                <input
+                  value={query}
+                  onChange={(e) => setQuery(e.target.value)}
+                  placeholder={en ? "Search by name…" : "Tìm theo tên…"}
+                  className="w-full rounded-full border border-slate-200 bg-white pl-9 pr-3 py-2 text-[13px] text-slate-700 placeholder:text-slate-400 focus:border-blue-400 focus:outline-none focus:ring-2 focus:ring-blue-500/30 dark:border-slate-700 dark:bg-[#141d2e] dark:text-slate-200"
+                />
               </div>
             </div>
-          )}
 
-          {/* Giảng viên & nhân sự — lưới 3 cột */}
-          {vMain.length > 0 && (
-            <div className="mb-12">
-              {divider(
-                tab === "giao-vu"
-                  ? en
-                    ? "Academic Admin"
-                    : "Giáo vụ"
-                  : en
-                    ? "Faculty & staff"
-                    : "Giảng viên & nhân sự Bộ môn",
-                vMain.length,
-              )}
-              <div className="grid grid-cols-2 gap-x-5 gap-y-8 sm:grid-cols-3 lg:grid-cols-4 md:gap-x-6 md:gap-y-9">
-                {vMain.map((p) => (
-                  <StaffGridCard
-                    key={p.slug}
-                    person={p}
-                    locale={locale}
-                    isEditing={isEditing}
-                  />
-                ))}
+            {/* Ban chủ nhiệm — nổi bật, nằm ngang */}
+            {vLeaders.length > 0 && (
+              <div className="mb-12">
+                {divider(
+                  en ? "Board of Management" : "Ban chủ nhiệm",
+                  vLeaders.length,
+                )}
+                {/* Căn giữa, 2 thẻ lớn — nổi bật hơn lưới giảng viên. */}
+                <div className="grid gap-5 sm:grid-cols-2 sm:gap-6 max-w-3xl mx-auto">
+                  {vLeaders.map((p) => (
+                    <LeaderCard
+                      key={p.slug}
+                      person={p}
+                      locale={locale}
+                      isEditing={isEditing}
+                      accent={accent}
+                    />
+                  ))}
+                </div>
               </div>
-            </div>
-          )}
+            )}
 
-          {/* Thỉnh giảng — section riêng, thẻ gọn */}
-          {vVisiting.length > 0 && (
-            <div className="mb-2">
-              {divider(
-                t(visitingLabel, locale) ||
-                  (en ? "Visiting lecturers" : "Giảng viên thỉnh giảng"),
-                vVisiting.length,
-              )}
-              <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
-                {vVisiting.map((p) => (
-                  <VisitingCard
-                    key={p.slug}
-                    person={p}
-                    locale={locale}
-                    isEditing={isEditing}
-                  />
-                ))}
+            {/* Giảng viên & nhân sự — lưới 3 cột */}
+            {vMain.length > 0 && (
+              <div className="mb-12">
+                {divider(
+                  tab === "giao-vu"
+                    ? en
+                      ? "Academic Admin"
+                      : "Giáo vụ"
+                    : en
+                      ? "Faculty & staff"
+                      : "Giảng viên & nhân sự Bộ môn",
+                  vMain.length,
+                )}
+                <div className="grid grid-cols-2 gap-x-5 gap-y-8 sm:grid-cols-3 lg:grid-cols-4 md:gap-x-6 md:gap-y-9">
+                  {vMain.map((p) => (
+                    <StaffGridCard
+                      key={p.slug}
+                      person={p}
+                      locale={locale}
+                      isEditing={isEditing}
+                    />
+                  ))}
+                </div>
               </div>
-            </div>
-          )}
+            )}
 
-          {totalVisible === 0 && (
-            <p className="text-center text-sm text-slate-500 dark:text-slate-400 py-10">
-              {en ? "No matching staff." : "Không tìm thấy nhân sự phù hợp."}
-            </p>
-          )}
-        </>
-      )}
+            {/* Thỉnh giảng — section riêng, thẻ gọn */}
+            {vVisiting.length > 0 && (
+              <div className="mb-2">
+                {divider(
+                  t(visitingLabel, locale) ||
+                    (en ? "Visiting lecturers" : "Giảng viên thỉnh giảng"),
+                  vVisiting.length,
+                )}
+                <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+                  {vVisiting.map((p) => (
+                    <VisitingCard
+                      key={p.slug}
+                      person={p}
+                      locale={locale}
+                      isEditing={isEditing}
+                    />
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {totalVisible === 0 && (
+              <p className="text-center text-sm text-slate-500 dark:text-slate-400 py-10">
+                {en ? "No matching staff." : "Không tìm thấy nhân sự phù hợp."}
+              </p>
+            )}
+          </>
+        )}
       </section>
     </div>
   );
@@ -1871,9 +1896,7 @@ function FacultyStaffAutoRender({
 
             {visible.length === 0 && (
               <p className="text-center text-sm text-slate-500 dark:text-slate-400 py-10">
-                {en
-                  ? "No matching staff."
-                  : "Không tìm thấy nhân sự phù hợp."}
+                {en ? "No matching staff." : "Không tìm thấy nhân sự phù hợp."}
               </p>
             )}
           </>

@@ -4,11 +4,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
 import { toast } from "react-toastify";
-import {
-  authApi,
-  staticPageApi,
-  type StaticPageListItem,
-} from "@/lib/api";
+import { authApi, type StaticPageListItem, staticPageApi } from "@/lib/api";
 import { isFacultyWide } from "@/lib/department";
 
 const SITE_URL = process.env.NEXT_PUBLIC_SITE_URL || "";
@@ -114,7 +110,9 @@ export function StaticPagesView() {
       });
       window.scrollTo({ top: 0, behavior: "smooth" });
     } catch (e) {
-      toast.error((e as { message?: string }).message || "Không tải được trang");
+      toast.error(
+        (e as { message?: string }).message || "Không tải được trang",
+      );
     }
   };
 
@@ -124,7 +122,7 @@ export function StaticPagesView() {
   const publicUrl = (slug: string) => `${SITE_URL.replace(/\/$/, "")}/${slug}`;
 
   return (
-    <div className="max-w-4xl mx-auto px-6 py-8">
+    <div className="h-full overflow-y-auto max-w-4xl mx-auto px-6 py-8">
       <h1 className="text-xl font-bold text-slate-800 dark:text-slate-100 mb-1">
         Trang HTML tĩnh
       </h1>
@@ -211,9 +209,10 @@ export function StaticPagesView() {
         {form.id ? (
           <div className="mt-1 p-3 rounded-lg border border-dashed border-slate-300 dark:border-slate-600 space-y-2">
             <p className="text-xs text-slate-500 dark:text-slate-400">
-              Microsite dạng <b>thư mục</b>? Nén cả thư mục thành <b>.zip</b> (có{" "}
-              <code>index.html</code> bên trong) rồi tải lên — CSS/JS/ảnh giữ
-              nguyên. Tải lại sẽ ghi đè. Khi có .zip, phần HTML ở trên bị bỏ qua.
+              Microsite dạng <b>thư mục</b>? Nén cả thư mục thành <b>.zip</b>{" "}
+              (có <code>index.html</code> bên trong) rồi tải lên — CSS/JS/ảnh
+              giữ nguyên. Tải lại sẽ ghi đè. Khi có .zip, phần HTML ở trên bị bỏ
+              qua.
             </p>
             <div className="flex items-center gap-2">
               <input
@@ -234,8 +233,8 @@ export function StaticPagesView() {
           </div>
         ) : (
           <p className="text-xs text-slate-400">
-            Trang microsite dạng thư mục (.zip): bấm <b>Thêm trang</b> trước, rồi
-            bấm <b>Sửa</b> để hiện ô tải .zip.
+            Trang microsite dạng thư mục (.zip): bấm <b>Thêm trang</b> trước,
+            rồi bấm <b>Sửa</b> để hiện ô tải .zip.
           </p>
         )}
       </div>

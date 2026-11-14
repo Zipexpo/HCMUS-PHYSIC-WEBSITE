@@ -70,6 +70,13 @@ export const VerifyOTPBodySchema = z.object({
 
 export type VerifyOTPBodyType = z.infer<typeof VerifyOTPBodySchema>;
 
+export const LoginOtpBodySchema = z.object({
+  email: z.email(),
+  code: z.string().length(6),
+});
+
+export type LoginOtpBodyType = z.infer<typeof LoginOtpBodySchema>;
+
 export const ForgotPasswordBodySchema = z
   .object({
     email: z.email(),

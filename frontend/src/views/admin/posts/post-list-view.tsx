@@ -17,7 +17,7 @@ import {
 import { localize } from "@/lib/localized";
 import { buildCategoryOptions, categoryLabel } from "@/lib/post-categories";
 
-type TabKey = "mine" | "published" | "trash";
+type TabKey = "mine" | "review" | "published" | "trash";
 
 // Tập rỗng dùng chung: tạo Set mới mỗi lần render sẽ làm mọi thứ so sánh
 // tham chiếu tưởng là đã đổi.
@@ -337,7 +337,62 @@ export function PostListView() {
   const mineSlice = mineFiltered.slice(mineStart, mineStart + PAGE_SIZE);
 
   const serverPaged = tab === "published" || tab === "trash";
-  const items = tab === "mine" ? mineSlice : rawItems;
+  // ── Hàng đợi duyệt (chỉ admin cấp Khoa mới gọi được; đơn vị gọi sẽ lỗi nên
+  //    chỉ bật khi tài khoản KHÔNG phải loại phải gửi duyệt) ─────────────────
+  const canReview = profileQuery.data
+    ? !profileQuery.data.mustSubmitForReview
+    : false;
+  const reviewQuery = useQuery({
+    queryKey: ["POSTS", "PENDING_REVIEW"],
+    queryFn: postApi.pendingReview,
+    enabled: canReview,
+  });
+  const reviewCount = reviewQuery.data?.length ?? 0;
+
+  const refreshAll = () => {
+    void queryClient.invalidateQueries({ queryKey: ["POSTS"] });
+  };
+
+  const approveMutation = useMutation({
+    // Admin cấp Khoa không vướng cửa duyệt, nên "duyệt" chính là bấm đăng.
+    mutationFn: (id: string) => postApi.publishLayouts(id, null),
+    onSuccess: (res) => {
+      if (!res.ok && res.reason === "no-layout") {
+        toast.warn("Bài chưa có trang public — mở bài ra tạo layout trước");
+        return;
+      }
+      toast.success("Đã duyệt và đăng bài");
+      refreshAll();
+    },
+    onError: () => toast.error("Không duyệt được bài"),
+  });
+
+  const rejectMutation = useMutation({
+    mutationFn: (v: { id: string; note: string }) =>
+      postApi.reject(v.id, v.note),
+    onSuccess: () => {
+      toast.success("Đã trả bài về cho đơn vị");
+      refreshAll();
+    },
+    onError: () => toast.error("Không trả được bài"),
+  });
+
+  const askReject = (id: string, title: string) => {
+    const note = window.prompt(
+      `Trả bài "${title}" về cho đơn vị. Ghi rõ cần sửa gì:`,
+      "",
+    );
+    // null = bấm Huỷ. Chuỗi rỗng = không ghi lý do, vẫn cho trả.
+    if (note === null) return;
+    rejectMutation.mutate({ id, note });
+  };
+
+  const items =
+    tab === "review"
+      ? (reviewQuery.data ?? [])
+      : tab === "mine"
+        ? mineSlice
+        : rawItems;
 
   // Ô chọn ở đầu bảng chỉ thao tác trên các bài ĐANG HIỂN THỊ, không đụng tới
   // những trang khác — người dùng chỉ thấy được từng này bài.
@@ -399,6 +454,15 @@ export function PostListView() {
           {(
             [
               { key: "mine", label: "Bài của tôi", count: mineCount },
+              ...(canReview
+                ? [
+                    {
+                      key: "review" as TabKey,
+                      label: "Chờ duyệt",
+                      count: reviewCount,
+                    },
+                  ]
+                : []),
               {
                 key: "published",
                 label: "Đã xuất bản",
@@ -645,6 +709,33 @@ export function PostListView() {
                               className="px-2 py-1 text-xs text-rose-700 border border-rose-200 rounded-md hover:bg-rose-50 disabled:opacity-50"
                             >
                               Xóa vĩnh viễn
+                            </button>
+                          </div>
+                        ) : tab === "review" ? (
+                          <div className="inline-flex gap-1">
+                            <Link
+                              href={`/admin/posts?id=${post.id}`}
+                              className="px-2 py-1 text-xs text-slate-700 dark:text-slate-200 border border-slate-200 dark:border-slate-800 rounded-md hover:bg-slate-50 dark:hover:bg-[#202c44]"
+                            >
+                              Xem
+                            </Link>
+                            <button
+                              type="button"
+                              onClick={() => approveMutation.mutate(post.id)}
+                              disabled={approveMutation.isPending}
+                              className="px-2 py-1 text-xs font-medium text-white bg-emerald-600 rounded-md hover:bg-emerald-700 disabled:opacity-50"
+                            >
+                              Duyệt &amp; đăng
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() =>
+                                askReject(post.id, localize(post.title, "vi"))
+                              }
+                              disabled={rejectMutation.isPending}
+                              className="px-2 py-1 text-xs text-amber-700 border border-amber-300 rounded-md hover:bg-amber-50 disabled:opacity-50"
+                            >
+                              Trả lại
                             </button>
                           </div>
                         ) : (

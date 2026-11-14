@@ -147,6 +147,8 @@ export function PostComposerView() {
   const [gallery, setGallery] = useState<{ src: string; alt: string }[]>([]);
   const [videoUrl, setVideoUrl] = useState("");
   const [galleryPickerOpen, setGalleryPickerOpen] = useState(false);
+  // Lý do Khoa trả bài về — chỉ có khi bài vừa bị trả.
+  const [reviewNote, setReviewNote] = useState<string | null>(null);
 
   // Layout mẫu quyết định BỐ CỤC của trang public sinh ra cho bài. Trước đây bị
   // ép cứng một mẫu cho mỗi loại bài, nên khoa có dựng thêm mẫu khác cũng không
@@ -172,6 +174,9 @@ export function PostComposerView() {
     queryFn: authApi.getProfile,
   });
   const isSuperAdmin = profile?.role === "SUPER_ADMIN";
+  // Tài khoản của đơn vị bật kiểm duyệt thì "đăng" = GỬI DUYỆT. Cờ này backend
+  // tính sẵn bằng ĐÚNG luật nó dùng để chặn, nên giao diện không thể lệch.
+  const mustReview = profile?.mustSubmitForReview ?? false;
   // Danh mục CHỌN ĐƯỢC: bỏ "Sự kiện" ra khỏi danh sách tick vì với bài sự kiện
   // nó luôn được gắn ngầm, còn bài tin tức thì không thuộc về nó.
   const pickableCategories = (categoriesQuery.data ?? []).filter(
@@ -250,6 +255,7 @@ export function PostComposerView() {
     setPickStep("category");
     setGallery([]);
     setVideoUrl("");
+    setReviewNote(null);
   }, [postId]);
 
   // Mặc định về đúng mẫu cũ đang dùng cho loại bài đó; không có thì lấy mẫu đầu.
@@ -292,6 +298,7 @@ export function PostComposerView() {
     setEventLocation(data.eventLocation ?? "");
     setScheduledAt(toLocalInput(data.scheduledAt));
     setPublishedAt(toLocalInput(data.publishedAt));
+    setReviewNote(data.reviewNote ?? null);
     setGallery(data.gallery ?? []);
     setVideoUrl(data.videoUrl ?? "");
     setKind(data.eventStartAt ? "event" : "news");
@@ -432,6 +439,11 @@ export function PostComposerView() {
     mutationFn: (input: { id: string; scheduledAt?: string | null }) =>
       postApi.publishLayouts(input.id, input.scheduledAt ?? null),
     onSuccess: (res) => {
+      if (res.submittedForReview) {
+        toast.success("Đã gửi Khoa duyệt. Bài sẽ lên web sau khi được duyệt.");
+        void queryClient.invalidateQueries({ queryKey: ["POSTS"] });
+        return;
+      }
       if (!res.ok && res.reason === "no-layout") {
         toast.warn("Bài chưa có trang public — tạo layout trước đã");
         return;
@@ -1067,6 +1079,20 @@ export function PostComposerView() {
           </div>
         </section>
 
+        {reviewNote ? (
+          <div className="rounded-lg border border-amber-300 bg-amber-50 dark:border-amber-700/60 dark:bg-amber-950/30 px-4 py-3">
+            <p className="text-sm font-semibold text-amber-900 dark:text-amber-200">
+              Khoa đã trả bài này về để chỉnh sửa
+            </p>
+            <p className="text-sm text-amber-800 dark:text-amber-300 mt-1 whitespace-pre-line">
+              {reviewNote}
+            </p>
+            <p className="text-xs text-amber-700 dark:text-amber-400 mt-2">
+              Sửa xong bấm “Lưu và gửi duyệt” để gửi lại.
+            </p>
+          </div>
+        ) : null}
+
         {/* Ô nhập cho HOLDER: chỉ hiện khi bố cục đã chọn có khối tương ứng.
             Bố cục nào không có thì không hỏi — nội dung bám theo bố cục. */}
         {showGallery || showVideo ? (
@@ -1372,8 +1398,12 @@ export function PostComposerView() {
           className="px-5 py-2 text-sm font-semibold text-white bg-blue-600 rounded-lg hover:bg-blue-700 disabled:opacity-50"
         >
           {publishMutation.isPending
-            ? "Đang xuất bản…"
-            : "Lưu và xuất bản ngay"}
+            ? mustReview
+              ? "Đang gửi…"
+              : "Đang xuất bản…"
+            : mustReview
+              ? "Lưu và gửi duyệt"
+              : "Lưu và xuất bản ngay"}
         </button>
       </div>
 

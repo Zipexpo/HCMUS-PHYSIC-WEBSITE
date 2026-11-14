@@ -23,11 +23,30 @@ const configSchema = z.object({
   GOOGLE_CLIENT_REDIRECT_URI: z
     .string()
     .default('http://localhost:3000/oauth-google-callback'),
-  OTP_EXPIRES_IN: z.string().default('2m'),
-  AWS_ACCESS_KEY_ID: z.string(),
-  AWS_SECRET_ACCESS_KEY: z.string(),
+  // 2 phut qua ngan de mo hop thu, tim thu, go ma. 10 phut vua du ma van
+  // khong de ma song lau.
+  OTP_EXPIRES_IN: z.string().default('10m'),
+  // ── Gui thu ───────────────────────────────────────────────────────────────
+  // Chon nha cung cap bang bien moi truong, khong phai bang code: doi nha cung
+  // cap sau nay chi la sua .env rồi khoi dong lai.
+  MAIL_PROVIDER: z.enum(['resend', 'ses']).default('resend'),
+  RESEND_API_KEY: z.string().optional(),
+  /// Dia chi gui, vd: "Khoa Vat ly <no-reply@phys.hcmus.edu.vn>".
+  /// cat dau nhay bao quanh neu co — .env cu tung luu 'a@b.com' KEM dau nhay,
+  /// khien dia chi gui khong hop le ma loi bao ra rat kho hieu.
+  MAIL_FROM: z
+    .string()
+    .optional()
+    .transform((v) => v?.replace(/^['"]|['"]$/g, '').trim()),
+  // AWS giu lai lam duong lui. TUY CHON — thieu thi backend van khoi dong duoc,
+  // vi khi dung Resend thi khong can den chung.
+  AWS_ACCESS_KEY_ID: z.string().optional(),
+  AWS_SECRET_ACCESS_KEY: z.string().optional(),
   AWS_REGION: z.string().default('ap-southeast-1'),
-  SES_FROM_ADDRESS: z.string(),
+  SES_FROM_ADDRESS: z
+    .string()
+    .optional()
+    .transform((v) => v?.replace(/^['"]|['"]$/g, '').trim()),
   SENTRY_DSN: z.string().optional(),
   NODE_ENV: z.string().optional(),
   FRONTEND_URL: z.string(),

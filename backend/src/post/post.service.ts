@@ -19,6 +19,7 @@ import { injectPostIntoPuckData, PostInjectPayload } from './puck-inject';
 import {
   canAccessDepartment,
   departmentScopeWhere,
+  isFacultyWide,
   FACULTY_DEPT_ID,
   toSlug,
   toSlugPath,
@@ -77,6 +78,7 @@ const postListSelect = {
   excerpt: true,
   departmentId: true,
   status: true,
+  reviewNote: true,
   coverMediaId: true,
   coverUrl: true,
   coverAlt: true,
@@ -1052,6 +1054,61 @@ export class PostService {
    * hành động CÓ CHỦ Ý của người dùng (nút "Lưu và xuất bản ngay"), không phải tự
    * động publish sau lưng họ.
    */
+  /** Bai nay co phai qua Khoa duyet khong? */
+  private async needsApproval(
+    roleName: string,
+    userDeptId: string | null,
+    postDeptId: string | null,
+  ): Promise<boolean> {
+    // Admin cap Khoa duyet nguoi khac, khong tu duyet minh.
+    if (isFacultyWide(roleName, userDeptId)) return false;
+    if (!postDeptId) return false;
+    const dept = await this.prisma.department.findUnique({
+      where: { id: postDeptId },
+      select: { requiresApproval: true },
+    });
+    return dept?.requiresApproval ?? false;
+  }
+
+  /** Hang doi bai cho duyet — chi admin cap Khoa xem duoc. */
+  async listPendingReview(roleName: string, departmentId: string | null) {
+    if (!isFacultyWide(roleName, departmentId)) throw PostNotFoundException;
+    const rows = await this.prisma.post.findMany({
+      where: {
+        status: 'PENDING',
+        ...NOT_DELETED,
+        department: { requiresApproval: true },
+        // Bai da co layout dang xuat ban roi thi khong con cho duyet nua.
+        NOT: { layouts: { some: { isPublished: true, deletedAt: null } } },
+      },
+      orderBy: { updatedAt: 'asc' },
+      select: {
+        ...postListSelect,
+        department: { select: { name: true, slug: true } },
+      },
+    });
+    return rows.map((r) => this.serializeListItem(r as PostListRecord));
+  }
+
+  /** Khoa tra bai ve cho don vi sua, kem ly do. */
+  async rejectPost(
+    id: string,
+    note: string,
+    roleName: string,
+    departmentId: string | null,
+  ) {
+    if (!isFacultyWide(roleName, departmentId)) throw PostNotFoundException;
+    const post = await this.prisma.post.findUnique({ where: { id } });
+    if (!post || post.deletedAt) throw PostNotFoundException;
+    await this.prisma.post.update({
+      where: { id },
+      // Ve nhap kem ly do; don vi sua xong bam gui duyet lai.
+      data: { status: 'DRAFT', reviewNote: note.trim() || null },
+    });
+    await this.cache.clear();
+    return { ok: true };
+  }
+
   async publishAttachedLayouts(
     id: string,
     userId: string,
@@ -1064,6 +1121,23 @@ export class PostService {
     if (!canAccessDepartment(roleName, departmentId, post.departmentId)) {
       throw PostNotFoundException;
     }
+
+    // ── CUA KIEM DUYET ──────────────────────────────────────────────────────
+    // Don vi co requiresApproval thi tai khoan cua don vi KHONG tu dang duoc:
+    // bam "dang" = GUI DUYET. Chan o day vi day la cho duy nhat trinh soan bai
+    // dua bai len web, nen khong the lach bang cach goi API truc tiep.
+    // Admin cap Khoa (isFacultyWide) khong bi chan -> ho duyet bang chinh ham
+    // nay, khong can duong rieng.
+    if (await this.needsApproval(roleName, departmentId, post.departmentId)) {
+      await this.prisma.post.update({
+        where: { id },
+        // Gui duyet lai thi xoa ly do tra ve cu cho khoi hieu nham.
+        data: { status: 'PENDING', reviewNote: null },
+      });
+      await this.cache.clear();
+      return { ok: true, submittedForReview: true as const, published: 0 };
+    }
+
     const layouts = await this.prisma.pageLayout.findMany({
       where: { sourcePostId: id, deletedAt: null },
       select: { id: true, slug: true, isPublished: true },
@@ -1416,6 +1490,8 @@ export class PostService {
       excerpt: asLocalized(record.excerpt),
       departmentId: record.departmentId,
       status: record.status,
+      // Ly do Khoa tra bai lai — don vi phai doc duoc thi moi biet sua gi.
+      reviewNote: (record as { reviewNote?: string | null }).reviewNote ?? null,
       coverMediaId: record.coverMediaId,
       coverUrl: record.coverUrl,
       coverAlt: record.coverAlt,
@@ -1445,6 +1521,8 @@ export class PostService {
       excerpt: asLocalized(record.excerpt),
       departmentId: record.departmentId,
       status: record.status,
+      // Ly do Khoa tra bai lai — don vi phai doc duoc thi moi biet sua gi.
+      reviewNote: (record as { reviewNote?: string | null }).reviewNote ?? null,
       coverMediaId: record.coverMediaId,
       coverUrl: record.coverUrl,
       coverAlt: record.coverAlt,

@@ -8,6 +8,7 @@ import {
   CreateAdminBodySchema,
   UserResSchema,
   SendOTPBodySchema,
+  LoginOtpBodySchema,
   VerifyOTPBodySchema,
   ForgotPasswordBodySchema,
   GetAuthorizationUrlResSchema,
@@ -25,6 +26,7 @@ export class CreateAdminBodyDTO extends createZodDto(CreateAdminBodySchema) {}
 export class UserResDTO extends createZodDto(UserResSchema) {}
 export class SendOTPBodyDTO extends createZodDto(SendOTPBodySchema) {}
 export class VerifyOTPBodyDTO extends createZodDto(VerifyOTPBodySchema) {}
+export class LoginOtpBodyDTO extends createZodDto(LoginOtpBodySchema) {}
 export class ForgotPasswordBodyDTO extends createZodDto(
   ForgotPasswordBodySchema,
 ) {}

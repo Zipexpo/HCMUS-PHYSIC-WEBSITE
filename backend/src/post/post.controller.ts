@@ -130,6 +130,16 @@ export class PostController {
     });
   }
 
+  // ── Kiểm duyệt bài của đơn vị ──────────────────────────────────────────
+  // Hàng đợi bài chờ Khoa duyệt. Chỉ admin cấp Khoa gọi được (service tự chặn).
+  @Get('pending-review')
+  pendingReview(
+    @ActiveUser('roleName') roleName: string,
+    @ActiveUser('departmentId') departmentId: string | null,
+  ) {
+    return this.postService.listPendingReview(roleName, departmentId);
+  }
+
   @Get(':id')
   @ZodSerializerDto(PostResDTO)
   findById(
@@ -181,6 +191,23 @@ export class PostController {
     @ActiveUser('departmentId') departmentId: string | null,
   ) {
     return this.postService.restore(id, userId, roleName, departmentId);
+  }
+
+  // Trả bài về cho đơn vị sửa, kèm lý do. Duyệt thì dùng thẳng publish-layouts
+  // (admin cấp Khoa không vướng cửa duyệt).
+  @Post(':id/reject')
+  rejectPost(
+    @Param('id') id: string,
+    @Body() body: { note?: string },
+    @ActiveUser('roleName') roleName: string,
+    @ActiveUser('departmentId') departmentId: string | null,
+  ) {
+    return this.postService.rejectPost(
+      id,
+      body?.note ?? '',
+      roleName,
+      departmentId,
+    );
   }
 
   // Xuất bản / lên lịch các layout của bài ngay từ trình soạn bài, khỏi phải

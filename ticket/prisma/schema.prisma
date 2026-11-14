@@ -1,0 +1,204 @@
+// Hệ thống phiếu hỗ trợ (ticket) của Khoa Vật lý.
+//
+// ĐỘC LẬP với web Khoa: cơ sở dữ liệu riêng (`hcmus_ticket`), deploy riêng, xoá
+// hay nâng cấp không đụng tới CMS. Chỉ dùng chung MÁY CHỦ Postgres để khỏi phải
+// chạy thêm một container nữa — đĩa máy chủ đang rất căng.
+//
+// Tài khoản KHÔNG lưu ở đây. Người dùng đăng nhập bằng tài khoản CMS sẵn có
+// (gọi /auth/login của backend CMS); hệ này chỉ giữ ảnh chụp tên + email tại
+// thời điểm gửi phiếu, để phiếu cũ vẫn đọc được kể cả khi tài khoản bị đổi hay
+// xoá bên kia.
+
+generator client {
+  provider = "prisma-client"
+  output   = "../src/generated/prisma"
+}
+
+// Prisma 7: URL khai trong prisma.config.ts, không để trong schema.
+datasource db {
+  provider = "postgresql"
+}
+
+/// Trạng thái phiếu. Cố ý tách NEW và ACKNOWLEDGED: người gửi cần biết phiếu đã
+/// có người đọc, kể cả khi chưa ai bắt tay vào làm.
+enum TicketStatus {
+  NEW // vừa gửi, chưa ai xem
+  ACKNOWLEDGED // đã tiếp nhận
+  IN_PROGRESS // đang xử lý
+  WAITING // chờ người gửi bổ sung thông tin
+  RESOLVED // đã xong, chờ người gửi xác nhận
+  CLOSED // đóng
+  REJECTED // không xử lý (trùng, ngoài phạm vi…)
+}
+
+enum TicketPriority {
+  LOW
+  NORMAL
+  HIGH
+  URGENT
+}
+
+/// MẪU BIỂU — định nghĩa bằng DỮ LIỆU, không phải bằng code.
+///
+/// Khoa muốn thêm loại yêu cầu mới (đặt phòng, xin giấy tờ…) thì thêm một dòng
+/// ở đây là xong, không cần sửa code và deploy lại. Các ô nhập riêng của từng
+/// mẫu nằm trong `fields`, câu trả lời nằm trong `Ticket.answers`.
+model TicketForm {
+  id          String  @id @default(cuid())
+  /// Khoá ổn định dùng trong URL, vd "loi-phan-mem".
+  key         String  @unique
+  name        String
+  description String?
+  /// Tên icon (lucide) để hiện trên trang chọn loại yêu cầu.
+  icon        String?
+  /// Định nghĩa các ô nhập thêm:
+  /// [{ key, label, type: "text"|"textarea"|"select"|"date"|"checkbox",
+  ///    required?, options?: string[], hint? }]
+  fields      Json    @default("[]")
+  /// Đội/nhóm chịu trách nhiệm mặc định — hiện ra cho người gửi biết ai nhận.
+  defaultTeam String?
+  isActive    Boolean @default(true)
+  sortOrder   Int     @default(0)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  tickets Ticket[]
+
+  @@index([isActive, sortOrder])
+}
+
+model Ticket {
+  id String @id @default(cuid())
+  /// Mã người đọc được, vd "VL-0007". Sinh tự động, dùng để trao đổi qua lại.
+  code String @unique
+
+  formId String
+  form   TicketForm @relation(fields: [formId], references: [id])
+
+  title       String
+  description String
+
+  status   TicketStatus   @default(NEW)
+  priority TicketPriority @default(NORMAL)
+
+  /// Câu trả lời cho các ô riêng của mẫu: { "<field.key>": <giá trị> }.
+  answers Json @default("{}")
+
+  // ── Người gửi: ảnh chụp tại thời điểm gửi ────────────────────────────────
+  // Giữ cả id lẫn tên/email vì tài khoản bên CMS có thể bị đổi hoặc xoá, mà
+  // phiếu cũ vẫn phải đọc được và vẫn phải biết ai đã gửi.
+  reporterUserId String
+  reporterName   String
+  reporterEmail  String
+  reporterUnit   String?
+
+  // ── Người xử lý ──────────────────────────────────────────────────────────
+  assigneeUserId String?
+  assigneeName   String?
+
+  /// Phần mềm/hệ thống bị lỗi — hiện tại hệ này chỉ nhận sự cố kỹ thuật.
+  systemName String?
+
+  /// Nhóm phụ trách (Kỹ thuật web, Quản trị hệ thống…). Lấy mặc định từ mẫu
+  /// biểu lúc gửi, người xử lý đổi được — để phiếu "tới thẳng nhóm phụ trách".
+  team String?
+
+  /// Người gửi muốn nhận email khi có trả lời / đổi trạng thái. Mặc định BẬT:
+  /// không báo thì người ta không biết phiếu đã chuyển sang "chờ bổ sung".
+  notifyEmail Boolean @default(true)
+
+  resolvedAt DateTime?
+  closedAt   DateTime?
+  createdAt  DateTime  @default(now())
+  updatedAt  DateTime  @updatedAt
+
+  comments    TicketComment[]
+  attachments TicketAttachment[]
+  events      TicketEvent[]
+
+  @@index([status, createdAt])
+  @@index([reporterUserId, createdAt])
+  @@index([assigneeUserId, status])
+  @@index([formId])
+}
+
+model TicketComment {
+  id       String @id @default(cuid())
+  ticketId String
+  ticket   Ticket @relation(fields: [ticketId], references: [id], onDelete: Cascade)
+
+  authorUserId String
+  authorName   String
+  body         String
+  /// Ghi chú nội bộ: người gửi phiếu KHÔNG thấy. Để người xử lý trao đổi
+  /// với nhau ngay trong phiếu, khỏi phải nhắn riêng rồi thất lạc.
+  isInternal   Boolean @default(false)
+
+  createdAt DateTime @default(now())
+
+  attachments TicketAttachment[]
+
+  @@index([ticketId, createdAt])
+}
+
+model TicketAttachment {
+  id       String @id @default(cuid())
+  ticketId String
+  ticket   Ticket @relation(fields: [ticketId], references: [id], onDelete: Cascade)
+
+  commentId String?
+  comment   TicketComment? @relation(fields: [commentId], references: [id], onDelete: Cascade)
+
+  /// Đường dẫn tệp đã lưu, tương đối với kho tệp của hệ ticket.
+  url      String
+  fileName String
+  mimeType String
+  sizeByte Int
+
+  uploadedByUserId String
+  createdAt        DateTime @default(now())
+
+  @@index([ticketId])
+}
+
+/// NHẬT KÝ phiếu — ai đổi gì, lúc nào. Tách khỏi bình luận vì đây là dấu vết
+/// hệ thống tự ghi, không phải lời người viết; trộn chung sẽ rối khi đọc lại.
+model TicketEvent {
+  id       String @id @default(cuid())
+  ticketId String
+  ticket   Ticket @relation(fields: [ticketId], references: [id], onDelete: Cascade)
+
+  actorUserId String?
+  actorName   String?
+  /// "created" | "status" | "assign" | "priority" | "comment"
+  kind        String
+  fromValue   String?
+  toValue     String?
+
+  createdAt DateTime @default(now())
+
+  @@index([ticketId, createdAt])
+}
+
+/// Bộ đếm sinh mã phiếu. Một dòng duy nhất; tăng trong giao dịch để hai phiếu
+/// gửi cùng lúc không trùng mã.
+model TicketCounter {
+  id     String @id @default("main")
+  prefix String @default("VL")
+  value  Int    @default(0)
+}
+
+/// Người xử lý đã từng vào hệ ticket — nguồn cho ô "Giao cho".
+///
+/// CMS chỉ cho Super Admin liệt kê tài khoản, nên quản trị viên thường không
+/// lấy được danh sách đồng nghiệp từ bên đó. Hệ ticket tự ghi nhớ mỗi người xử
+/// lý khi họ vào: ai đã vào thì giao việc được — hợp lý, vì muốn xử lý phiếu
+/// thì cũng phải vào được hệ thống.
+model TicketStaff {
+  userId     String   @id
+  name       String
+  email      String
+  unit       String?
+  lastSeenAt DateTime @default(now())
+}

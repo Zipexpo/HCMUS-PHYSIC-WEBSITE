@@ -4,18 +4,18 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
 import { toast } from "react-toastify";
+import { DynamicIcon } from "@/components/admin/icons";
 import {
   authApi,
+  type Category,
   categoryApi,
+  type Department,
   departmentApi,
   resolveMediaUrl,
-  tagApi,
-  type Category,
   type Tag,
-  type Department,
+  tagApi,
 } from "@/lib/api";
 import { isFacultyWide } from "@/lib/department";
-import { DynamicIcon } from "@/components/admin/icons";
 import { MediaPickerModal } from "@/views/admin/widgets-layout/fields/media-picker-modal";
 
 type TabKey = "categories" | "tags" | "departments";
@@ -206,7 +206,7 @@ export function TaxonomyView() {
     "w-full px-3 py-2 text-sm border border-slate-200 dark:border-slate-700 rounded-lg outline-none focus:ring-2 focus:ring-blue-200 bg-white dark:bg-[#1a2436]";
 
   return (
-    <div className="max-w-4xl mx-auto px-6 py-8">
+    <div className="h-full overflow-y-auto max-w-4xl mx-auto px-6 py-8">
       <h1 className="text-xl font-bold text-slate-800 dark:text-slate-100 mb-1">
         Quản lý Danh mục &amp; Tag
       </h1>
@@ -429,9 +429,9 @@ export function TaxonomyView() {
       {tab === "departments" ? (
         <section className="space-y-4">
           <p className="text-xs text-slate-500 dark:text-slate-400">
-            Quản lý bộ môn / đơn vị (vd thêm "Đoàn – Hội và CLB"). Đổi slug sẽ tự
-            cập nhật slug các layout dưới bộ môn. "Gộp &amp; xoá" chuyển toàn bộ
-            bài/ảnh/layout sang bộ môn khác rồi xoá bộ môn này.
+            Quản lý bộ môn / đơn vị (vd thêm "Đoàn – Hội và CLB"). Đổi slug sẽ
+            tự cập nhật slug các layout dưới bộ môn. "Gộp &amp; xoá" chuyển toàn
+            bộ bài/ảnh/layout sang bộ môn khác rồi xoá bộ môn này.
           </p>
 
           {/* Thêm bộ môn / đơn vị mới */}

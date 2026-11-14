@@ -235,6 +235,43 @@ services:
     depends_on:
       - backend
 
+  # Hệ phiếu hỗ trợ kỹ thuật. ĐỘC LẬP với CMS: CSDL riêng `hcmus_ticket`, chỉ
+  # dùng chung MÁY CHỦ Postgres để khỏi thêm một container nữa (đĩa đang căng).
+  # Xác thực bằng cách gọi sang backend CMS, nên không có bảng người dùng riêng.
+  ticket:
+    build:
+      context: .
+      dockerfile: ticket/Dockerfile
+    mem_limit: 512m
+    memswap_limit: 512m
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:3003/ho-tro/dang-nhap').then(r=>process.exit(r.status<500?0:1)).catch(()=>process.exit(1))"]
+      interval: 30s
+      timeout: 15s
+      retries: 3
+      start_period: 40s
+    restart: unless-stopped
+    environment:
+      NODE_OPTIONS: --max-old-space-size=384
+      # CSDL RIÊNG trên cùng máy chủ Postgres.
+      # Tài khoản RIÊNG, chỉ vào được hcmus_ticket — xem ticket/prisma/create-role.sql.
+      # Cố ý KHÔNG dùng lại POSTGRES_USER của CMS: tài khoản đó là superuser,
+      # đưa cho ứng dụng này là nó mở được cả CSDL của web Khoa.
+      TICKET_DATABASE_URL: postgresql://${TICKET_DB_USER:-ticket_app}:${TICKET_DB_PASSWORD:?can TICKET_DB_PASSWORD trong .env}@db:5432/hcmus_ticket?schema=public
+      # Xác thực mượn của CMS — dùng tên dịch vụ trong mạng compose.
+      CMS_API_URL: http://backend:3001
+      # Email báo tin cho phiếu (Resend). Để trống thì hệ vẫn chạy, chỉ không gửi thư.
+      TICKET_RESEND_API_KEY: ${TICKET_RESEND_API_KEY:-${RESEND_API_KEY:-}}
+      TICKET_MAIL_FROM: ${TICKET_MAIL_FROM:-${MAIL_FROM:-}}
+      TICKET_PUBLIC_URL: https://phys.hcmus.edu.vn/ho-tro
+      TICKET_UPLOAD_DIR: /app/data/uploads
+    volumes:
+      # Tệp đính kèm của phiếu. Volume riêng: build lại ảnh không mất tệp.
+      - ticket_uploads:/app/data/uploads
+    depends_on:
+      - db
+      - backend
+
   # Reverse proxy + HTTPS tự động (Let's Encrypt) cho phys.hcmus.edu.vn.
   # Public ra cổng 80/443 (không cần gõ cổng); admin vẫn ở :3000.
   caddy:
@@ -256,6 +293,7 @@ services:
 
 volumes:
   pgdata:
+  ticket_uploads:
   redisdata:
   # Chứng chỉ Let's Encrypt THẬT nằm ở volume tên trần `caddy_data` (Caddy trước
   # đây chạy ngoài compose). Nếu để compose tự tạo thì nó dùng

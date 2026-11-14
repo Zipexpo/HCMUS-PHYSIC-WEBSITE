@@ -385,3 +385,32 @@ describe('XepHangService.taiCore — tải CORE thẳng từ portal', () => {
     }
   });
 });
+
+describe('XepHangService.napSjr — bảng đầy đủ ~32.000 dòng', () => {
+  it('ghi trong MỘT giao dịch tự mở, trần thời gian đủ dài (không dùng trần mặc định 5 giây)', async () => {
+    const dong = Array.from(
+      { length: 10_001 },
+      (_, i) => `${i + 1};${1000 + i};"Tap chi ${i + 1}";journal;"${10_000_000 + i}";1,5;Q2;10;"Physics (Q2)"`,
+    );
+    const csv = ['Rank;Sourceid;Title;Type;Issn;SJR;SJR Best Quartile;Total Docs. (2025);Categories', ...dong].join('\n');
+    const tx = {
+      journalRanking: {
+        deleteMany: vi.fn().mockResolvedValue({ count: 0 }),
+        createMany: vi.fn().mockResolvedValue({ count: 2000 }),
+      },
+    };
+    const prisma = {
+      $transaction: vi.fn((fn: (t: typeof tx) => Promise<unknown>) => fn(tx)),
+    };
+    const kq = await new XepHangService(prisma as never).napSjr(csv);
+    expect(kq).toMatchObject({ loai: 'sjr', ten: 'SJR 2025', soDong: 10_001 });
+    expect(prisma.$transaction).toHaveBeenCalledTimes(1);
+    const [fn, opts] = prisma.$transaction.mock.calls[0] as unknown as [unknown, { timeout: number }];
+    expect(typeof fn).toBe('function');
+    expect(opts.timeout).toBeGreaterThanOrEqual(60_000);
+    expect(tx.journalRanking.deleteMany).toHaveBeenCalledWith({ where: { year: 2025 } });
+    expect(tx.journalRanking.createMany).toHaveBeenCalledTimes(6);
+    const ghi = tx.journalRanking.createMany.mock.calls.reduce((t, [a]) => t + a.data.length, 0);
+    expect(ghi).toBe(10_001);
+  });
+});

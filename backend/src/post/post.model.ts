@@ -78,6 +78,7 @@ export const PostResSchema = z.object({
   departmentId: z.string().nullable(),
   category: CategoryRefSchema.optional(),
   status: ContentStatusEnum,
+  reviewNote: z.string().nullable().optional(),
   coverMediaId: z.string().nullable(),
   coverUrl: z.string().nullable(),
   coverAlt: z.string().nullable(),

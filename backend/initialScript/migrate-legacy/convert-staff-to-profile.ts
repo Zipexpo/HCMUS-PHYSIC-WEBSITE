@@ -33,6 +33,20 @@ const DRY = process.argv.includes('--dry') || process.env.DRY_RUN === '1';
 const LOOSE = process.argv.includes('--loose');
 // Đổi sang bố cục tạp chí (StaffProfileEditorial) thay vì StaffProfile.
 const EDITORIAL = process.argv.includes('--editorial');
+// --only=<slug>[,<slug>...] — CHỈ đụng vào đúng những trang này.
+// Cần vì --loose bắt mọi trang còn LegacyPageBody, trong đó có các trang TRÙNG
+// (một người hai slug). Chuyển cả trang trùng thì người đó hiện HAI dòng trong
+// danh sách nhân sự. Có --only thì nhắm đúng người cần, không đụng phần còn lại.
+const ONLY = (() => {
+  const arg = process.argv.find((a) => a.startsWith('--only='));
+  if (!arg) return null;
+  const list = arg
+    .slice('--only='.length)
+    .split(',')
+    .map((x) => x.trim())
+    .filter(Boolean);
+  return list.length ? new Set(list) : null;
+})();
 
 type PuckNode = { type?: string; props?: Record<string, unknown> };
 type PuckTree = { root?: unknown; content?: PuckNode[] };
@@ -156,11 +170,22 @@ function convertTree(
 
 async function main(): Promise<void> {
   const pages = await prisma.pageLayout.findMany({
-    where: { slug: { contains: '/nhan-su/' } },
+    where: ONLY
+      ? { slug: { in: [...ONLY] } }
+      : { slug: { contains: '/nhan-su/' } },
     select: { id: true, slug: true, puckData: true, publishedPuckData: true },
     orderBy: { slug: 'asc' },
   });
-  console.log(`Tìm thấy ${pages.length} trang nhân sự.`);
+  if (ONLY) {
+    console.log(`--only: nhắm ${ONLY.size} trang, tìm thấy ${pages.length}.`);
+    // Gõ sai slug thì im lặng bỏ qua rất dễ tưởng là đã chạy — báo rõ ra.
+    const found = new Set(pages.map((p) => p.slug));
+    for (const want of ONLY) {
+      if (!found.has(want)) console.log(`  KHÔNG TÌM THẤY: ${want}`);
+    }
+  } else {
+    console.log(`Tìm thấy ${pages.length} trang nhân sự.`);
+  }
 
   let converted = 0;
   let alreadyDone = 0;

@@ -17,6 +17,7 @@ import { AuthService } from './auth.service';
 import { GoogleService } from './google.service';
 import {
   LoginBodyDTO,
+  LoginOtpBodyDTO,
   PhysoomSsoBodyDTO,
   LoginResDTO,
   RefreshTokenBodyDTO,
@@ -52,6 +53,21 @@ export class AuthController {
   @Get('profile')
   @ZodSerializerDto(UserResDTO)
   getProfile(@ActiveUser('userId') userId: string) {
+    return this.authService.getProfile(userId);
+  }
+
+  /**
+   * Hồ sơ của CHÍNH người đang đăng nhập, mở cho cả cán bộ (LECTURER).
+   *
+   * Tách khỏi GET /auth/profile có chủ ý: route đó không gắn @Roles nên chỉ admin
+   * qua được, và trang quản trị dựa vào chính lỗi 403 ấy để không cho cán bộ vào.
+   * Hệ phiếu hỗ trợ (/ho-tro) cần cán bộ đăng nhập được → dùng route này, chỉ
+   * trả về dữ liệu của chính người gọi nên không mở thêm gì khác.
+   */
+  @Get('me')
+  @Roles(RoleName.Lecturer, RoleName.Admin, RoleName.SuperAdmin)
+  @ZodSerializerDto(UserResDTO)
+  getMe(@ActiveUser('userId') userId: string) {
     return this.authService.getProfile(userId);
   }
 
@@ -100,6 +116,16 @@ export class AuthController {
   @ZodSerializerDto(LoginResDTO)
   ssoPhysoom(@Body() body: PhysoomSsoBodyDTO) {
     return this.authService.loginWithPhysoom(body.token);
+  }
+
+  // Dang nhap bang ma gui qua email. Giang vien chua tung dat mat khau van
+  // vao duoc, ma khong phai tao them tai khoan nao.
+  @Post('login-otp')
+  @IsPublic()
+  @Throttle({ default: { limit: 8, ttl: 60_000 } })
+  @ZodSerializerDto(LoginResDTO)
+  loginOtp(@Body() body: LoginOtpBodyDTO) {
+    return this.authService.loginWithOtp(body);
   }
 
   @Post('create-admin')

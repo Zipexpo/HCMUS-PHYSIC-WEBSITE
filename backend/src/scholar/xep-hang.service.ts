@@ -112,25 +112,32 @@ export class XepHangService {
           'scimagojr.com/journalrank.php KHÔNG chọn lọc ngành/nước rồi bấm "Download data".',
       );
     }
-    await this.prisma.$transaction([
-      this.prisma.journalRanking.deleteMany({ where: { year: nam } }),
-      ...chia(ds, 2000).map((lo) =>
-        this.prisma.journalRanking.createMany({
-          data: lo.map((x) => ({
-            year: nam,
-            sourceId: x.sourceId,
-            title: x.title,
-            type: x.type,
-            issns: x.issns,
-            sjr: x.sjr,
-            bestQuartile: x.bestQuartile,
-            code: x.code,
-            categories: x.categories as unknown as Prisma.InputJsonValue,
-          })),
-          skipDuplicates: true,
-        }),
-      ),
-    ]);
+    // Giao dịch TỰ MỞ với trần thời gian riêng. Dạng mảng lệnh chạy qua adapter pg
+    // cũng là giao dịch tương tác, trần mặc định 5 giây: lần nạp thật đầu tiên
+    // (7/11/2026) ghi được 26.000/32.316 dòng thì hết 5,2 giây, Prisma rollback
+    // và trang chỉ báo "Internal server error". Box ghi ~5.000 dòng/giây.
+    await this.prisma.$transaction(
+      async (tx) => {
+        await tx.journalRanking.deleteMany({ where: { year: nam } });
+        for (const lo of chia(ds, 2000)) {
+          await tx.journalRanking.createMany({
+            data: lo.map((x) => ({
+              year: nam,
+              sourceId: x.sourceId,
+              title: x.title,
+              type: x.type,
+              issns: x.issns,
+              sjr: x.sjr,
+              bestQuartile: x.bestQuartile,
+              code: x.code,
+              categories: x.categories as unknown as Prisma.InputJsonValue,
+            })),
+            skipDuplicates: true,
+          });
+        }
+      },
+      { maxWait: 10_000, timeout: 120_000 },
+    );
     const top = ds.filter((x) => x.code === '1.1a').length;
     return {
       loai: 'sjr' as const,

@@ -59,6 +59,8 @@ export type UserProfile = {
   bio: string | null;
   departmentId: string | null;
   department: { id: string; name: string } | null;
+  /** Tài khoản này đăng bài phải chờ Khoa duyệt (backend tự tính). */
+  mustSubmitForReview?: boolean;
   tourCompletedAt: string | null;
   starredLayoutIds: string[];
   starredWidgetIds: string[];
@@ -228,7 +230,9 @@ export const adminApi = {
       units: StaffUnit[];
     }>(`/admins${buildQuery(params)}`);
   },
-  listStaff(params: { page?: number; pageSize?: number; search?: string } = {}) {
+  listStaff(
+    params: { page?: number; pageSize?: number; search?: string } = {},
+  ) {
     return authFetch<{
       items: AdminListItem[];
       total: number;
@@ -793,6 +797,8 @@ export type PostRecord = {
   departmentId: string | null;
   category?: CategoryRef;
   status: ContentStatusValue;
+  /** Có giá trị = bài vừa bị Khoa trả lại, đây là lý do. */
+  reviewNote?: string | null;
   coverMediaId: string | null;
   coverUrl: string | null;
   coverAlt: string | null;
@@ -959,9 +965,19 @@ export const postApi = {
       scheduled?: number;
       skipped?: string[];
       reason?: string;
+      /** Đơn vị bật kiểm duyệt: bài được GỬI DUYỆT chứ chưa lên web. */
+      submittedForReview?: boolean;
     }>(`/posts/${id}/publish-layouts`, {
       method: "POST",
       body: JSON.stringify({ scheduledAt: scheduledAt ?? null }),
+    }),
+  /** Hàng đợi bài của đơn vị đang chờ Khoa duyệt (chỉ admin cấp Khoa). */
+  pendingReview: () => apiFetch<PostRecord[]>(`/posts/pending-review`),
+  /** Khoa trả bài về cho đơn vị sửa, kèm lý do. */
+  reject: (id: string, note: string) =>
+    apiFetch<{ ok: boolean }>(`/posts/${id}/reject`, {
+      method: "POST",
+      body: JSON.stringify({ note }),
     }),
   cloneIntoLayout: (
     id: string,

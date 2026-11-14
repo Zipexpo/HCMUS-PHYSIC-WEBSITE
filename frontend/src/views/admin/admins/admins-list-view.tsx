@@ -22,8 +22,8 @@ import {
 } from "@/lib/api";
 import { isFacultyWide } from "@/lib/department";
 import { PortalMenu } from "@/views/admin/widgets-layout/portal-menu";
-import { ResetPasswordModal } from "./reset-password-modal";
 import { DEGREES, EditProfileModal, POSITIONS } from "./edit-profile-modal";
+import { ResetPasswordModal } from "./reset-password-modal";
 
 const PAGE_SIZE = 10;
 const ACTIVE_WINDOW_MS = 5 * 60 * 1000;
@@ -130,7 +130,7 @@ export function AdminsListView() {
   const pageEnd = (page - 1) * PAGE_SIZE + items.length;
 
   return (
-    <div className="min-h-full bg-slate-50 dark:bg-[#0B1120]">
+    <div className="h-full overflow-y-auto bg-slate-50 dark:bg-[#0B1120]">
       <div className="max-w-6xl mx-auto px-6 py-8">
         <div className="flex items-start justify-between gap-6">
           <div className="min-w-0">
@@ -218,7 +218,9 @@ export function AdminsListView() {
                       </div>
                     </div>
                     <div className="text-sm text-slate-700 dark:text-slate-300 min-w-0">
-                      <div className="truncate">{a.department?.name ?? "—"}</div>
+                      <div className="truncate">
+                        {a.department?.name ?? "—"}
+                      </div>
                       {(a.rank || a.positionKey || a.degree) && (
                         <div className="text-xs text-slate-400 dark:text-slate-500 truncate">
                           {[a.rank, posLabel(a.positionKey), degLabel(a.degree)]

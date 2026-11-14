@@ -149,6 +149,8 @@ enum BlockType {
 
 enum VerificationCodeType {
   FORGOT_PASSWORD
+  /// Ma dung mot lan de DANG NHAP khong can mat khau (he phieu ho tro).
+  LOGIN
 }
 
 enum ReactionType {
@@ -320,6 +322,10 @@ model Department {
   // duoc gan danh muc do (vd CLB -> "Cau lac bo"), khong phu thuoc nguoi dang co
   // nho tick hay khong. De trong = khong ep gi.
   defaultCategoryId String?
+  // Bat cua KIEM DUYET cho don vi nay: tai khoan thuoc don vi khong tu dang bai
+  // len web Khoa duoc, chi "gui duyet"; admin cap Khoa duyet thi bai moi len.
+  // Mac dinh tat -> bo mon/don vi cu van dang nhu truoc, khong anh huong gi.
+  requiresApproval  Boolean  @default(false)
   description       String?
   email             String?
   phone             String?
@@ -364,6 +370,8 @@ model Post {
   departmentId    String?
   legacyId        Int?          @unique
   status          ContentStatus @default(DRAFT)
+  // Ly do Khoa tra bai lai cho don vi sua. Co gia tri = bai vua bi tra lai.
+  reviewNote      String?
   coverMediaId    String?
   coverUrl        String?
   coverAlt        String?

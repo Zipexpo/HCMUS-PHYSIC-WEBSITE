@@ -164,7 +164,7 @@ export function StaffListView() {
   const pageEnd = (page - 1) * PAGE_SIZE + items.length;
 
   return (
-    <div className="min-h-full bg-slate-50 dark:bg-[#0B1120]">
+    <div className="h-full overflow-y-auto bg-slate-50 dark:bg-[#0B1120]">
       <div className="max-w-6xl mx-auto px-6 py-8">
         <div className="flex items-start justify-between gap-6">
           <div className="min-w-0">
@@ -177,9 +177,9 @@ export function StaffListView() {
               nhập CMS.
             </p>
             <p className="mt-1 text-sm text-slate-500 dark:text-slate-400 max-w-2xl">
-              Muốn ai xem và xuất báo cáo NCKH toàn Khoa ở phys-profile thì
-              chọn <b>Cấp quyền xem thống kê</b> ở menu thao tác — người đó
-              vẫn không vào được trang quản trị này.
+              Muốn ai xem và xuất báo cáo NCKH toàn Khoa ở phys-profile thì chọn{" "}
+              <b>Cấp quyền xem thống kê</b> ở menu thao tác — người đó vẫn không
+              vào được trang quản trị này.
             </p>
           </div>
           <button
@@ -288,7 +288,9 @@ export function StaffListView() {
                       </div>
                     </div>
                     <div className="text-sm text-slate-700 dark:text-slate-300 min-w-0">
-                      <div className="truncate">{a.department?.name ?? "—"}</div>
+                      <div className="truncate">
+                        {a.department?.name ?? "—"}
+                      </div>
                       {(a.rank || a.positionKey || a.degree) && (
                         <div className="text-xs text-slate-400 dark:text-slate-500 truncate">
                           {[a.rank, posLabel(a.positionKey), degLabel(a.degree)]

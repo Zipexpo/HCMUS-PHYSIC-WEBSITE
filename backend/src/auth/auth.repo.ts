@@ -20,7 +20,9 @@ export class AuthRepository {
     return this.prisma.user.findUnique({
       where: { id },
       include: {
-        department: { select: { id: true, name: true } },
+        department: {
+          select: { id: true, name: true, requiresApproval: true },
+        },
         preference: {
           select: { starredLayoutIds: true, starredWidgetIds: true },
         },

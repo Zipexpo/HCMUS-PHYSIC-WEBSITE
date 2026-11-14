@@ -8,6 +8,24 @@ phys.hcmus.edu.vn {
 	handle /uploads/* {
 		reverse_proxy backend:3001
 	}
+	# Hệ phiếu hỗ trợ — ứng dụng RIÊNG, chạy dưới /ho-tro trên cùng tên miền để
+	# khỏi phải xin thêm bản ghi DNS. Dùng `handle` (không phải handle_path) vì
+	# Next bên đó đặt basePath=/ho-tro, nó cần nguyên tiền tố.
+	# Phải liệt kê CẢ `/ho-tro` trần lẫn `/ho-tro/*`: mẫu có `/*` KHÔNG khớp
+	# đường trần, nên nó rơi xuống trang công khai, trang đó thêm tiền tố ngôn
+	# ngữ thành /vi/ho-tro rồi trả 404.
+	@ho_tro path /ho-tro /ho-tro/*
+	handle @ho_tro {
+		reverse_proxy ticket:3003
+	}
+
+	# Nhiều người quen gõ /vi/... nên đưa về đúng chỗ thay vì để gặp 404.
+	# Nhiều người quen gõ /vi/... nên đưa về đúng chỗ thay vì để gặp 404.
+	# Dùng regex để CẮT tiền tố ngôn ngữ. KHÔNG dùng {uri} — biến đó là toàn bộ
+	# đường dẫn gốc, ghép vào sẽ ra /ho-tro/vi/ho-tro/...
+	@ho_tro_locale path_regexp hotro ^/(?:vi|en)(/ho-tro.*)$
+	redir @ho_tro_locale {re.hotro.1} permanent
+
 	# Còn lại → trang công khai (Next.js)
 	handle {
 		reverse_proxy public:3002

@@ -15,4 +15,7 @@ export const ROLES_KEY = 'roles';
 
 export enum VerificationMethod {
   ForgotPassword = 'FORGOT_PASSWORD',
+  /// Ma dung de DANG NHAP khong can mat khau. Tach khoi FORGOT_PASSWORD de ma
+  /// xin cho viec nay khong doi duoc mat khau, va nguoc lai.
+  Login = 'LOGIN',
 }
