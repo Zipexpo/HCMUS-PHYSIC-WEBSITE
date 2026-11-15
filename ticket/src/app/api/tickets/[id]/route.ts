@@ -3,7 +3,9 @@ import { z } from "zod";
 import { prisma } from "@/lib/db";
 import { UnauthorizedError, requireUser } from "@/lib/auth";
 import { STATUS_LABEL } from "@/lib/ticket";
-import { notifyAssignee, notifyReporterStatus } from "@/lib/lifecycle";
+import { notifyAssignee, notifyNewTicket, notifyReporterStatus } from "@/lib/lifecycle";
+import { canAct, canApprove, canAssignOthers, type Who } from "@/lib/access";
+import { sendMail, ticketUrl } from "@/lib/mail";
 
 const Patch = z.object({
   status: z
@@ -22,6 +24,9 @@ const Patch = z.object({
   assign: z.string().max(100).optional(),
   team: z.string().trim().max(80).optional(),
   notifyEmail: z.boolean().optional(),
+  /** Đầu mối đơn vị duyệt / từ chối yêu cầu cấp quyền. */
+  approval: z.enum(["APPROVE", "REJECT"]).optional(),
+  approvalNote: z.string().trim().max(1000).optional(),
 });
 
 const deny = (message: string, status = 403) =>
@@ -44,10 +49,73 @@ export async function PATCH(
     const body = parsed.data;
     const isOwner = ticket.reporterUserId === user.id;
 
+    const who: Who = user;
+
+    // ── Duyệt cấp quyền: xử lý riêng, không trộn với các thay đổi khác ──────
+    if (body.approval) {
+      if (!canApprove(who, ticket)) return deny("Thầy/cô không phải người duyệt phiếu này");
+      const ok = body.approval === "APPROVE";
+      if (!ok && !body.approvalNote) return deny("Từ chối thì cần ghi lý do cho người gửi", 400);
+      const updated = await prisma.$transaction(async (tx) => {
+        const u = await tx.ticket.update({
+          where: { id },
+          data: {
+            approvalStatus: ok ? "APPROVED" : "REJECTED",
+            approvedByName: user.name,
+            approvedAt: new Date(),
+            approvalNote: body.approvalNote || null,
+            ...(ok ? {} : { status: "REJECTED", closedAt: new Date() }),
+          },
+        });
+        await tx.ticketEvent.create({
+          data: {
+            ticketId: id,
+            actorUserId: user.id,
+            actorName: user.name,
+            kind: "approval",
+            toValue: ok ? "Đơn vị đã duyệt" : `Đơn vị từ chối: ${body.approvalNote}`,
+          },
+        });
+        return u;
+      });
+      if (ok) void notifyNewTicket(updated, true).catch(() => undefined);
+      if (ticket.notifyEmail) {
+        sendMail({
+          to: ticket.reporterEmail,
+          subject: `[${ticket.code}] ${ok ? "Đã được đơn vị duyệt" : "Đơn vị không duyệt yêu cầu"}`,
+          lines: [
+            `Phiếu ${ticket.code} — ${ticket.title}`,
+            ok
+              ? `${user.name} đã duyệt. Phiếu chuyển sang nhóm ${ticket.team ?? "phụ trách"} để thực hiện.`
+              : `${user.name} không duyệt. Lý do: ${body.approvalNote}`,
+          ],
+          link: { href: ticketUrl(id), label: "Mở phiếu" },
+        });
+      }
+      return NextResponse.json({ ok: true });
+    }
+
+    const acting = canAct(who, ticket);
+    // Phiếu xin quyền chưa duyệt: chỉ được đóng / từ chối, chưa được bắt tay làm.
+    if (
+      acting &&
+      ticket.approvalStatus === "PENDING" &&
+      (body.assign !== undefined || (body.status && !["REJECTED", "CLOSED"].includes(body.status)))
+    ) {
+      return deny("Phiếu đang chờ đơn vị duyệt — chưa thể xử lý", 409);
+    }
+    // Giao cho NGƯỜI KHÁC hay đổi nhóm: trưởng nhóm / quản trị. Thành viên chỉ tự nhận / bỏ nhận.
+    if (acting && !canAssignOthers(who, ticket)) {
+      if (body.team !== undefined) return deny("Chỉ trưởng nhóm mới chuyển nhóm được");
+      if (body.assign && body.assign !== "me" && body.assign !== user.id) {
+        return deny("Chỉ trưởng nhóm mới giao phiếu cho người khác");
+      }
+    }
+
     // Người gửi chỉ được: ĐÓNG phiếu của mình, MỞ LẠI phiếu "đã xong" khi vẫn
     // còn lỗi, và bật/tắt email báo tin. Mọi thay đổi khác dành cho người xử
     // lý — nếu không, phiếu sẽ bị tự đẩy sang "đã xong" mà chưa ai làm gì.
-    if (!user.isStaff) {
+    if (!acting) {
       if (!isOwner) return deny("Không đủ quyền đổi phiếu này");
       if (body.priority !== undefined || body.assign !== undefined || body.team !== undefined) {
         return deny("Không đủ quyền đổi phiếu này");
@@ -96,9 +164,18 @@ export async function PATCH(
         toId = user.id;
         toName = user.name;
       } else if (body.assign) {
-        // Chỉ giao cho người xử lý đã có trong sổ — không cho gán một id bất kỳ.
+        // Chỉ giao cho người đã vào hệ VÀ thuộc nhóm của phiếu (quản trị: mọi
+        // thành viên nhóm nào cũng được) — không gán một id bất kỳ.
         const s = await prisma.ticketStaff.findUnique({ where: { userId: body.assign } });
-        if (!s) return deny("Người này chưa vào hệ thống hỗ trợ", 400);
+        if (!s) return deny("Người này chưa đăng nhập hệ hỗ trợ lần nào", 400);
+        const member = await prisma.ticketTeamMember.findFirst({
+          where: {
+            email: s.email.toLowerCase(),
+            ...(user.access.sysAdmin ? {} : { team: { name: ticket.team ?? "" } }),
+          },
+        });
+        const targetIsAdmin = s.cmsRole === "SUPER_ADMIN";
+        if (!member && !targetIsAdmin) return deny("Người này không thuộc nhóm phụ trách phiếu", 400);
         toId = s.userId;
         toName = s.name;
       }
@@ -114,6 +191,11 @@ export async function PATCH(
     }
     if (body.notifyEmail !== undefined && body.notifyEmail !== ticket.notifyEmail) {
       data.notifyEmail = body.notifyEmail;
+    }
+
+    // Mốc phản hồi đầu: lần đầu bên xử lý động tới phiếu.
+    if (acting && !isOwner && !ticket.firstResponseAt && (data.status || data.assigneeUserId)) {
+      data.firstResponseAt = new Date();
     }
 
     if (!Object.keys(data).length) {

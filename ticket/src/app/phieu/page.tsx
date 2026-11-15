@@ -19,7 +19,7 @@ export default async function Page({
   // Quản trị viên mặc định vào bàn điều phối; `cua=toi` để xem phiếu chính
   // mình gửi đi như mọi người gửi khác.
   if (user.isStaff && p.cua !== "toi") {
-    return <StaffBoard me={{ id: user.id, name: user.name }} p={p} />;
+    return <StaffBoard me={user} p={p} />;
   }
   return (
     <MyTickets

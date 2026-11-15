@@ -21,6 +21,8 @@ export type QueueRow = {
   /** "3 giờ", "chờ người gửi", "—" */
   wait: string;
   late: boolean;
+  /** Nhãn cảnh báo: chờ duyệt, quá hạn… */
+  flag?: string | null;
 };
 
 const PR_LEVEL: Record<Priority, number> = { LOW: 1, NORMAL: 2, HIGH: 3, URGENT: 4 };
@@ -53,10 +55,13 @@ export function QueueList({
   groups,
   staff,
   meId,
+  selectable = true,
 }: {
   groups: { label: string; rows: QueueRow[] }[];
   staff: { userId: string; name: string }[];
   meId: string;
+  /** Đầu mối đơn vị / Ban Chủ nhiệm chỉ xem: không chọn, không thao tác hàng loạt. */
+  selectable?: boolean;
 }) {
   const router = useRouter();
   const [sel, setSel] = useState<Set<string>>(new Set());
@@ -175,18 +180,34 @@ export function QueueList({
                   "grid items-center gap-x-4 gap-y-1 rounded-[20px] px-3 py-3 [grid-template-columns:auto_auto_1fr] lg:[grid-template-columns:auto_5.2rem_minmax(0,1fr)_10rem_4rem_7.5rem_8rem_6rem]"
                 }
               >
-                <input
-                  type="checkbox"
-                  aria-label={`Chọn ${r.code}`}
-                  checked={on}
-                  onChange={() => toggle(r.id)}
-                  className="h-[18px] w-[18px] accent-[#3b4040]"
-                />
+                {selectable ? (
+                  <input
+                    type="checkbox"
+                    aria-label={`Chọn ${r.code}`}
+                    checked={on}
+                    onChange={() => toggle(r.id)}
+                    className="h-[18px] w-[18px] accent-[#3b4040]"
+                  />
+                ) : (
+                  <span aria-hidden className="w-[18px]" />
+                )}
                 <Link href={`/phieu/${r.id}`} className="font-mono text-[13px] font-semibold hover:underline">
                   {r.code}
                 </Link>
                 <Link href={`/phieu/${r.id}`} className="flex min-w-0 flex-col">
-                  <span className="truncate font-medium">{r.title}</span>
+                  <span className="flex min-w-0 items-center gap-2">
+                    <span className="truncate font-medium">{r.title}</span>
+                    {r.flag ? (
+                      <span
+                        className={
+                          "shrink-0 rounded-full px-2.5 py-0.5 text-[11px] font-medium " +
+                          (r.flag.startsWith("Chờ duyệt") ? "bg-[#f6e3b0] text-[#5e4300]" : "bg-[#f3dcd6] text-[#8a2e1e]")
+                        }
+                      >
+                        {r.flag}
+                      </span>
+                    ) : null}
+                  </span>
                   <span className="muted truncate text-[13px] font-light">{r.reporter}</span>
                 </Link>
                 <span className="col-start-3 flex min-w-0 flex-col text-[13px] lg:col-auto">

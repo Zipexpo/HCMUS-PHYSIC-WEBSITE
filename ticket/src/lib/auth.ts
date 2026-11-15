@@ -1,6 +1,7 @@
 import { cookies } from "next/headers";
 import { sweepAutoClose } from "@/lib/lifecycle";
 import { rememberStaff } from "@/lib/staff";
+import { type Access, isHandler, loadAccess } from "@/lib/access";
 
 /**
  * Đăng nhập dùng lại TÀI KHOẢN CMS.
@@ -24,8 +25,11 @@ export type SessionUser = {
   name: string;
   role: string;
   unit: string | null;
-  /** Nhân viên kỹ thuật/quản trị: thấy mọi phiếu, đổi được trạng thái. */
+  /** Mã đơn vị bên CMS (Department.id). */
+  unitId: string | null;
+  /** Người xử lý (quản trị hoặc thành viên nhóm) — xem lib/access.ts. */
   isStaff: boolean;
+  access: Access;
 };
 
 type CmsProfile = {
@@ -149,15 +153,19 @@ export async function profileFromToken(
   }
   if (!res.ok) return null;
   const p = (await res.json()) as CmsProfile;
+  const unitId = p.department?.id ?? null;
+  // Quyền KHÔNG suy ra từ vai trò CMS nữa mà từ nhóm / vai trò gán trong hệ
+  // hỗ trợ — xem lib/access.ts.
+  const access = await loadAccess({ email: p.email, cmsRole: p.role, unitId });
   return {
     id: p.id,
     email: p.email,
     name: fullName(p),
     role: p.role,
     unit: p.department?.name ?? null,
-    // Hiện tại hệ chỉ nhận sự cố kỹ thuật, nên người xử lý là quản trị viên.
-    // Về sau muốn giao cho tổ khác thì đổi luật ở đúng một chỗ này.
-    isStaff: p.role === "ADMIN" || p.role === "SUPER_ADMIN",
+    unitId,
+    isStaff: isHandler(access),
+    access,
   };
 }
 

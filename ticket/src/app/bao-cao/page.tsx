@@ -6,6 +6,7 @@ import { OPEN_STATUSES, STATUS_LABEL } from "@/lib/ticket";
 import { STATUS_TONE } from "@/lib/labels";
 import type { Prisma, TicketStatus } from "@/generated/prisma/client";
 import { CurveDown, CurveUp, Led, homNay } from "@/components/ui";
+import { canSeeReport, queueScope } from "@/lib/access";
 import { DAY_MS, RANGES, hrefWith, pie, resolveRange, type Params } from "../phieu/filters";
 
 export const dynamic = "force-dynamic";
@@ -36,7 +37,7 @@ const ddmm = (d: Date) => {
 export default async function Page({ searchParams }: { searchParams: Promise<Params> }) {
   const user = await currentUser();
   if (!user) redirect("/dang-nhap?next=/bao-cao");
-  if (!user.isStaff) notFound();
+  if (!canSeeReport(user.access)) notFound();
 
   const p = await searchParams;
   // Mặc định 30 ngày: đủ dài để thấy nhịp, đủ ngắn để còn ý nghĩa cho tuần này.
@@ -47,6 +48,13 @@ export default async function Page({ searchParams }: { searchParams: Promise<Par
 
   const where: Prisma.TicketWhereInput = {};
   if (range.from || range.to) where.createdAt = { gte: range.from, lt: range.to };
+  // Báo cáo theo đúng phạm vi người xem: Ban Chủ nhiệm / quản trị thấy toàn Khoa,
+  // trưởng nhóm thấy nhóm mình, đầu mối thấy đơn vị mình.
+  const a = user.access;
+  if (!a.sysAdmin && !a.board) {
+    const scope = queueScope({ ...a, board: false });
+    if (scope) Object.assign(where, scope);
+  }
 
   const [tickets, firsts, openNow] = await Promise.all([
     prisma.ticket.findMany({

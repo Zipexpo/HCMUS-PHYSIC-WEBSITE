@@ -74,7 +74,7 @@ const FORMS = [
   },
   {
     key: "tai-khoan",
-    defaultTeam: "Quản trị hệ thống",
+    defaultTeam: "Tài khoản & Quyền",
     name: "Tài khoản & quyền truy cập",
     description:
       "Quên mật khẩu, không đăng nhập được, xin cấp tài khoản hoặc xin thêm quyền.",
@@ -111,7 +111,7 @@ const FORMS = [
   },
   {
     key: "sua-noi-dung",
-    defaultTeam: "Biên tập web",
+    defaultTeam: "Biên tập nội dung",
     name: "Sửa nội dung trên web",
     description:
       "Thông tin sai, ảnh hỏng, cần thêm/bớt/sửa nội dung trên trang công khai.",

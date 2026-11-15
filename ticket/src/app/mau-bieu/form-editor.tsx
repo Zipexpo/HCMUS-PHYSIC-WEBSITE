@@ -13,6 +13,8 @@ type Initial = {
   defaultTeam: string;
   isActive: boolean;
   sortOrder: number;
+  unitRoute: boolean;
+  approval: { field: string; values: string[] } | null;
   fields: FormField[];
   ticketCount: number;
 };
@@ -44,7 +46,7 @@ function slug(s: string, sep = "_"): string {
 let seq = 0;
 const uid = () => `f${++seq}`;
 
-export function FormEditor({ initial }: { initial: Initial }) {
+export function FormEditor({ initial, teams }: { initial: Initial; teams: string[] }) {
   const router = useRouter();
   const isNew = !initial.id;
   const [meta, setMeta] = useState({
@@ -54,6 +56,8 @@ export function FormEditor({ initial }: { initial: Initial }) {
     defaultTeam: initial.defaultTeam,
     isActive: initial.isActive,
     sortOrder: initial.sortOrder,
+    unitRoute: initial.unitRoute,
+    approval: initial.approval,
   });
   const [keyTouched, setKeyTouched] = useState(!isNew);
   const fromInitial = (): Draft[] =>
@@ -77,6 +81,8 @@ export function FormEditor({ initial }: { initial: Initial }) {
       defaultTeam: initial.defaultTeam,
       isActive: initial.isActive,
       sortOrder: initial.sortOrder,
+    unitRoute: initial.unitRoute,
+    approval: initial.approval,
     },
     fromInitial(),
   ));
@@ -153,6 +159,8 @@ export function FormEditor({ initial }: { initial: Initial }) {
       defaultTeam: initial.defaultTeam,
       isActive: initial.isActive,
       sortOrder: initial.sortOrder,
+    unitRoute: initial.unitRoute,
+    approval: initial.approval,
     });
     setFields(fromInitial());
     setKeyTouched(!isNew);
@@ -287,20 +295,24 @@ export function FormEditor({ initial }: { initial: Initial }) {
               <label htmlFor="m-team" className="block text-sm font-medium">
                 Nhóm nhận mặc định
               </label>
-              {/* Gợi ý các nhóm sẵn có, nhưng vẫn gõ được tên nhóm mới. */}
-              <input
+              {/* Chỉ chọn trong các nhóm đã lập (trang Nhóm) — gõ tay tên lạ thì phiếu
+                  tới một nhóm không có ai. */}
+              <select
                 id="m-team"
-                list="m-team-list"
                 value={meta.defaultTeam}
                 onChange={(e) => setM({ defaultTeam: e.target.value })}
                 className="field mt-2"
-                placeholder="Kỹ thuật web"
-              />
-              <datalist id="m-team-list">
-                {["Kỹ thuật web", "Quản trị hệ thống", "Biên tập web"].map((t) => (
-                  <option key={t} value={t} />
+              >
+                {meta.defaultTeam && !teams.includes(meta.defaultTeam) ? (
+                  <option value={meta.defaultTeam}>{meta.defaultTeam} (nhóm chưa lập)</option>
+                ) : null}
+                {!meta.defaultTeam ? <option value="">— Chọn nhóm —</option> : null}
+                {teams.map((t) => (
+                  <option key={t} value={t}>
+                    {t}
+                  </option>
                 ))}
-              </datalist>
+              </select>
             </div>
             <div>
               <label htmlFor="m-order" className="block text-sm font-medium">
@@ -317,6 +329,98 @@ export function FormEditor({ initial }: { initial: Initial }) {
               />
             </div>
           </div>
+        </div>
+
+        {/* ── Chuyển phiếu & duyệt ───────────────────────────────── */}
+        <div className="card space-y-4 p-6 sm:p-7">
+          <h2 className="eyebrow muted">Chuyển phiếu &amp; duyệt</h2>
+          <label className="press flex cursor-pointer items-start gap-3 rounded-[20px] px-4 py-3 text-sm">
+            <input
+              type="checkbox"
+              checked={meta.unitRoute}
+              onChange={(e) => setM({ unitRoute: e.target.checked })}
+              className="mt-0.5 h-5 w-5 accent-[#3b4040]"
+            />
+            <span>
+              <span className="font-medium">Chuyển trước cho đầu mối đơn vị của người gửi</span>
+              <span className="muted block text-xs">
+                Dùng cho việc đơn vị tự làm được (vd sửa nội dung trang bộ môn). Quá hạn phản hồi, hoặc đơn vị chưa có
+                đầu mối, thì nhóm phụ trách nhận.
+              </span>
+            </span>
+          </label>
+          {(() => {
+            const selects = fields.filter((f) => f.type === "select" && f.key);
+            const rule = meta.approval;
+            const ruleField = selects.find((f) => f.key === rule?.field);
+            const opts = ruleField ? ruleField.optionsText.split("\n").map((o) => o.trim()).filter(Boolean) : [];
+            return (
+              <div className="press space-y-3 rounded-[20px] px-4 py-3 text-sm">
+                <label className="flex cursor-pointer items-start gap-3">
+                  <input
+                    type="checkbox"
+                    checked={!!rule}
+                    disabled={!selects.length}
+                    onChange={(e) =>
+                      setM({ approval: e.target.checked && selects[0] ? { field: selects[0].key, values: [] } : null })
+                    }
+                    className="mt-0.5 h-5 w-5 accent-[#3b4040]"
+                  />
+                  <span>
+                    <span className="font-medium">Cần đầu mối đơn vị duyệt trước khi xử lý</span>
+                    <span className="muted block text-xs">
+                      {selects.length
+                        ? "Người gửi chọn một trong các lựa chọn đánh dấu dưới đây thì phiếu chờ đầu mối đơn vị của họ duyệt, rồi nhóm mới làm."
+                        : "Cần ít nhất một ô kiểu chọn để đặt luật duyệt."}
+                    </span>
+                  </span>
+                </label>
+                {rule ? (
+                  <div className="space-y-2 pl-8">
+                    <label className="flex flex-wrap items-center gap-2">
+                      Dựa trên ô
+                      <select
+                        value={rule.field}
+                        onChange={(e) => setM({ approval: { field: e.target.value, values: [] } })}
+                        className="raise rounded-full border-0 px-3 py-1.5 text-[13px] outline-none"
+                      >
+                        {selects.map((f) => (
+                          <option key={f.uid} value={f.key}>
+                            {f.label || f.key}
+                          </option>
+                        ))}
+                      </select>
+                    </label>
+                    <div className="flex flex-wrap gap-2">
+                      {opts.map((o) => {
+                        const on = rule.values.includes(o);
+                        return (
+                          <button
+                            key={o}
+                            type="button"
+                            aria-pressed={on}
+                            onClick={() =>
+                              setM({
+                                approval: {
+                                  field: rule.field,
+                                  values: on ? rule.values.filter((v) => v !== o) : [...rule.values, o],
+                                },
+                              })
+                            }
+                            className={"tap rounded-full px-3.5 py-1.5 text-[13px] " + (on ? "raise-d text-[var(--on-dark)]" : "raise")}
+                          >
+                            {on ? "✓ " : ""}
+                            {o}
+                          </button>
+                        );
+                      })}
+                    </div>
+                    {!rule.values.length ? <p className="text-xs text-[#8a2e1e]">Chọn ít nhất một lựa chọn cần duyệt.</p> : null}
+                  </div>
+                ) : null}
+              </div>
+            );
+          })()}
         </div>
 
         {/* ── Các ô riêng ─────────────────────────────────────────── */}

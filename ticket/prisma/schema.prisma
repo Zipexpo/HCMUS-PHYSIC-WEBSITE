@@ -57,6 +57,13 @@ model TicketForm {
   fields      Json    @default("[]")
   /// Đội/nhóm chịu trách nhiệm mặc định — hiện ra cho người gửi biết ai nhận.
   defaultTeam String?
+  /// Chuyển TRƯỚC cho đầu mối đơn vị của người gửi (vd sửa nội dung trang bộ
+  /// môn: bộ môn sở hữu nội dung). Quá hạn hoặc đơn vị không có đầu mối thì
+  /// nhóm phụ trách xử lý.
+  unitRoute   Boolean @default(false)
+  /// Luật cần duyệt: { field: "<khoá ô>", values: ["<lựa chọn cần duyệt>", ...] }.
+  /// Câu trả lời khớp → phiếu chờ đầu mối đơn vị của người gửi duyệt rồi mới xử lý.
+  approval    Json?
   isActive    Boolean @default(true)
   sortOrder   Int     @default(0)
 
@@ -92,6 +99,8 @@ model Ticket {
   reporterName   String
   reporterEmail  String
   reporterUnit   String?
+  /// Mã đơn vị (Department.id bên CMS) — để đầu mối đơn vị thấy / duyệt phiếu.
+  reporterUnitId String?
 
   // ── Người xử lý ──────────────────────────────────────────────────────────
   assigneeUserId String?
@@ -107,6 +116,26 @@ model Ticket {
   /// Người gửi muốn nhận email khi có trả lời / đổi trạng thái. Mặc định BẬT:
   /// không báo thì người ta không biết phiếu đã chuyển sang "chờ bổ sung".
   notifyEmail Boolean @default(true)
+
+  /// Phiếu đi qua đầu mối đơn vị trước (sao chép từ mẫu lúc gửi).
+  unitRoute Boolean @default(false)
+
+  // ── Duyệt cấp quyền ──────────────────────────────────────────────────────
+  /// null = không cần duyệt; "PENDING" | "APPROVED" | "REJECTED".
+  approvalStatus   String?
+  approvalUnitId   String?
+  approvalUnitName String?
+  approvedByName   String?
+  approvedAt       DateTime?
+  approvalNote     String?
+
+  // ── Thời hạn & leo thang ─────────────────────────────────────────────────
+  /// Lần đầu bên xử lý động tới (trả lời công khai, nhận phiếu, đổi trạng thái).
+  firstResponseAt DateTime?
+  /// 0 = chưa leo thang, 1 = đã báo quá hạn phản hồi, 2 = đã báo quá hạn xử lý.
+  escalation      Int     @default(0)
+  /// Đã báo lên Ban Chủ nhiệm (phiếu Khẩn quá hạn xử lý) — Ban Chủ nhiệm thấy phiếu này.
+  boardEscalated  Boolean @default(false)
 
   resolvedAt DateTime?
   closedAt   DateTime?
@@ -200,5 +229,44 @@ model TicketStaff {
   name       String
   email      String
   unit       String?
+  /// Mã đơn vị và vai trò bên CMS — để biết ai là đầu mối của đơn vị nào.
+  unitId     String?
+  cmsRole    String?
   lastSeenAt DateTime @default(now())
+}
+
+/// Nhóm hỗ trợ (Kỹ thuật web, Tài khoản & Quyền, Biên tập nội dung…). Phiếu
+/// tới nhóm theo TÊN (Ticket.team, TicketForm.defaultTeam) — đổi tên nhóm thì
+/// đổi cả hai cột đó.
+model TicketTeam {
+  id          String   @id @default(cuid())
+  name        String   @unique
+  description String?
+  sortOrder   Int      @default(0)
+  createdAt   DateTime @default(now())
+
+  members TicketTeamMember[]
+}
+
+/// Thành viên nhóm, khoá theo EMAIL: thêm được cả người chưa từng đăng nhập.
+model TicketTeamMember {
+  teamId    String
+  team      TicketTeam @relation(fields: [teamId], references: [id], onDelete: Cascade)
+  email     String
+  name      String
+  /// "LEAD" (trưởng nhóm) | "MEMBER"
+  role      String     @default("MEMBER")
+  createdAt DateTime   @default(now())
+
+  @@id([teamId, email])
+  @@index([email])
+}
+
+/// Vai trò toàn hệ: "ADMIN" (quản trị hệ thống hỗ trợ) | "BOARD" (Ban Chủ nhiệm Khoa).
+/// SUPER_ADMIN bên CMS luôn là quản trị, không cần dòng ở đây.
+model TicketRole {
+  email     String   @id
+  name      String
+  role      String
+  createdAt DateTime @default(now())
 }

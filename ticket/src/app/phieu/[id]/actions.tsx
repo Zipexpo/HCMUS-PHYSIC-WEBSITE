@@ -319,7 +319,7 @@ const STATUSES: { s: Status; label: string; note?: string; led: string }[] = [
   { s: "REJECTED", label: "Không xử lý", note: "cần lý do", led: "#f08c76" },
 ];
 
-export function StaffStatus({ ticketId, status }: { ticketId: string; status: Status }) {
+export function StaffStatus({ ticketId, status, locked }: { ticketId: string; status: Status; locked?: boolean }) {
   const { send, busy, err } = useSend();
   return (
     <div className="raise-d flex min-w-0 flex-[999_1_560px] flex-col gap-4 rounded-[34px] p-6">
@@ -332,7 +332,8 @@ export function StaffStatus({ ticketId, status }: { ticketId: string; status: St
               key={x.s}
               type="button"
               aria-pressed={on}
-              disabled={busy || on}
+              // Chờ duyệt: chỉ còn Đóng / Không xử lý — chưa được bắt tay làm.
+              disabled={busy || on || (locked && x.s !== "CLOSED" && x.s !== "REJECTED")}
               onClick={() => void send(base(ticketId), { status: x.s })}
               className={
                 (on ? "press-d font-semibold" : "raise-d hover:-translate-y-0.5") +
@@ -371,6 +372,8 @@ export function StaffMeta({
   staff,
   team,
   teams,
+  canAssign,
+  locked,
 }: {
   ticketId: string;
   priority: Priority;
@@ -380,6 +383,10 @@ export function StaffMeta({
   staff: { userId: string; name: string }[];
   team: string | null;
   teams: string[];
+  /** Trưởng nhóm / quản trị: giao cho người khác, chuyển nhóm. */
+  canAssign: boolean;
+  /** Đang chờ duyệt: chưa được nhận phiếu. */
+  locked?: boolean;
 }) {
   const { send, busy, err } = useSend();
   const url = base(ticketId);
@@ -417,10 +424,10 @@ export function StaffMeta({
         </div>
       </div>
       <label className="flex flex-col gap-2 text-sm text-[var(--on-dark-muted)]">
-        Người xử lý
+        {canAssign ? "Người xử lý" : "Người xử lý (thành viên chỉ tự nhận / bỏ nhận)"}
         <select
           className={sel}
-          disabled={busy}
+          disabled={busy || locked}
           value={assigneeUserId ?? ""}
           onChange={(e) => void send(url, { assign: e.target.value === me.id ? "me" : e.target.value })}
         >
@@ -435,7 +442,7 @@ export function StaffMeta({
       </label>
       <label className="flex flex-col gap-2 text-sm text-[var(--on-dark-muted)]">
         Nhóm
-        <select className={sel} disabled={busy} value={team ?? ""} onChange={(e) => void send(url, { team: e.target.value })}>
+        <select className={sel} disabled={busy || !canAssign} value={team ?? ""} onChange={(e) => void send(url, { team: e.target.value })}>
           {team ? null : <option value="">— Chưa có —</option>}
           {teams.map((x) => (
             <option key={x} value={x}>
@@ -686,5 +693,72 @@ export function Composer(
       </div>
       <ErrorLine err={err} />
     </form>
+  );
+}
+
+/**
+ * Khối DUYỆT CẤP QUYỀN — đầu mối đơn vị (hoặc quản trị) duyệt / từ chối; người
+ * khác thấy phiếu đang chờ ai.
+ */
+export function ApprovalBox({
+  ticketId,
+  unit,
+  canDecide,
+  reporterView,
+}: {
+  ticketId: string;
+  unit: string | null;
+  canDecide: boolean;
+  reporterView: boolean;
+}) {
+  const { send, busy, err, setErr } = useSend();
+  const [note, setNote] = useState("");
+  const who = unit ? `đầu mối ${unit}` : "quản trị hệ thống";
+  return (
+    <div className="raise-d flex w-full flex-col gap-3 rounded-[34px] p-6">
+      <h2 className="flex items-center gap-3 text-[21px] font-medium">
+        <span className="knob h-3.5 w-3.5 rounded-full" />
+        {canDecide ? "Cần thầy/cô duyệt yêu cầu cấp quyền" : `Đang chờ ${who} duyệt`}
+      </h2>
+      <p className="font-light text-[var(--on-dark-muted)]">
+        {canDecide
+          ? "Đây là yêu cầu cấp tài khoản / thêm quyền. Duyệt thì nhóm Tài khoản & Quyền thực hiện; từ chối thì phiếu đóng và người gửi nhận lý do qua email."
+          : reporterView
+            ? "Yêu cầu cấp tài khoản / thêm quyền cần đơn vị xác nhận trước. Duyệt xong, phiếu tự chuyển sang nhóm phụ trách — thầy/cô sẽ nhận email."
+            : "Phiếu chưa được xử lý cho tới khi đơn vị duyệt. Bên xử lý chỉ có thể đóng hoặc đánh dấu không xử lý."}
+      </p>
+      {canDecide ? (
+        <>
+          <label htmlFor="ap-note" className="sr-only">
+            Ghi chú duyệt
+          </label>
+          <textarea
+            id="ap-note"
+            rows={2}
+            value={note}
+            onChange={(e) => setNote(e.target.value)}
+            placeholder="Ghi chú (bắt buộc khi từ chối) — vd: chỉ cấp quyền đăng bài, không cấp quyền quản trị"
+            className="press-d resize-y rounded-3xl border-0 px-5 py-3 text-[var(--on-dark)] outline-none placeholder:text-[var(--on-dark-muted)]"
+          />
+          <div className="flex flex-wrap gap-3">
+            <button
+              type="button"
+              disabled={busy}
+              onClick={() => {
+                if (!note.trim()) return setErr("Từ chối thì cần ghi lý do cho người gửi");
+                void send(base(ticketId), { approval: "REJECT", approvalNote: note });
+              }}
+              className="raise-d tap h-[52px] rounded-full px-5 font-medium text-[var(--on-dark)]"
+            >
+              Từ chối
+            </button>
+            <KnobButton disabled={busy} onClick={() => void send(base(ticketId), { approval: "APPROVE", approvalNote: note || undefined })}>
+              Duyệt
+            </KnobButton>
+          </div>
+          <ErrorLine err={err} />
+        </>
+      ) : null}
+    </div>
   );
 }

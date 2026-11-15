@@ -5,6 +5,7 @@ import { prisma } from "@/lib/db";
 import { parseFields } from "@/lib/ticket";
 import { CurveDown, CurveUp, Led } from "@/components/ui";
 import { FormEditor } from "./form-editor";
+import { canEditForms, leadOf } from "@/lib/access";
 
 export const dynamic = "force-dynamic";
 
@@ -16,15 +17,22 @@ export default async function Page({
   const user = await currentUser();
   if (!user) redirect("/dang-nhap?next=/mau-bieu");
   // Trang quản trị: người gửi thường coi như không tồn tại.
-  if (!user.isStaff) notFound();
+  if (!canEditForms(user.access)) notFound();
+  const a = user.access;
 
   const { id } = await searchParams;
-  const forms = await prisma.ticketForm.findMany({
-    orderBy: [{ sortOrder: "asc" }, { name: "asc" }],
-    include: { _count: { select: { tickets: true } } },
-  });
+  // Trưởng nhóm chỉ thấy và sửa mẫu của nhóm mình; quản trị thấy tất cả.
+  const forms = (
+    await prisma.ticketForm.findMany({
+      orderBy: [{ sortOrder: "asc" }, { name: "asc" }],
+      include: { _count: { select: { tickets: true } } },
+    })
+  ).filter((f) => leadOf(a, f.defaultTeam));
+  const teams = (await prisma.ticketTeam.findMany({ orderBy: { sortOrder: "asc" }, select: { name: true } }))
+    .map((t) => t.name)
+    .filter((n) => leadOf(a, n));
 
-  const isNew = id === "moi";
+  const isNew = id === "moi" && a.sysAdmin;
   const picked = isNew ? null : (forms.find((f) => f.id === id) ?? forms[0] ?? null);
 
   return (
@@ -66,6 +74,7 @@ export default async function Page({
               </Link>
             );
           })}
+          {a.sysAdmin ? (
           <Link
             scroll={false}
             href="/mau-bieu?id=moi"
@@ -77,11 +86,16 @@ export default async function Page({
           >
             + Loại yêu cầu mới
           </Link>
+          ) : null}
         </nav>
       </section>
       <CurveUp />
 
+      {!picked && !isNew ? (
+        <p className="muted px-5 py-10 text-sm sm:px-10">Nhóm của thầy/cô chưa có loại yêu cầu nào.</p>
+      ) : (
       <FormEditor
+        teams={teams}
         // key đổi theo mẫu đang chọn để trạng thái soạn thảo làm mới hẳn.
         key={picked?.id ?? "moi"}
         initial={
@@ -94,6 +108,8 @@ export default async function Page({
                 defaultTeam: picked.defaultTeam ?? "",
                 isActive: picked.isActive,
                 sortOrder: picked.sortOrder,
+                unitRoute: picked.unitRoute,
+                approval: (picked.approval as { field: string; values: string[] } | null) ?? null,
                 fields: parseFields(picked.fields),
                 ticketCount: picked._count.tickets,
               }
@@ -104,11 +120,14 @@ export default async function Page({
                 defaultTeam: "",
                 isActive: true,
                 sortOrder: (forms.at(-1)?.sortOrder ?? 0) + 1,
+                unitRoute: false,
+                approval: null,
                 fields: [],
                 ticketCount: 0,
               }
         }
       />
+      )}
     </>
   );
 }

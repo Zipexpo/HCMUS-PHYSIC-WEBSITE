@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { FormFieldSchema } from "@/lib/ticket";
+import { Prisma } from "@/generated/prisma/client";
 
 /**
  * Dữ liệu một mẫu biểu gửi lên từ màn hình sửa mẫu.
@@ -17,6 +18,12 @@ export const FormInput = z
     defaultTeam: z.string().trim().max(120).optional().nullable(),
     isActive: z.boolean(),
     sortOrder: z.number().int().min(0).max(999),
+    unitRoute: z.boolean().default(false),
+    /** null = không cần duyệt. */
+    approval: z
+      .object({ field: z.string().min(1), values: z.array(z.string().trim().min(1)).min(1) })
+      .nullable()
+      .default(null),
     fields: z
       .array(
         FormFieldSchema.extend({
@@ -32,6 +39,13 @@ export const FormInput = z
       if (seen.has(f.key))
         ctx.addIssue({ code: "custom", path: ["fields", i, "key"], message: `Trùng khoá ô "${f.key}"` });
       seen.add(f.key);
+    });
+    if (v.approval) {
+      const f = v.fields.find((x) => x.key === v.approval!.field);
+      if (!f || f.type !== "select")
+        ctx.addIssue({ code: "custom", path: ["approval"], message: "Luật duyệt phải dựa trên một ô kiểu chọn" });
+    }
+    v.fields.forEach((f, i) => {
       if (f.type === "select" && !(f.options ?? []).filter((o) => o.trim()).length)
         ctx.addIssue({ code: "custom", path: ["fields", i], message: `Ô "${f.label}" cần ít nhất một lựa chọn` });
     });
@@ -45,6 +59,8 @@ export function clean(v: z.infer<typeof FormInput>) {
     defaultTeam: v.defaultTeam || null,
     isActive: v.isActive,
     sortOrder: v.sortOrder,
+    unitRoute: v.unitRoute,
+    approval: v.approval ?? Prisma.DbNull,
     fields: v.fields.map((f) => ({
       key: f.key,
       label: f.label,

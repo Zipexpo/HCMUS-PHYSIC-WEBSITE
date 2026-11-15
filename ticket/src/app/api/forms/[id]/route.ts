@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/db";
 import { UnauthorizedError, requireUser } from "@/lib/auth";
+import { canEditForms, leadOf } from "@/lib/access";
 import { FormInput, clean, firstError } from "../schema";
 
 /**
@@ -16,7 +17,7 @@ export async function PUT(
 ): Promise<NextResponse> {
   try {
     const user = await requireUser();
-    if (!user.isStaff)
+    if (!canEditForms(user.access))
       return NextResponse.json({ message: "Không đủ quyền" }, { status: 403 });
 
     const { id } = await ctx.params;
@@ -24,9 +25,17 @@ export async function PUT(
     if (!existing)
       return NextResponse.json({ message: "Không có mẫu này" }, { status: 404 });
 
+    if (!leadOf(user.access, existing.defaultTeam))
+      return NextResponse.json({ message: "Mẫu này thuộc nhóm khác" }, { status: 403 });
+
     const parsed = FormInput.safeParse(await req.json().catch(() => null));
     if (!parsed.success)
       return NextResponse.json({ message: firstError(parsed.error) }, { status: 400 });
+
+    // Trưởng nhóm chỉ sửa mẫu của nhóm mình, và không đẩy mẫu sang nhóm khác.
+    const nextTeam = parsed.data.defaultTeam || null;
+    if (!leadOf(user.access, nextTeam))
+      return NextResponse.json({ message: "Mẫu này thuộc nhóm khác" }, { status: 403 });
 
     const { key: _ignored, ...data } = clean(parsed.data);
     void _ignored;

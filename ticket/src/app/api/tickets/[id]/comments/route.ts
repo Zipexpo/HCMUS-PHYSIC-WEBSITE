@@ -3,6 +3,7 @@ import { z } from "zod";
 import { prisma } from "@/lib/db";
 import { UnauthorizedError, requireUser } from "@/lib/auth";
 import { notifyAssignee, notifyMentions, notifyReporterReply } from "@/lib/lifecycle";
+import { canAct, canSee } from "@/lib/access";
 
 const Body = z.object({
   body: z.string().trim().min(1, "Chưa nhập nội dung").max(5000),
@@ -31,12 +32,22 @@ export async function POST(
         notifyEmail: true,
         assigneeUserId: true,
         status: true,
+        team: true,
+        reporterUnitId: true,
+        unitRoute: true,
+        approvalStatus: true,
+        approvalUnitId: true,
+        boardEscalated: true,
+        firstResponseAt: true,
       },
     });
     if (!ticket) {
       return NextResponse.json({ message: "Không có phiếu này" }, { status: 404 });
     }
-    if (!user.isStaff && ticket.reporterUserId !== user.id) {
+    const acting = canAct(user, ticket);
+    // Viết vào phiếu: người gửi hoặc người xử lý. Đầu mối chỉ-xem và Ban Chủ
+    // nhiệm đọc được nhưng không viết — tránh nhiều người cùng trả lời một phiếu.
+    if (!canSee(user, ticket) || (!acting && ticket.reporterUserId !== user.id)) {
       return NextResponse.json({ message: "Không đủ quyền" }, { status: 403 });
     }
 
@@ -49,7 +60,7 @@ export async function POST(
     }
     // Ghi chú nội bộ là đặc quyền của người xử lý. Không chặn ở đây thì người
     // gửi có thể tự đặt cờ rồi viết ghi chú mà chính họ không đọc lại được.
-    const isInternal = user.isStaff && parsed.data.isInternal;
+    const isInternal = acting && parsed.data.isInternal;
 
     await prisma.$transaction(async (tx) => {
       const c = await tx.ticketComment.create({
@@ -92,14 +103,23 @@ export async function POST(
           },
         });
       } else {
-        await tx.ticket.update({ where: { id }, data: { updatedAt: new Date() } });
+        await tx.ticket.update({
+          where: { id },
+          data: {
+            updatedAt: new Date(),
+            // Trả lời công khai đầu tiên của bên xử lý = mốc phản hồi đầu.
+            ...(acting && !isInternal && ticket.reporterUserId !== user.id && !ticket.firstResponseAt
+              ? { firstResponseAt: new Date() }
+              : {}),
+          },
+        });
       }
     });
 
     if (isInternal && parsed.data.body.includes("@")) {
       void notifyMentions(ticket, user, parsed.data.body);
     }
-    if (user.isStaff && !isInternal && ticket.reporterUserId !== user.id) {
+    if (acting && !isInternal && ticket.reporterUserId !== user.id) {
       notifyReporterReply(ticket, user.name, parsed.data.body);
     }
     if (ticket.reporterUserId === user.id && ticket.assigneeUserId !== user.id) {

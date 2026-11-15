@@ -1,8 +1,36 @@
 import type { Metadata } from "next";
 import { IBM_Plex_Mono, Lexend } from "next/font/google";
 import Link from "next/link";
-import { currentUser } from "@/lib/auth";
-import { NavLinks } from "./nav-links";
+import { type SessionUser, currentUser } from "@/lib/auth";
+import { canEditForms, canOpenQueue, canSeeReport, isHandler, roleLabel } from "@/lib/access";
+import { NavLinks, type NavItem } from "./nav-links";
+
+/**
+ * Danh mục theo vai trò:
+ *   người xử lý       Hàng đợi · Mẫu biểu* · Báo cáo · Nhóm · Gửi yêu cầu
+ *   đầu mối / BCN     Tổng quan · Gửi yêu cầu · Phiếu của tôi · Phiếu đơn vị|Leo thang · Báo cáo
+ *   người gửi         Tổng quan · Gửi yêu cầu · Phiếu của tôi
+ */
+function navFor(u: SessionUser): NavItem[] {
+  const a = u.access;
+  if (isHandler(a)) {
+    return [
+      { href: "/phieu", label: "Hàng đợi" },
+      ...(canEditForms(a) ? [{ href: "/mau-bieu", label: "Mẫu biểu" }] : []),
+      { href: "/bao-cao", label: "Báo cáo" },
+      { href: "/nhom", label: "Nhóm" },
+      { href: "/gui", label: "Gửi yêu cầu" },
+    ];
+  }
+  const items: NavItem[] = [
+    { href: "/", label: "Tổng quan" },
+    { href: "/gui", label: "Gửi yêu cầu" },
+    { href: "/phieu", label: "Phiếu của tôi" },
+  ];
+  if (canOpenQueue(a)) items.push({ href: "/don-vi", label: a.liaisonUnitId ? "Phiếu đơn vị" : "Leo thang" });
+  if (canSeeReport(a)) items.push({ href: "/bao-cao", label: "Báo cáo" });
+  return items;
+}
 import "./globals.css";
 
 // Font theo bản thiết kế. next/font tải tệp LÚC BUILD rồi tự phục vụ dưới
@@ -68,12 +96,12 @@ export default async function RootLayout({
 
             {user ? (
               <>
-                <NavLinks isStaff={user.isStaff} />
+                <NavLinks items={navFor(user)} />
                 <div className="raise inline-flex h-[54px] items-center gap-3 rounded-full pl-5 pr-2">
                   <span className="hidden flex-col leading-tight sm:flex">
                     <span className="text-sm font-medium">{user.name}</span>
                     <span className="muted text-xs">
-                      {user.isStaff ? "Quản trị viên" : (user.unit ?? "Cán bộ")}
+                      {roleLabel(user.access, user.unit)}
                     </span>
                   </span>
                   <span

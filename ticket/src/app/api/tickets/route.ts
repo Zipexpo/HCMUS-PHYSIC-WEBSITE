@@ -8,6 +8,12 @@ import {
   validateAnswers,
 } from "@/lib/ticket";
 import type { Prisma, TicketStatus } from "@/generated/prisma/client";
+import { queueScope } from "@/lib/access";
+import { notifyNewTicket } from "@/lib/lifecycle";
+import { z } from "zod";
+
+/** Luật duyệt của mẫu: câu trả lời ô `field` thuộc `values` → cần duyệt. */
+const ApprovalRule = z.object({ field: z.string(), values: z.array(z.string()) });
 
 const fail = (e: unknown) =>
   e instanceof UnauthorizedError
@@ -26,7 +32,9 @@ export async function GET(req: Request): Promise<NextResponse> {
     const where: Prisma.TicketWhereInput = {};
     // Người gửi thường CHỈ thấy phiếu của chính mình. Phiếu có thể chứa thông
     // tin nội bộ, nên mặc định là đóng, mở rộng theo vai trò.
+    const scope = queueScope(user.access);
     if (!user.isStaff || mine) where.reporterUserId = user.id;
+    else if (scope) Object.assign(where, scope);
     if (status) where.status = status as TicketStatus;
     if (q) {
       where.OR = [
@@ -90,6 +98,25 @@ export async function POST(req: Request): Promise<NextResponse> {
       return NextResponse.json({ message: errs.join(" · ") }, { status: 400 });
     }
 
+    // ── Duyệt cấp quyền ────────────────────────────────────────────────────
+    const rule = ApprovalRule.safeParse(form.approval);
+    const needsApproval =
+      rule.success && rule.data.values.includes(String(body.answers[rule.data.field] ?? ""));
+    // Đầu mối đơn vị tự xin cho đơn vị mình → chính họ là người duyệt, coi như đã duyệt.
+    const selfApproved = needsApproval && !!user.unitId && user.access.liaisonUnitId === user.unitId;
+    const approval = !needsApproval
+      ? {}
+      : selfApproved
+        ? {
+            approvalStatus: "APPROVED",
+            approvalUnitId: user.unitId,
+            approvalUnitName: user.unit,
+            approvedByName: user.name,
+            approvedAt: new Date(),
+            approvalNote: "Đầu mối đơn vị tự gửi",
+          }
+        : { approvalStatus: "PENDING", approvalUnitId: user.unitId, approvalUnitName: user.unit };
+
     // Mã phiếu và phiếu phải sinh trong CÙNG một giao dịch, nếu không hai người
     // bấm gửi cùng lúc sẽ nhận cùng một mã.
     const ticket = await prisma.$transaction(async (tx) => {
@@ -107,11 +134,18 @@ export async function POST(req: Request): Promise<NextResponse> {
           reporterName: user.name,
           reporterEmail: user.email,
           reporterUnit: user.unit,
+          reporterUnitId: user.unitId,
+          // Sửa nội dung trang đơn vị: qua đầu mối đơn vị trước (nếu người gửi có đơn vị).
+          unitRoute: form.unitRoute && !!user.unitId,
+          ...approval,
           // Phiếu tới thẳng nhóm phụ trách của loại yêu cầu này.
           team: form.defaultTeam,
           notifyEmail: body.notifyEmail,
         },
-        select: { id: true, code: true },
+        select: {
+          id: true, code: true, title: true, team: true, priority: true, reporterName: true,
+          reporterUnit: true, reporterUnitId: true, unitRoute: true, approvalStatus: true, approvalUnitId: true,
+        },
       });
       await tx.ticketEvent.create({
         data: {
@@ -125,7 +159,8 @@ export async function POST(req: Request): Promise<NextResponse> {
       return t;
     });
 
-    return NextResponse.json(ticket, { status: 201 });
+    void notifyNewTicket(ticket).catch(() => undefined);
+    return NextResponse.json({ id: ticket.id, code: ticket.code }, { status: 201 });
   } catch (e) {
     return fail(e);
   }

@@ -4,10 +4,13 @@ import { currentUser } from "@/lib/auth";
 import { prisma } from "@/lib/db";
 import { OPEN_STATUSES, PRIORITY_LABEL, STATUS_LABEL, parseFields } from "@/lib/ticket";
 import { AUTO_CLOSE_DAYS } from "@/lib/lifecycle";
-import { listStaff } from "@/lib/staff";
+import { assignableStaff } from "@/lib/staff";
+import { canAct, canApprove, canAssignOthers, canSee, canSeeInternal, isHandler, queueScope } from "@/lib/access";
+import { deadlines } from "@/lib/sla";
 import type { TicketStatus } from "@/generated/prisma/client";
 import { CurveDown, CurveUp, StatusTag } from "@/components/ui";
 import {
+  ApprovalBox,
   CloseTicket,
   Composer,
   NotifyToggle,
@@ -62,7 +65,6 @@ const STEP: Record<TicketStatus, number> = {
   REJECTED: 4,
 };
 
-const DEFAULT_TEAMS = ["Kỹ thuật web", "Quản trị hệ thống", "Biên tập web"];
 
 function eventText(e: { kind: string; actorName: string | null; fromValue: string | null; toValue: string | null }) {
   const who = e.actorName ?? "Hệ thống";
@@ -77,6 +79,10 @@ function eventText(e: { kind: string; actorName: string | null; fromValue: strin
       return `Mức độ: ${PRIORITY_LABEL[e.fromValue as keyof typeof PRIORITY_LABEL] ?? e.fromValue} → ${PRIORITY_LABEL[e.toValue as keyof typeof PRIORITY_LABEL] ?? e.toValue}`;
     case "team":
       return `Chuyển nhóm: ${e.fromValue} → ${e.toValue}`;
+    case "approval":
+      return `${who}: ${e.toValue}`;
+    case "escalate":
+      return `Cảnh báo: ${e.toValue}`;
     default:
       return e.kind;
   }
@@ -99,13 +105,20 @@ export default async function Page({ params }: { params: Promise<{ id: string }>
   if (!t) notFound();
 
   const isOwner = t.reporterUserId === user.id;
-  // Phiếu có thể chứa thông tin nội bộ → chỉ người gửi và người xử lý đọc được.
-  if (!user.isStaff && !isOwner) notFound();
-  const staffView = user.isStaff && !isOwner;
+  // Ai được đọc / làm gì: lib/access.ts. Không có quyền thì như phiếu không tồn tại.
+  if (!canSee(user, t)) notFound();
+  const acting = canAct(user, t);
+  const internalOk = canSeeInternal(user, t);
+  const approver = canApprove(user, t);
+  const pending = t.approvalStatus === "PENDING";
+  // Nhìn từ phía "bên xử lý" (kể cả đầu mối chỉ-xem, Ban Chủ nhiệm) — không phải người gửi.
+  const staffView = !isOwner;
+  const backHref = !staffView ? (user.isStaff ? "/phieu?cua=toi" : "/phieu") : isHandler(user.access) ? "/phieu" : "/don-vi";
+  const due = deadlines(t.approvedAt ?? t.createdAt, t.priority);
 
   // Ghi chú nội bộ và tệp đính kèm của nó lọc Ở MÁY CHỦ, không phải ẩn bằng CSS.
-  const comments = t.comments.filter((c) => user.isStaff || !c.isInternal);
-  const files = t.attachments.filter((a) => user.isStaff || !a.comment?.isInternal);
+  const comments = t.comments.filter((c) => internalOk || !c.isInternal);
+  const files = t.attachments.filter((a) => internalOk || !a.comment?.isInternal);
   const filesOf = (commentId: string | null) => files.filter((a) => a.commentId === commentId);
 
   // ── Thông tin đã điền ────────────────────────────────────────────────────
@@ -142,7 +155,7 @@ export default async function Page({ params }: { params: Promise<{ id: string }>
   const you = staffView ? "người gửi" : "thầy/cô";
   const steps = [
     "Đã gửi",
-    "Đã tiếp nhận",
+    pending ? "Chờ đơn vị duyệt" : "Đã tiếp nhận",
     waiting ? `Chờ ${you} bổ sung` : "Đang xử lý",
     "Đã xong",
     t.status === "REJECTED" ? "Không xử lý" : "Đã đóng",
@@ -159,7 +172,7 @@ export default async function Page({ params }: { params: Promise<{ id: string }>
   const thread: Item[] = [
     ...comments.map((c) => ({ type: "msg" as const, at: c.createdAt, c })),
     ...t.events
-      .filter((e) => e.kind === "status" || e.kind === "assign")
+      .filter((e) => ["status", "assign", "approval", "escalate"].includes(e.kind))
       .map((e) => ({ type: "ev" as const, at: e.createdAt, text: eventText(e) })),
   ].sort((a, b) => a.at.getTime() - b.at.getTime());
 
@@ -171,13 +184,14 @@ export default async function Page({ params }: { params: Promise<{ id: string }>
     total: number;
     history: number;
     historyOpen: number;
-    staff: Awaited<ReturnType<typeof listStaff>>;
+    staff: Awaited<ReturnType<typeof assignableStaff>>;
     teams: string[];
   } = null;
-  if (user.isStaff) {
-    const [queue, history, historyOpen, staff, forms] = await Promise.all([
+  if (staffView) {
+    const scope = queueScope(user.access);
+    const [queue, history, historyOpen, staff, teamRows] = await Promise.all([
       prisma.ticket.findMany({
-        where: { status: { in: OPEN_STATUSES } },
+        where: { status: { in: OPEN_STATUSES }, ...(scope ?? {}) },
         orderBy: { createdAt: "asc" },
         select: { id: true, code: true },
         take: 500,
@@ -186,11 +200,12 @@ export default async function Page({ params }: { params: Promise<{ id: string }>
       prisma.ticket.count({
         where: { reporterUserId: t.reporterUserId, id: { not: t.id }, status: { in: OPEN_STATUSES } },
       }),
-      listStaff(),
-      prisma.ticketForm.findMany({ select: { defaultTeam: true } }),
+      // Giao cho người khác: trưởng nhóm / quản trị — chọn trong nhóm của phiếu.
+      canAssignOthers(user, t) ? assignableStaff(user.access, user.access.sysAdmin ? undefined : t.team) : Promise.resolve([]),
+      prisma.ticketTeam.findMany({ orderBy: { sortOrder: "asc" }, select: { name: true } }),
     ]);
     const i = queue.findIndex((q) => q.id === t.id);
-    const teams = [...new Set([...DEFAULT_TEAMS, ...forms.map((f) => f.defaultTeam ?? ""), t.team ?? ""])].filter(Boolean);
+    const teams = [...new Set([...teamRows.map((x) => x.name), t.team ?? ""])].filter(Boolean);
     staffExtra = {
       prev: i > 0 ? queue[i - 1] : undefined,
       next: i >= 0 && i < queue.length - 1 ? queue[i + 1] : undefined,
@@ -212,10 +227,10 @@ export default async function Page({ params }: { params: Promise<{ id: string }>
       <section className="hero">
         <div className="flex flex-wrap items-center justify-between gap-3 px-5 py-5 sm:px-7">
           <Link
-            href={staffView ? "/phieu" : user.isStaff ? "/phieu?cua=toi" : "/phieu"}
+            href={backHref}
             className="raise tap inline-flex h-[54px] items-center gap-2.5 rounded-full px-5 font-medium"
           >
-            ← {staffView ? "Hàng đợi" : "Phiếu của tôi"}
+            ← {!staffView ? "Phiếu của tôi" : isHandler(user.access) ? "Hàng đợi" : "Phiếu đơn vị"}
           </Link>
 
           {staffView && staffExtra ? (
@@ -321,9 +336,17 @@ export default async function Page({ params }: { params: Promise<{ id: string }>
 
       {/* ── Dải tối ──────────────────────────────────────────────────────── */}
       <section className="band flex flex-wrap items-stretch gap-5 px-5 pb-6 pt-1 sm:px-9">
-        {staffView && staffExtra ? (
+        {pending ? (
+          <ApprovalBox
+            ticketId={t.id}
+            unit={t.approvalUnitName}
+            canDecide={approver}
+            reporterView={isOwner}
+          />
+        ) : null}
+        {staffView && staffExtra && acting ? (
           <>
-            <StaffStatus ticketId={t.id} status={t.status} />
+            <StaffStatus ticketId={t.id} status={t.status} locked={pending} />
             <StaffMeta
               ticketId={t.id}
               priority={t.priority}
@@ -333,8 +356,23 @@ export default async function Page({ params }: { params: Promise<{ id: string }>
               staff={staffExtra.staff}
               team={t.team}
               teams={staffExtra.teams}
+              canAssign={canAssignOthers(user, t)}
+              locked={pending}
             />
           </>
+        ) : staffView ? (
+          // Đầu mối đơn vị (chỉ xem) / Ban Chủ nhiệm: thấy tình hình, không thao tác.
+          <div className="raise-d flex min-w-0 flex-[999_1_560px] flex-col gap-2 rounded-[34px] p-6">
+            <h2 className="text-lg font-medium">Chỉ xem</h2>
+            <p className="text-sm font-light text-[var(--on-dark-muted)]">
+              Trạng thái <span className="font-medium text-[var(--on-dark)]">{STATUS_LABEL[t.status]}</span> · nhóm{" "}
+              <span className="font-medium text-[var(--on-dark)]">{t.team ?? "chưa có"}</span> · người xử lý{" "}
+              <span className="font-medium text-[var(--on-dark)]">{t.assigneeName ?? "chưa ai nhận"}</span>.
+            </p>
+            <p className="text-xs font-light text-[var(--on-dark-muted)]">
+              Phiếu do nhóm phụ trách xử lý. Thầy/cô xem được vì {user.access.board ? "phiếu đã được báo lên Ban Chủ nhiệm" : "người gửi thuộc đơn vị của thầy/cô"}.
+            </p>
+          </div>
         ) : (
           <>
             <div className="raise-d flex min-w-0 flex-[999_1_560px] flex-col gap-3.5 rounded-[34px] p-6">
@@ -422,7 +460,7 @@ export default async function Page({ params }: { params: Promise<{ id: string }>
             ),
           )}
 
-          {staffView ? (
+          {staffView && acting ? (
             <Composer
               ticketId={t.id}
               status={t.status}
@@ -447,6 +485,14 @@ export default async function Page({ params }: { params: Promise<{ id: string }>
                   <dd className={f.link ? "break-all font-mono text-[13px]" : "whitespace-pre-line font-medium"}>{f.text}</dd>
                 </div>
               ))}
+              {staffView && !["RESOLVED", "CLOSED", "REJECTED"].includes(t.status) && !pending ? (
+                <div className="press rounded-[20px] px-4 py-2.5">
+                  <dt className="muted text-xs">Thời hạn</dt>
+                  <dd className={"font-medium " + (t.escalation ? "text-[#a1301f]" : "")}>
+                    {t.firstResponseAt ? "Đã phản hồi" : `Phản hồi trước ${hm(due.response)}`} · xong trước {hm(due.resolve)}
+                  </dd>
+                </div>
+              ) : null}
               {files.length ? (
                 <div className="press rounded-[20px] px-4 py-2.5">
                   <dt className="muted text-xs">Đính kèm</dt>

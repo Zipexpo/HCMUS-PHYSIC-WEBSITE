@@ -9,7 +9,8 @@ import {
 } from "@/lib/ticket";
 import type { Prisma, TicketStatus } from "@/generated/prisma/client";
 import { CurveDown, CurveUp, Led, homNay } from "@/components/ui";
-import { listStaff } from "@/lib/staff";
+import { assignableStaff } from "@/lib/staff";
+import { type Who, canApprove, isHandler, queueScope } from "@/lib/access";
 import { FilterMenu, QueueList, SavedFilters, type QueueRow } from "./queue-list";
 import {
   DAY_MS,
@@ -22,17 +23,17 @@ import {
   type Params,
 } from "./filters";
 
-const BASE = "/phieu";
 const PER_PAGE = [25, 50, 100] as const;
 /** Trần số phiếu nạp để tính số liệu. Một Khoa dùng nhiều năm vẫn dưới mức này. */
 const CAP = 3000;
 
-type Me = { id: string; name: string };
+type Me = Who;
 
 const ACTIVE: TicketStatus[] = ["NEW", "ACKNOWLEDGED", "IN_PROGRESS"];
 
 /** Các góc nhìn có sẵn ở cột trái — mỗi góc là một câu hỏi thường gặp. */
 const VIEWS = [
+  { k: "cho-duyet", label: "Chờ duyệt cấp quyền" },
   { k: "cua-toi", label: "Phiếu tôi nhận" },
   { k: "chua-giao", label: "Chưa ai nhận" },
   { k: "qua-han", label: "Quá 24 giờ chưa trả lời" },
@@ -45,6 +46,14 @@ const VIEWS = [
 type ViewKey = (typeof VIEWS)[number]["k"];
 
 type Row = {
+  team: string | null;
+  reporterUnitId: string | null;
+  unitRoute: boolean;
+  approvalStatus: string | null;
+  approvalUnitId: string | null;
+  approvalUnitName: string | null;
+  boardEscalated: boolean;
+  escalation: number;
   id: string;
   code: string;
   title: string;
@@ -89,6 +98,8 @@ function inView(t: Row, v: ViewKey, me: Me, staleBefore: number, wait: WaitMap):
       return t.status === "RESOLVED";
     case "dong":
       return t.status === "CLOSED" || t.status === "REJECTED";
+    case "cho-duyet":
+      return canApprove(me, t);
     default:
       return true;
   }
@@ -96,9 +107,10 @@ function inView(t: Row, v: ViewKey, me: Me, staleBefore: number, wait: WaitMap):
 
 const PRIO_RANK = { URGENT: 0, HIGH: 1, NORMAL: 2, LOW: 3 } as const;
 
-export async function StaffBoard({ me, p }: { me: Me; p: Params }) {
+export async function StaffBoard({ me, p, base = "/phieu" }: { me: Me; p: Params; base?: string }) {
   const range = resolveRange(p);
-  const view: ViewKey = VIEWS.some((v) => v.k === p.xem) ? (p.xem as ViewKey) : "mo";
+  const handler = isHandler(me.access);
+  const approver = me.access.sysAdmin || !!me.access.liaisonUnitId;
   // Mặc định: phiếu chờ phản hồi lâu nhất lên đầu — đúng câu hỏi "làm gì trước".
   const sort = ["moi", "cu", "uu-tien", "cap-nhat"].includes(p.sx ?? "") ? p.sx! : "cho";
   const q = (p.q ?? "").trim().toLowerCase();
@@ -108,6 +120,9 @@ export async function StaffBoard({ me, p }: { me: Me; p: Params }) {
 
   const where: Prisma.TicketWhereInput = {};
   if (range.from || range.to) where.createdAt = { gte: range.from, lt: range.to };
+  // Chỉ những phiếu người này có quyền thấy — xem lib/access.ts.
+  const scope = queueScope(me.access);
+  if (scope) Object.assign(where, scope);
 
   const [all, forms, staff, waitRows] = await Promise.all([
     prisma.ticket.findMany({
@@ -126,6 +141,14 @@ export async function StaffBoard({ me, p }: { me: Me; p: Params }) {
         assigneeUserId: true,
         assigneeName: true,
         systemName: true,
+        team: true,
+        reporterUnitId: true,
+        unitRoute: true,
+        approvalStatus: true,
+        approvalUnitId: true,
+        approvalUnitName: true,
+        boardEscalated: true,
+        escalation: true,
         createdAt: true,
         updatedAt: true,
         form: { select: { key: true, name: true } },
@@ -149,7 +172,7 @@ export async function StaffBoard({ me, p }: { me: Me; p: Params }) {
       orderBy: [{ sortOrder: "asc" }],
       select: { key: true, name: true },
     }),
-    listStaff(),
+    assignableStaff(me.access),
     // Một câu SQL cho mọi phiếu đang chạy: lần cuối người gửi lên tiếng và lần
     // cuối bên xử lý động tới (trả lời công khai, nhận phiếu, đổi trạng thái).
     prisma.$queryRaw<{ id: string; rep: Date; staff: Date | null }[]>`
@@ -219,6 +242,12 @@ export async function StaffBoard({ me, p }: { me: Me; p: Params }) {
   }).length;
   const pctFast = open.length ? Math.round((onTime / open.length) * 100) : null;
 
+  const views = VIEWS.filter(
+    (v) => (v.k === "cho-duyet" ? approver : true) && (handler || !["cua-toi", "chua-giao"].includes(v.k)),
+  );
+  const pendingMine = all.filter((t) => canApprove(me, t)).length;
+  const requested = VIEWS.some((v) => v.k === p.xem) ? (p.xem as ViewKey) : null;
+  const view: ViewKey = requested ?? (pendingMine ? "cho-duyet" : "mo");
   const viewCount = (v: ViewKey) => all.filter((t) => inView(t, v, me, staleBefore, wait)).length;
   const counts = Object.fromEntries(VIEWS.map((v) => [v.k, viewCount(v.k)])) as Record<ViewKey, number>;
 
@@ -277,8 +306,8 @@ export async function StaffBoard({ me, p }: { me: Me; p: Params }) {
     return [...m.entries()].sort((a, b) => b[1] - a[1]);
   };
   const menu = (param: string, allLabel: string, opts: { v: string; label: string; n?: number }[]) => [
-    { label: allLabel, href: hrefWith(BASE, p, { [param]: undefined }), on: !p[param] },
-    ...opts.map((o) => ({ label: o.label, n: o.n, href: hrefWith(BASE, p, { [param]: o.v }), on: p[param] === o.v })),
+    { label: allLabel, href: hrefWith(base, p, { [param]: undefined }), on: !p[param] },
+    ...opts.map((o) => ({ label: o.label, n: o.n, href: hrefWith(base, p, { [param]: o.v }), on: p[param] === o.v })),
   ];
   const formCounts = new Map(countBy((t) => t.form.key));
   const menus = [
@@ -327,6 +356,14 @@ export async function StaffBoard({ me, p }: { me: Me; p: Params }) {
     assignee: t.assigneeName,
     wait: waitText(t),
     late: (wait.get(t.id) ?? now) < staleBefore,
+    flag:
+      t.approvalStatus === "PENDING"
+        ? `Chờ duyệt · ${t.approvalUnitName ?? "quản trị"}`
+        : t.escalation >= 2
+          ? "Quá hạn xử lý"
+          : t.escalation === 1
+            ? "Quá hạn phản hồi"
+            : null,
   });
   const qs = new URLSearchParams(
     Object.entries(p).filter((e): e is [string, string] => Boolean(e[1]) && e[0] !== "trang"),
@@ -334,24 +371,24 @@ export async function StaffBoard({ me, p }: { me: Me; p: Params }) {
 
   const chips: { label: string; href: string }[] = [];
   if (range.key !== "tat-ca")
-    chips.push({ label: `Thời gian: ${range.label}`, href: hrefWith(BASE, p, { tg: undefined, tu: undefined, den: undefined }) });
-  if (tt) chips.push({ label: `Trạng thái: ${STATUS_LABEL[tt]}`, href: hrefWith(BASE, p, { tt: undefined }) });
+    chips.push({ label: `Thời gian: ${range.label}`, href: hrefWith(base, p, { tg: undefined, tu: undefined, den: undefined }) });
+  if (tt) chips.push({ label: `Trạng thái: ${STATUS_LABEL[tt]}`, href: hrefWith(base, p, { tt: undefined }) });
   if (p.loai) {
     const f = forms.find((f) => f.key === p.loai);
-    chips.push({ label: `Loại: ${f?.name ?? p.loai}`, href: hrefWith(BASE, p, { loai: undefined }) });
+    chips.push({ label: `Loại: ${f?.name ?? p.loai}`, href: hrefWith(base, p, { loai: undefined }) });
   }
   if (p.uu && p.uu in PRIORITY_LABEL)
-    chips.push({ label: `Mức độ: ${PRIORITY_LABEL[p.uu as keyof typeof PRIORITY_LABEL]}`, href: hrefWith(BASE, p, { uu: undefined }) });
-  if (q) chips.push({ label: `Tìm: “${p.q}”`, href: hrefWith(BASE, p, { q: undefined }) });
-  if (p.he) chips.push({ label: `Hệ thống: ${p.he === "-" ? "(không ghi)" : p.he}`, href: hrefWith(BASE, p, { he: undefined }) });
-  if (p.dv) chips.push({ label: `Đơn vị: ${p.dv === "-" ? "(không ghi)" : p.dv}`, href: hrefWith(BASE, p, { dv: undefined }) });
+    chips.push({ label: `Mức độ: ${PRIORITY_LABEL[p.uu as keyof typeof PRIORITY_LABEL]}`, href: hrefWith(base, p, { uu: undefined }) });
+  if (q) chips.push({ label: `Tìm: “${p.q}”`, href: hrefWith(base, p, { q: undefined }) });
+  if (p.he) chips.push({ label: `Hệ thống: ${p.he === "-" ? "(không ghi)" : p.he}`, href: hrefWith(base, p, { he: undefined }) });
+  if (p.dv) chips.push({ label: `Đơn vị: ${p.dv === "-" ? "(không ghi)" : p.dv}`, href: hrefWith(base, p, { dv: undefined }) });
   if (p.nguoi) {
     const who = all.find((t) => t.reporterUserId === p.nguoi)?.reporterName ?? "một người";
-    chips.push({ label: `Người gửi: ${who}`, href: hrefWith(BASE, p, { nguoi: undefined }) });
+    chips.push({ label: `Người gửi: ${who}`, href: hrefWith(base, p, { nguoi: undefined }) });
   }
   if (p.xl) {
     const who = p.xl === "chua" ? "chưa ai nhận" : (staff.find((x) => x.userId === p.xl)?.name ?? "—");
-    chips.push({ label: `Xử lý: ${who}`, href: hrefWith(BASE, p, { xl: undefined }) });
+    chips.push({ label: `Xử lý: ${who}`, href: hrefWith(base, p, { xl: undefined }) });
   }
 
   const KPIS: { k: ViewKey; label: string; tone: string }[] = [
@@ -360,6 +397,10 @@ export async function StaffBoard({ me, p }: { me: Me; p: Params }) {
     { k: "cho", label: "Chờ người gửi", tone: "var(--amber)" },
     { k: "cua-toi", label: "Phiếu tôi nhận", tone: "var(--mint)" },
   ];
+  const kpis = [
+    ...(approver ? [{ k: "cho-duyet" as ViewKey, label: "Chờ duyệt", tone: "var(--amber)" }] : []),
+    ...KPIS.filter((k) => handler || !["cua-toi", "chua-giao"].includes(k.k)),
+  ].slice(0, 4);
 
   return (
     <>
@@ -383,7 +424,7 @@ export async function StaffBoard({ me, p }: { me: Me; p: Params }) {
               return (
                 <Link scroll={false}
                   key={r.k}
-                  href={hrefWith(BASE, p, { tg: r.k === "tat-ca" ? undefined : r.k, tu: undefined, den: undefined })}
+                  href={hrefWith(base, p, { tg: r.k === "tat-ca" ? undefined : r.k, tu: undefined, den: undefined })}
                   aria-current={on ? "true" : undefined}
                   className={"tap rounded-full px-3.5 py-2 text-[13px] " + (on ? "press font-medium" : "muted hover:text-[var(--text)]")}
                 >
@@ -392,7 +433,7 @@ export async function StaffBoard({ me, p }: { me: Me; p: Params }) {
               );
             })}
           </nav>
-          <Form action="/phieu" scroll={false} className="flex flex-wrap items-center gap-2 text-[13px]">
+          <Form action={base} scroll={false} className="flex flex-wrap items-center gap-2 text-[13px]">
             {Object.entries(p)
               .filter(([k, v]) => v && !["tg", "tu", "den", "trang"].includes(k))
               .map(([k, v]) => (
@@ -432,12 +473,12 @@ export async function StaffBoard({ me, p }: { me: Me; p: Params }) {
           <Dial
             title="Đang mở · theo trạng thái"
             total={open.length}
-            parts={byStatus.map((x) => ({ label: STATUS_LABEL[x.s], n: x.n, color: STATUS_TONE[x.s], href: hrefWith(BASE, p, { xem: "tat-ca", tt: x.s }) }))}
+            parts={byStatus.map((x) => ({ label: STATUS_LABEL[x.s], n: x.n, color: STATUS_TONE[x.s], href: hrefWith(base, p, { xem: "tat-ca", tt: x.s }) }))}
           />
           <Dial
             title="Đang mở · theo hệ thống"
             total={open.length}
-            parts={bySystem.map((x) => ({ ...x, href: hrefWith(BASE, p, { xem: "tat-ca", q: x.label === "Khác" ? undefined : x.label }) }))}
+            parts={bySystem.map((x) => ({ ...x, href: hrefWith(base, p, { xem: "tat-ca", q: x.label === "Khác" ? undefined : x.label }) }))}
           />
           <div className="raise-d flex flex-col items-center justify-center gap-3 rounded-[28px] p-6">
             <div
@@ -459,12 +500,12 @@ export async function StaffBoard({ me, p }: { me: Me; p: Params }) {
         </div>
 
         <div className="mt-6 grid grid-cols-2 gap-3 lg:grid-cols-4">
-          {KPIS.map((k) => {
+          {kpis.map((k) => {
             const on = view === k.k;
             return (
               <Link scroll={false}
                 key={k.k}
-                href={hrefWith(BASE, p, { xem: k.k, tt: undefined })}
+                href={hrefWith(base, p, { xem: k.k, tt: undefined })}
                 aria-current={on ? "true" : undefined}
                 className={(on ? "press-d" : "raise-d hover:-translate-y-0.5") + " tap flex items-center justify-between gap-3 rounded-[22px] px-5 py-4 transition-transform"}
               >
@@ -485,12 +526,12 @@ export async function StaffBoard({ me, p }: { me: Me; p: Params }) {
       <section className="grid gap-6 px-5 pb-6 pt-2 sm:px-10 lg:grid-cols-[15rem_1fr] lg:items-start">
         <aside className="space-y-4 lg:sticky lg:top-6">
           <nav aria-label="Góc nhìn" className="press space-y-1 rounded-[26px] p-2">
-            {VIEWS.map((v) => {
+            {views.map((v) => {
               const on = view === v.k;
               return (
                 <Link scroll={false}
                   key={v.k}
-                  href={hrefWith(BASE, p, { xem: v.k === "mo" ? undefined : v.k, tt: undefined })}
+                  href={hrefWith(base, p, { xem: v.k === "mo" ? undefined : v.k, tt: undefined })}
                   aria-current={on ? "page" : undefined}
                   className={"tap flex items-center justify-between gap-2 rounded-full px-4 py-2.5 text-sm " + (on ? "raise font-medium" : "muted hover:text-[var(--text)]")}
                 >
@@ -501,14 +542,14 @@ export async function StaffBoard({ me, p }: { me: Me; p: Params }) {
             })}
           </nav>
           <SavedFilters current={qs} label={chips.map((c) => c.label).join(" · ") || "Bộ lọc của tôi"} />
-          <Link href="/phieu?cua=toi" className="muted tap block rounded-full px-4 text-sm hover:text-[var(--text)]">
+          <Link href={handler ? "/phieu?cua=toi" : "/phieu"} className="muted tap block rounded-full px-4 text-sm hover:text-[var(--text)]">
             Phiếu do tôi gửi →
           </Link>
         </aside>
 
         <div className="min-w-0 space-y-4">
           <div className="flex flex-wrap items-center gap-2">
-            <Form action="/phieu" scroll={false} role="search" className="press flex min-w-[16rem] flex-1 items-center gap-2 rounded-full py-1 pl-4 pr-1">
+            <Form action={base} scroll={false} role="search" className="press flex min-w-[16rem] flex-1 items-center gap-2 rounded-full py-1 pl-4 pr-1">
               {Object.entries(p)
                 .filter(([k, v]) => v && k !== "q" && k !== "trang")
                 .map(([k, v]) => (
@@ -525,7 +566,7 @@ export async function StaffBoard({ me, p }: { me: Me; p: Params }) {
             <FilterMenu
               plain
               label={SORTS.find((x) => x.v === sort)?.label ?? "Sắp xếp"}
-              options={SORTS.map((x) => ({ label: x.label, href: hrefWith(BASE, p, { sx: x.v === "cho" ? undefined : x.v }), on: sort === x.v }))}
+              options={SORTS.map((x) => ({ label: x.label, href: hrefWith(base, p, { sx: x.v === "cho" ? undefined : x.v }), on: sort === x.v }))}
             />
           </div>
 
@@ -540,7 +581,7 @@ export async function StaffBoard({ me, p }: { me: Me; p: Params }) {
                   </Link>
                 </span>
               ))}
-              <Link scroll={false} href={hrefWith(BASE, {}, { xem: p.xem })} className="muted tap rounded px-2 text-[13px] hover:underline">
+              <Link scroll={false} href={hrefWith(base, {}, { xem: p.xem })} className="muted tap rounded px-2 text-[13px] hover:underline">
                 Xoá tất cả
               </Link>
             </div>
@@ -548,7 +589,7 @@ export async function StaffBoard({ me, p }: { me: Me; p: Params }) {
 
           <nav aria-label="Trạng thái" className="press flex flex-wrap gap-1 rounded-[22px] p-1.5 sm:rounded-full">
             <Link scroll={false}
-              href={hrefWith(BASE, p, { tt: undefined })}
+              href={hrefWith(base, p, { tt: undefined })}
               aria-current={!tt ? "page" : undefined}
               className={"tap inline-flex items-center gap-2 rounded-full px-4 py-2 text-[13px] " + (!tt ? "raise font-medium" : "muted hover:text-[var(--text)]")}
             >
@@ -557,7 +598,7 @@ export async function StaffBoard({ me, p }: { me: Me; p: Params }) {
             {statusTabs.map((x) => (
               <Link scroll={false}
                 key={x.s}
-                href={hrefWith(BASE, p, { tt: x.s })}
+                href={hrefWith(base, p, { tt: x.s })}
                 aria-current={tt === x.s ? "page" : undefined}
                 className={"tap inline-flex items-center gap-2 rounded-full px-4 py-2 text-[13px] " + (tt === x.s ? "raise font-medium" : "muted hover:text-[var(--text)]")}
               >
@@ -580,6 +621,7 @@ export async function StaffBoard({ me, p }: { me: Me; p: Params }) {
               groups={groups.map((g) => ({ label: g.label, rows: g.items.map(toRow) }))}
               staff={staff}
               meId={me.id}
+              selectable={handler}
             />
           )}
 
@@ -590,13 +632,13 @@ export async function StaffBoard({ me, p }: { me: Me; p: Params }) {
                 <FilterMenu
                   plain
                   label={`Mỗi trang ${PAGE}`}
-                  options={PER_PAGE.map((n) => ({ label: `${n} phiếu`, href: hrefWith(BASE, p, { ms: n === 25 ? undefined : String(n) }), on: n === PAGE }))}
+                  options={PER_PAGE.map((n) => ({ label: `${n} phiếu`, href: hrefWith(base, p, { ms: n === 25 ? undefined : String(n) }), on: n === PAGE }))}
                 />
               </span>
               {pages > 1 ? (
                 <nav aria-label="Phân trang" className="press flex items-center gap-1 rounded-full p-1">
                   {cur > 1 ? (
-                    <Link scroll={false} href={hrefWith(BASE, p, { trang: String(cur - 1) })} aria-label="Trang trước" className="raise tap flex h-9 w-9 items-center justify-center rounded-full">‹</Link>
+                    <Link scroll={false} href={hrefWith(base, p, { trang: String(cur - 1) })} aria-label="Trang trước" className="raise tap flex h-9 w-9 items-center justify-center rounded-full">‹</Link>
                   ) : (
                     <span aria-hidden className="muted flex h-9 w-9 items-center justify-center">‹</span>
                   )}
@@ -606,7 +648,7 @@ export async function StaffBoard({ me, p }: { me: Me; p: Params }) {
                       <span key={n} className="flex items-center">
                         {i > 0 && n - arr[i - 1] > 1 ? <span className="muted px-1">…</span> : null}
                         <Link scroll={false}
-                          href={hrefWith(BASE, p, { trang: String(n) })}
+                          href={hrefWith(base, p, { trang: String(n) })}
                           aria-current={n === cur ? "page" : undefined}
                           className={"tap flex h-9 min-w-9 items-center justify-center rounded-full px-2 font-mono text-sm " + (n === cur ? "raise-d text-[var(--on-dark)]" : "")}
                         >
@@ -615,7 +657,7 @@ export async function StaffBoard({ me, p }: { me: Me; p: Params }) {
                       </span>
                     ))}
                   {cur < pages ? (
-                    <Link scroll={false} href={hrefWith(BASE, p, { trang: String(cur + 1) })} aria-label="Trang sau" className="raise tap flex h-9 w-9 items-center justify-center rounded-full">›</Link>
+                    <Link scroll={false} href={hrefWith(base, p, { trang: String(cur + 1) })} aria-label="Trang sau" className="raise tap flex h-9 w-9 items-center justify-center rounded-full">›</Link>
                   ) : (
                     <span aria-hidden className="muted flex h-9 w-9 items-center justify-center">›</span>
                   )}

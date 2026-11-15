@@ -1,14 +1,16 @@
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/db";
 import { UnauthorizedError, requireUser } from "@/lib/auth";
+import { canEditForms, leadOf } from "@/lib/access";
 import { FormInput, clean, firstError } from "./schema";
 
 /** POST /api/forms — tạo loại yêu cầu mới (chỉ quản trị viên). */
 export async function POST(req: Request): Promise<NextResponse> {
   try {
     const user = await requireUser();
-    if (!user.isStaff)
-      return NextResponse.json({ message: "Không đủ quyền" }, { status: 403 });
+    // Thêm LOẠI yêu cầu mới là quyết định cấp Khoa → chỉ quản trị hệ thống.
+    if (!user.access.sysAdmin)
+      return NextResponse.json({ message: "Chỉ quản trị hệ thống mới tạo loại yêu cầu mới" }, { status: 403 });
 
     const parsed = FormInput.safeParse(await req.json().catch(() => null));
     if (!parsed.success)

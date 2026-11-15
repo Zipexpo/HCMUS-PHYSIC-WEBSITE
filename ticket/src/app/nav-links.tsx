@@ -6,26 +6,16 @@ import { usePathname } from "next/navigation";
 /**
  * Điều hướng chính, đúng thiết kế: RÃNH lõm xuống, mục đang mở NỔI lên.
  *
- * Người gửi:   Tổng quan · Gửi yêu cầu · Phiếu của tôi
- * Quản trị:    Hàng đợi · Mẫu biểu · Báo cáo · Gửi yêu cầu
+ * Danh mục tính ở máy chủ theo vai trò (layout.tsx) — xem lib/access.ts.
  */
-export function NavLinks({ isStaff }: { isStaff: boolean }) {
-  const path = usePathname() ?? "";
-  const on = (href: string) =>
-    href === "/" ? path === "/" : path === href || path.startsWith(href + "/");
+export type NavItem = { href: string; label: string };
 
-  const items = isStaff
-    ? [
-        { href: "/phieu", label: "Hàng đợi" },
-        { href: "/mau-bieu", label: "Mẫu biểu" },
-        { href: "/bao-cao", label: "Báo cáo" },
-        { href: "/gui", label: "Gửi yêu cầu" },
-      ]
-    : [
-        { href: "/", label: "Tổng quan" },
-        { href: "/gui", label: "Gửi yêu cầu" },
-        { href: "/phieu", label: "Phiếu của tôi" },
-      ];
+export function NavLinks({ items }: { items: NavItem[] }) {
+  const path = usePathname() ?? "";
+  const on = (href: string) => {
+    const h = href.split("?")[0];
+    return h === "/" ? path === "/" : path === h || path.startsWith(h + "/");
+  };
 
   return (
     <nav

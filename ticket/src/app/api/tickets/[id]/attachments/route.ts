@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/db";
 import { UnauthorizedError, requireUser } from "@/lib/auth";
+import { canAct } from "@/lib/access";
 import { MAX_BYTES, MAX_PER_TICKET, cleanName, sniff, store } from "@/lib/uploads";
 
 /** POST /api/tickets/:id/attachments — tải một tệp (multipart, ô "file"). */
@@ -13,10 +14,14 @@ export async function POST(
     const { id } = await ctx.params;
     const ticket = await prisma.ticket.findUnique({
       where: { id },
-      select: { id: true, reporterUserId: true, _count: { select: { attachments: true } } },
+      select: {
+        id: true, reporterUserId: true, team: true, reporterUnitId: true, unitRoute: true,
+        approvalStatus: true, approvalUnitId: true, boardEscalated: true,
+        _count: { select: { attachments: true } },
+      },
     });
     if (!ticket) return NextResponse.json({ message: "Không có phiếu này" }, { status: 404 });
-    if (!user.isStaff && ticket.reporterUserId !== user.id) {
+    if (!canAct(user, ticket) && ticket.reporterUserId !== user.id) {
       return NextResponse.json({ message: "Không đủ quyền" }, { status: 403 });
     }
     if (ticket._count.attachments >= MAX_PER_TICKET) {

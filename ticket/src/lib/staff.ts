@@ -1,5 +1,6 @@
 import { prisma } from "@/lib/db";
 import type { SessionUser } from "@/lib/auth";
+import type { Access } from "@/lib/access";
 
 /**
  * Sổ người xử lý — nguồn cho ô "Giao cho".
@@ -12,18 +13,22 @@ const lastWrite = new Map<string, number>();
 const GAP_MS = 10 * 60 * 1000;
 
 export async function rememberStaff(u: SessionUser): Promise<void> {
-  if (!u.isStaff) return;
+  // Ghi sổ mọi tài khoản admin bên CMS (người xử lý lẫn đầu mối đơn vị): sổ
+  // này cho biết đơn vị nào có đầu mối để gửi thư duyệt / chuyển phiếu.
+  if (!u.isStaff && u.role !== "ADMIN" && u.role !== "SUPER_ADMIN") return;
   const now = Date.now();
   if (now - (lastWrite.get(u.id) ?? 0) < GAP_MS) return;
   lastWrite.set(u.id, now);
   try {
     await prisma.ticketStaff.upsert({
       where: { userId: u.id },
-      create: { userId: u.id, name: u.name, email: u.email, unit: u.unit },
+      create: { userId: u.id, name: u.name, email: u.email, unit: u.unit, unitId: u.unitId, cmsRole: u.role },
       update: {
         name: u.name,
         email: u.email,
         unit: u.unit,
+        unitId: u.unitId,
+        cmsRole: u.role,
         lastSeenAt: new Date(),
       },
     });
@@ -49,4 +54,35 @@ export async function staffEmail(userId: string): Promise<string | null> {
     select: { email: true },
   });
   return s?.email ?? null;
+}
+
+/**
+ * Người có thể được GIAO phiếu: thành viên nhóm đã từng đăng nhập (cần userId).
+ *   quản trị     → thành viên mọi nhóm + quản trị khác
+ *   trưởng nhóm  → thành viên nhóm mình
+ *   thành viên   → chỉ mình (tự nhận)
+ * `team` giới hạn thêm theo nhóm của một phiếu cụ thể.
+ */
+export async function assignableStaff(
+  a: Access,
+  team?: string | null,
+): Promise<StaffOption[]> {
+  const leadTeams = a.teams.filter((t) => t.lead).map((t) => t.name);
+  const teams = team !== undefined ? (team ? [team] : []) : a.sysAdmin ? undefined : leadTeams;
+  const members = await prisma.ticketTeamMember.findMany({
+    where: teams ? { team: { name: { in: teams } } } : {},
+    select: { email: true },
+  });
+  const emails = [...new Set(members.map((m) => m.email.toLowerCase()))];
+  const rows = await prisma.ticketStaff.findMany({
+    where: {
+      OR: [
+        { email: { in: emails, mode: "insensitive" } },
+        ...(a.sysAdmin ? [{ cmsRole: "SUPER_ADMIN" }] : []),
+      ],
+    },
+    orderBy: { name: "asc" },
+    select: { userId: true, name: true, unit: true },
+  });
+  return rows;
 }

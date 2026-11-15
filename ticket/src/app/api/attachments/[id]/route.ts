@@ -1,6 +1,7 @@
 import { prisma } from "@/lib/db";
 import { currentUser } from "@/lib/auth";
 import { load } from "@/lib/uploads";
+import { canSee, canSeeInternal } from "@/lib/access";
 
 /**
  * GET /api/attachments/:id — tải tệp, có kiểm quyền.
@@ -18,14 +19,19 @@ export async function GET(
   const a = await prisma.ticketAttachment.findUnique({
     where: { id },
     include: {
-      ticket: { select: { reporterUserId: true } },
+      ticket: {
+        select: {
+          reporterUserId: true, team: true, reporterUnitId: true, unitRoute: true,
+          approvalStatus: true, approvalUnitId: true, boardEscalated: true,
+        },
+      },
       comment: { select: { isInternal: true } },
     },
   });
   const allowed =
     a &&
-    (user.isStaff ||
-      (a.ticket.reporterUserId === user.id && !a.comment?.isInternal));
+    canSee(user, a.ticket) &&
+    (!a.comment?.isInternal || canSeeInternal(user, a.ticket));
   if (!a || !allowed) return new Response("Không tìm thấy", { status: 404 });
 
   const buf = await load(a.url);
