@@ -49,7 +49,7 @@ const plexMono = IBM_Plex_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "Hỗ trợ kỹ thuật — Khoa Vật lý – Vật lý Kỹ thuật",
+  title: "Physupport — Khoa Vật lý – Vật lý Kỹ thuật",
   description:
     "Gửi và theo dõi phiếu hỗ trợ kỹ thuật của Khoa Vật lý – Vật lý Kỹ thuật, Trường Đại học Khoa học Tự nhiên, ĐHQG-HCM.",
 };
@@ -84,7 +84,7 @@ export default async function RootLayout({
                 λ
               </span>
               <span className="truncate">
-                Hỗ trợ kỹ thuật
+                Physupport
                 {user ? null : (
                   <span className="hidden sm:inline">
                     {" "}

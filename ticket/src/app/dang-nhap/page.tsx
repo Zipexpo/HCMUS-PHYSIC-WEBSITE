@@ -134,11 +134,14 @@ function LoginForm() {
   return (
     <div className="flex flex-1 flex-col">
       <section className="flex flex-wrap items-end justify-between gap-6 px-5 pt-6 sm:px-9 lg:pt-10">
-        <h1 className="text-[clamp(44px,6.4vw,96px)] font-medium leading-[0.98] tracking-[-0.045em]">
-          Báo sự cố.
-          <br />
-          Theo dõi tới khi xong.
-        </h1>
+        <div className="flex flex-col gap-3">
+          <h1 className="text-[clamp(52px,7.4vw,112px)] font-medium leading-[0.95] tracking-[-0.05em]">
+            Physupport
+          </h1>
+          <p className="max-w-[34rem] text-[clamp(18px,1.7vw,24px)] font-light leading-snug">
+            Web dỗi, quên mật khẩu, hay chỉ một chữ gõ sai? Gửi một phiếu — phần còn lại để tụi mình lo.
+          </p>
+        </div>
         <p className="muted max-w-[22rem] pb-3 text-base font-light leading-relaxed">
           Dùng chung tài khoản với trang quản trị web Khoa — không cần nhớ thêm mật khẩu.
         </p>

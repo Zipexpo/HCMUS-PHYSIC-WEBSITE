@@ -1,8 +1,97 @@
 const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:3001";
 
+// ── Gia hạn phiên đăng nhập ──────────────────────────────────────────────────
+// Access token chỉ sống 1 giờ, còn refresh token sống 7 ngày. Trước đây trang
+// quản trị KHÔNG dùng refresh token: hễ gặp 401 là xoá sạch rồi đá về /login.
+// Hậu quả: ai cũng bị đăng xuất đúng sau 1 giờ, đang soạn bài dở cũng mất.
+// Giờ gặp 401 thì thử gia hạn một lần rồi gọi lại; gia hạn hỏng mới đăng xuất.
+
+/** Nhiều truy vấn cùng hết hạn một lúc — chỉ gọi gia hạn MỘT lần cho tất cả. */
+let refreshing: Promise<string | null> | null = null;
+
+async function doRefresh(): Promise<string | null> {
+  const token =
+    typeof window !== "undefined" ? localStorage.getItem("refreshToken") : null;
+  if (!token) return null;
+  try {
+    const res = await fetch(`${API_URL}/auth/refresh-token`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ refreshToken: token }),
+    });
+    if (!res.ok) return null;
+    const data = (await res.json()) as {
+      accessToken?: string;
+      refreshToken?: string;
+    };
+    if (!data.accessToken) return null;
+    localStorage.setItem("accessToken", data.accessToken);
+    // Backend phát refresh token mới mỗi lần gia hạn — lưu lại, nếu không thì
+    // 7 ngày sau phiên vẫn chết dù người dùng vào liên tục.
+    if (data.refreshToken) {
+      localStorage.setItem("refreshToken", data.refreshToken);
+    }
+    return data.accessToken;
+  } catch {
+    return null;
+  }
+}
+
+/** Gia hạn token, dùng chung cho mọi nơi — gọi nhiều lần vẫn chỉ chạy một lượt. */
+export function refreshOnce(): Promise<string | null> {
+  if (!refreshing) {
+    refreshing = doRefresh().finally(() => {
+      refreshing = null;
+    });
+  }
+  return refreshing;
+}
+
+function endSession(): never {
+  localStorage.removeItem("accessToken");
+  localStorage.removeItem("refreshToken");
+  window.location.href = "/login";
+  throw new Error("Session expired");
+}
+
+/** Header gốc có kèm Authorization không — để biết có cần gắn lại khi gọi lại. */
+function hasAuthHeader(h: HeadersInit | undefined): boolean {
+  if (!h) return false;
+  if (h instanceof Headers) return h.has("Authorization");
+  if (Array.isArray(h))
+    return h.some(([k]) => k.toLowerCase() === "authorization");
+  return Object.keys(h).some((k) => k.toLowerCase() === "authorization");
+}
+
+/**
+ * Gửi FormData kèm token. Các yêu cầu tải tệp KHÔNG đi qua apiFetch được, vì
+ * trình duyệt phải tự đặt boundary của multipart còn apiFetch thì ép
+ * Content-Type là application/json. Nhưng chúng vẫn cần gia hạn token, nếu
+ * không thì sau 1 giờ tải ảnh lên là lỗi.
+ */
+export async function authUpload(
+  path: string,
+  body: FormData,
+): Promise<Response> {
+  const send = (token: string | null) =>
+    fetch(`${API_URL}${path}`, {
+      method: "POST",
+      headers: token ? { Authorization: `Bearer ${token}` } : {},
+      body,
+    });
+  const token =
+    typeof window !== "undefined" ? localStorage.getItem("accessToken") : null;
+  const res = await send(token);
+  if (res.status !== 401 || typeof window === "undefined") return res;
+  const fresh = await refreshOnce();
+  if (!fresh) endSession();
+  return send(fresh);
+}
+
 export async function apiFetch<T>(
   path: string,
   options?: RequestInit,
+  retried = false,
 ): Promise<T> {
   const res = await fetch(`${API_URL}${path}`, {
     ...options,
@@ -13,10 +102,27 @@ export async function apiFetch<T>(
   });
   if (!res.ok) {
     if (res.status === 401 && typeof window !== "undefined") {
-      localStorage.removeItem("accessToken");
-      localStorage.removeItem("refreshToken");
-      window.location.href = "/login";
-      throw new Error("Session expired");
+      // Đừng gia hạn cho chính lời gọi đăng nhập/gia hạn: 401 ở đó nghĩa là sai
+      // mật khẩu hoặc refresh token đã chết, thử lại chỉ thành vòng lặp.
+      const isAuthCall =
+        path.startsWith("/auth/login") ||
+        path.startsWith("/auth/refresh-token");
+      if (!retried && !isAuthCall) {
+        const fresh = await refreshOnce();
+        if (fresh) {
+          const next: RequestInit = hasAuthHeader(options?.headers)
+            ? {
+                ...options,
+                headers: {
+                  ...options?.headers,
+                  Authorization: `Bearer ${fresh}`,
+                },
+              }
+            : (options ?? {});
+          return apiFetch<T>(path, next, true);
+        }
+      }
+      endSession();
     }
     if (res.status === 429) {
       // Rate limited (e.g. too many login attempts) — friendly message.
@@ -702,15 +808,7 @@ export const mediaApi = {
     if (opts?.departmentId) fd.append("departmentId", opts.departmentId);
     if (opts?.tagSlugs?.length)
       fd.append("tagSlugs", JSON.stringify(opts.tagSlugs));
-    const token =
-      typeof window !== "undefined"
-        ? localStorage.getItem("accessToken")
-        : null;
-    const res = await fetch(`${API_URL}/media/upload`, {
-      method: "POST",
-      headers: token ? { Authorization: `Bearer ${token}` } : {},
-      body: fd,
-    });
+    const res = await authUpload("/media/upload", fd);
     if (!res.ok) {
       const err = await res.json().catch(() => ({ message: res.statusText }));
       throw err;
@@ -972,10 +1070,14 @@ export const postApi = {
       body: JSON.stringify({ scheduledAt: scheduledAt ?? null }),
     }),
   /** Hàng đợi bài của đơn vị đang chờ Khoa duyệt (chỉ admin cấp Khoa). */
-  pendingReview: () => apiFetch<PostRecord[]>(`/posts/pending-review`),
+  // PHẢI dùng authFetch: apiFetch KHÔNG gắn Authorization, nên lời gọi sẽ nhận
+  // 401 "Missing access token", và apiFetch coi 401 là hết phiên -> xoá token,
+  // đá người dùng về /login. Dùng nhầm ở đây từng làm trang Bài viết không vào
+  // được, trong khi các trang khác vẫn bình thường.
+  pendingReview: () => authFetch<PostRecord[]>(`/posts/pending-review`),
   /** Khoa trả bài về cho đơn vị sửa, kèm lý do. */
   reject: (id: string, note: string) =>
-    apiFetch<{ ok: boolean }>(`/posts/${id}/reject`, {
+    authFetch<{ ok: boolean }>(`/posts/${id}/reject`, {
       method: "POST",
       body: JSON.stringify({ note }),
     }),
@@ -1094,15 +1196,7 @@ export const staticPageApi = {
   uploadBundle: (id: string, file: File) => {
     const fd = new FormData();
     fd.append("file", file);
-    const token =
-      typeof window !== "undefined"
-        ? localStorage.getItem("accessToken")
-        : null;
-    return fetch(`${API_URL}/static-pages/${id}/bundle`, {
-      method: "POST",
-      headers: token ? { Authorization: `Bearer ${token}` } : {},
-      body: fd,
-    }).then(async (res) => {
+    return authUpload(`/static-pages/${id}/bundle`, fd).then(async (res) => {
       if (!res.ok) {
         const err = await res.json().catch(() => ({ message: res.statusText }));
         throw err;

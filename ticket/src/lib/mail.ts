@@ -6,8 +6,10 @@
  * việc gửi thư hỏng hay chậm làm hỏng thao tác của người dùng.
  */
 const KEY = process.env.TICKET_RESEND_API_KEY || "";
-const FROM =
-  process.env.TICKET_MAIL_FROM || "Hỗ trợ Khoa Vật lý <no-reply@koomaru.com>";
+// Lấy ĐỊA CHỈ gửi từ cấu hình (dùng chung với CMS), nhưng tên hiển thị luôn là
+// Physupport — để người nhận phân biệt thư phiếu hỗ trợ với thư của web Khoa.
+const RAW_FROM = process.env.TICKET_MAIL_FROM || "no-reply@koomaru.com";
+const FROM = `Physupport <${RAW_FROM.match(/<([^>]+)>/)?.[1] ?? RAW_FROM.trim()}>`;
 const BASE = (process.env.TICKET_PUBLIC_URL || "https://phys.hcmus.edu.vn/ho-tro").replace(/\/$/, "");
 
 const esc = (s: string) =>
@@ -32,7 +34,7 @@ function html(m: Mail): string {
   const btn = m.link
     ? `<p style="margin:20px 0"><a href="${esc(m.link.href)}" style="background:#22252a;color:#fff;padding:10px 18px;border-radius:999px;text-decoration:none">${esc(m.link.label)}</a></p>`
     : "";
-  return `<div style="font-family:system-ui,sans-serif;font-size:15px;color:#22252a;max-width:560px">${body}${btn}<p style="color:#7a7d7b;font-size:12px;margin-top:24px">Hệ thống hỗ trợ — Khoa Vật lý, ĐH KHTN. Thư tự động, không cần trả lời thư này: trả lời ngay trong phiếu.</p></div>`;
+  return `<div style="font-family:system-ui,sans-serif;font-size:15px;color:#22252a;max-width:560px">${body}${btn}<p style="color:#7a7d7b;font-size:12px;margin-top:24px">Physupport — hỗ trợ kỹ thuật Khoa Vật lý – Vật lý Kỹ thuật, ĐH KHTN. Thư tự động, không cần trả lời thư này: trả lời ngay trong phiếu.</p></div>`;
 }
 
 export function sendMail(m: Mail): void {
