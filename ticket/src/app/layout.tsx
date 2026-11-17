@@ -4,6 +4,8 @@ import Link from "next/link";
 import { type SessionUser, currentUser } from "@/lib/auth";
 import { canEditForms, canOpenQueue, canSeeReport, isHandler, roleLabel } from "@/lib/access";
 import { NavLinks, type NavItem } from "./nav-links";
+import { NoticeBar } from "./notice";
+import { getNotice } from "@/lib/settings";
 
 /**
  * Danh mục theo vai trò:
@@ -67,6 +69,7 @@ export default async function RootLayout({
   children,
 }: Readonly<{ children: React.ReactNode }>) {
   const user = await currentUser();
+  const notice = user ? await getNotice() : null;
 
   return (
     <html lang="vi" className={`${lexend.variable} ${plexMono.variable}`}>
@@ -123,6 +126,12 @@ export default async function RootLayout({
             ) : null}
           </header>
 
+          {user ? (
+            <NoticeBar
+              notice={notice}
+              canEdit={user.access.sysAdmin || user.access.teams.some((t) => t.lead)}
+            />
+          ) : null}
           <main className="flex flex-1 flex-col">{children}</main>
 
           <footer className="muted px-5 py-6 text-xs sm:px-[34px]">

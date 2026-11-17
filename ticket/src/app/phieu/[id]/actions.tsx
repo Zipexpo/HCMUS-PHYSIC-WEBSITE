@@ -251,8 +251,64 @@ export function WaitingReply({ ticketId, assigneeName }: { ticketId: string; ass
 }
 
 /** Phiếu đã xong: người gửi xác nhận, hoặc mở lại khi vẫn còn lỗi. */
+/** 5 ngôi sao bấm chọn. Dùng radio thật để bàn phím và trình đọc màn hình hiểu. */
+function Stars({ value, onChange, dark }: { value: number; onChange: (n: number) => void; dark?: boolean }) {
+  const LABEL = ["", "Chưa ổn", "Tạm được", "Được", "Tốt", "Rất tốt"];
+  return (
+    <fieldset className="flex flex-wrap items-center gap-2">
+      <legend className="sr-only">Chấm điểm hỗ trợ</legend>
+      {[1, 2, 3, 4, 5].map((n) => (
+        <label key={n} className="tap cursor-pointer" title={LABEL[n]}>
+          <input type="radio" name="rating" value={n} checked={value === n} onChange={() => onChange(n)} className="sr-only" />
+          <span
+            aria-hidden
+            className={"text-[28px] leading-none transition-transform hover:scale-110 " + (n <= value ? "text-[var(--amber)]" : dark ? "text-[#6e7472]" : "text-[#c9c8c3]")}
+          >
+            ★
+          </span>
+          <span className="sr-only">{n} sao — {LABEL[n]}</span>
+        </label>
+      ))}
+      {value ? <span className={"text-sm " + (dark ? "text-[var(--on-dark-muted)]" : "muted")}>{LABEL[value]}</span> : null}
+    </fieldset>
+  );
+}
+
+/** Phiếu đã đóng mà người gửi chưa chấm: mời chấm một lần, không bắt buộc. */
+export function RatingCard({ ticketId }: { ticketId: string }) {
+  const { send, busy, err } = useSend();
+  const [n, setN] = useState(0);
+  const [note, setNote] = useState("");
+  return (
+    <div className="raise flex flex-col gap-3 rounded-[26px] p-5">
+      <span className="font-medium">Lần hỗ trợ này thế nào?</span>
+      <Stars value={n} onChange={setN} />
+      {n ? (
+        <>
+          <textarea
+            rows={2}
+            value={note}
+            maxLength={1000}
+            onChange={(e) => setNote(e.target.value)}
+            placeholder={n <= 2 ? "Chỗ nào chưa ổn? Góp ý giúp nhóm làm tốt hơn." : "Vài lời cho nhóm (không bắt buộc)"}
+            aria-label="Góp ý"
+            className="field text-sm"
+          />
+          <button type="button" disabled={busy} onClick={() => void send(base(ticketId), { rating: n, ratingNote: note || undefined })} className="btn btn-primary self-start py-2 text-sm">
+            Gửi đánh giá
+          </button>
+        </>
+      ) : (
+        <span className="muted text-xs">Chỉ nhóm hỗ trợ và lãnh đạo Khoa xem điểm này, để biết chỗ nào cần làm tốt hơn.</span>
+      )}
+      <ErrorLine err={err} />
+    </div>
+  );
+}
+
 export function ResolvedChoice({ ticketId, days, resolvedAt }: { ticketId: string; days: number; resolvedAt: string | null }) {
   const { send, busy, err } = useSend();
+  const [n, setN] = useState(0);
   const left = resolvedAt
     ? Math.max(0, days - Math.floor((Date.now() - new Date(resolvedAt).getTime()) / 86_400_000))
     : days;
@@ -275,9 +331,13 @@ export function ResolvedChoice({ ticketId, days, resolvedAt }: { ticketId: strin
         >
           Vẫn còn lỗi
         </button>
-        <KnobButton disabled={busy} onClick={() => void send(base(ticketId), { status: "CLOSED" })}>
+        <KnobButton disabled={busy} onClick={() => void send(base(ticketId), { status: "CLOSED", ...(n ? { rating: n } : {}) })}>
           Đã ổn, đóng phiếu
         </KnobButton>
+      </div>
+      <div className="flex flex-wrap items-center gap-3 text-sm text-[var(--on-dark-muted)]">
+        Chấm điểm lần hỗ trợ này (không bắt buộc):
+        <Stars value={n} onChange={setN} dark />
       </div>
       <ErrorLine err={err} />
     </div>

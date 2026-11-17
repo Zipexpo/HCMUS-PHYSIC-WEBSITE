@@ -1,4 +1,4 @@
-# Hệ phiếu hỗ trợ kỹ thuật — Khoa Vật lý
+# Physupport — hệ phiếu hỗ trợ kỹ thuật, Khoa Vật lý – Vật lý Kỹ thuật
 
 Nơi cán bộ của Khoa báo sự cố phần mềm và theo dõi tới khi xong.
 
@@ -43,15 +43,47 @@ Kiểu hỗ trợ: `text`, `textarea`, `select`, `date`, `checkbox`.
 
 ## Phân quyền
 
-| | Người gửi | Quản trị viên |
-|---|---|---|
-| Xem phiếu | chỉ của mình | tất cả |
-| Đổi trạng thái | chỉ **đóng** phiếu của mình | mọi trạng thái |
-| Nhận phiếu, đổi mức độ | không | có |
-| Ghi chú nội bộ | không thấy | viết và đọc được |
+Mọi luật ở MỘT tệp: [`src/lib/access.ts`](src/lib/access.ts).
 
-Ghi chú nội bộ được lọc **ở máy chủ**, không phải ẩn bằng CSS — người gửi không
-có cách nào đọc được.
+| Vai trò | Là ai | Được làm gì |
+|---|---|---|
+| Người gửi | mọi tài khoản web Khoa | gửi, theo dõi, trao đổi trên phiếu của mình; mở lại khi vẫn còn lỗi; chấm điểm |
+| Đầu mối đơn vị | ADMIN bên CMS có gắn đơn vị (tự động) | XEM phiếu người đơn vị mình gửi; DUYỆT xin cấp quyền; XỬ LÝ phiếu "chuyển qua đơn vị" (sửa nội dung trang đơn vị) |
+| Thành viên nhóm | thêm ở trang **Nhóm** | xử lý phiếu của nhóm mình; chỉ tự nhận / bỏ nhận |
+| Trưởng nhóm | thêm ở trang **Nhóm** | + giao việc, chuyển nhóm, sửa mẫu biểu của nhóm, đặt thông báo sự cố, nhận cảnh báo quá hạn |
+| Quản trị hệ thống | SUPER_ADMIN bên CMS, hoặc gán ở trang **Nhóm** | toàn quyền |
+| Ban Chủ nhiệm | gán ở trang **Nhóm** | Báo cáo + phiếu bị leo thang; không đọc ghi chú nội bộ |
+
+Làm ADMIN bên CMS **không** tự động là người xử lý. Ghi chú nội bộ lọc **ở máy
+chủ**, không phải ẩn bằng CSS.
+
+Luồng chính:
+- **Duyệt cấp quyền** — mẫu biểu có luật duyệt (ô chọn + các lựa chọn cần duyệt):
+  phiếu chờ đầu mối đơn vị của người gửi duyệt; đơn vị chưa có đầu mối → quản
+  trị duyệt thay; đầu mối tự gửi cho đơn vị mình → coi như đã duyệt.
+- **Thời hạn & leo thang** ([`src/lib/sla.ts`](src/lib/sla.ts), giờ hành chính):
+  quá hạn phản hồi → trưởng nhóm; quá hạn xử lý → + quản trị; phiếu Khẩn → + Ban Chủ nhiệm.
+- **Thư tóm tắt sáng** ([`src/lib/digest.ts`](src/lib/digest.ts)) ngày làm việc từ
+  7:30, mỗi ngày một lần; thứ Hai có tổng kết tuần cho Ban Chủ nhiệm. Không có gì
+  đáng báo thì không gửi.
+- **Thông báo sự cố chung** đầu mọi trang — quản trị / trưởng nhóm đặt và gỡ.
+
+Không có cron: leo thang, tự đóng phiếu, thư tóm tắt chạy "lười" khi có người vào
+trang (mỗi 10 phút tối đa một lần).
+
+## Kiểm thử theo vai trò
+
+```bash
+ticket/e2e/run.sh              # build ảnh, dựng hệ chạy thử riêng, chạy, gỡ
+KEEP=1 ticket/e2e/run.sh       # giữ lại để mở http://localhost:3199/ho-tro
+```
+
+Dựng CSDL trống bằng ĐÚNG các tệp SQL dùng trên máy chủ (`setup.sql` rồi
+`migrate-00x.sql`), một CMS giả có 8 tài khoản đóng 8 vai, rồi đi qua mọi trang
+và thao tác: ai mở được trang nào, ai thấy / làm được gì, thư báo tới đúng người
+(chế độ `TICKET_MAIL_DRYRUN=1` ghi thư ra log thay vì gửi). Thêm tính năng mới thì
+thêm bước vào [`e2e/roles.e2e.mjs`](e2e/roles.e2e.mjs). Chạy trên máy phát triển,
+**không** chạy trên máy chủ thật.
 
 ## Cài lần đầu
 
@@ -146,11 +178,7 @@ MAIL_FROM=Khoa Vat ly <no-reply@hcmus.edu.vn>
 
 ## Chưa có (làm sau)
 
-- Đính kèm tệp: lược đồ CSDL đã có bảng `TicketAttachment` nhưng chưa có phần
-  tải lên. Ảnh chụp màn hình giúp sửa lỗi nhanh hơn hẳn, nên đây là việc nên làm
-  trước tiên.
-- Gửi email báo khi có phiếu mới / khi được trả lời.
-- Trang quản lý mẫu biểu trong giao diện (hiện sửa bằng `seed.ts`).
+- **Ngày lễ** chưa trừ khỏi thời hạn — thêm vào `HOLIDAYS` trong `src/lib/sla.ts`.
 - **SSO PHYsoom.** Backend đã có `POST /auth/sso/physoom`, nhưng còn hai việc:
   cho nó nhận nhiều `aud` (hiện khoá cứng một giá trị), và đăng ký
   `redirect_uri` mới bên PHYsoom — việc đó phải nhờ bên PHYsoom.

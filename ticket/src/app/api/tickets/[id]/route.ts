@@ -27,6 +27,9 @@ const Patch = z.object({
   /** Đầu mối đơn vị duyệt / từ chối yêu cầu cấp quyền. */
   approval: z.enum(["APPROVE", "REJECT"]).optional(),
   approvalNote: z.string().trim().max(1000).optional(),
+  /** Người gửi chấm điểm hỗ trợ (1–5) khi phiếu đã xong / lúc đóng. */
+  rating: z.number().int().min(1).max(5).optional(),
+  ratingNote: z.string().trim().max(1000).optional(),
 });
 
 const deny = (message: string, status = 403) =>
@@ -188,6 +191,16 @@ export async function PATCH(
           to: toName ?? "(chưa ai)",
         });
       }
+    }
+    if (body.rating !== undefined) {
+      if (!isOwner) return deny("Chỉ người gửi mới chấm điểm được");
+      if (ticket.rating != null) return deny("Phiếu này đã được chấm điểm", 409);
+      const done = ["RESOLVED", "CLOSED"].includes(ticket.status) || body.status === "CLOSED";
+      if (!done) return deny("Phiếu chưa xong, chưa chấm điểm được", 400);
+      data.rating = body.rating;
+      data.ratingNote = body.ratingNote || null;
+      data.ratedAt = new Date();
+      events.push({ kind: "rating", to: `${body.rating}/5${body.ratingNote ? ` — ${body.ratingNote}` : ""}` });
     }
     if (body.notifyEmail !== undefined && body.notifyEmail !== ticket.notifyEmail) {
       data.notifyEmail = body.notifyEmail;

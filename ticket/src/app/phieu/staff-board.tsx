@@ -10,6 +10,7 @@ import {
 import type { Prisma, TicketStatus } from "@/generated/prisma/client";
 import { CurveDown, CurveUp, Led, homNay } from "@/components/ui";
 import { assignableStaff } from "@/lib/staff";
+import { deadlines } from "@/lib/sla";
 import { type Who, canApprove, isHandler, queueScope } from "@/lib/access";
 import { FilterMenu, QueueList, SavedFilters, type QueueRow } from "./queue-list";
 import {
@@ -35,6 +36,7 @@ const ACTIVE: TicketStatus[] = ["NEW", "ACKNOWLEDGED", "IN_PROGRESS"];
 const VIEWS = [
   { k: "cho-duyet", label: "Chờ duyệt cấp quyền" },
   { k: "cua-toi", label: "Phiếu tôi nhận" },
+  { k: "sap-han", label: "Quá hạn / sắp tới hạn" },
   { k: "chua-giao", label: "Chưa ai nhận" },
   { k: "qua-han", label: "Quá 24 giờ chưa trả lời" },
   { k: "cho", label: "Chờ người gửi" },
@@ -54,6 +56,8 @@ type Row = {
   approvalUnitName: string | null;
   boardEscalated: boolean;
   escalation: number;
+  firstResponseAt: Date | null;
+  approvedAt: Date | null;
   id: string;
   code: string;
   title: string;
@@ -100,9 +104,21 @@ function inView(t: Row, v: ViewKey, me: Me, staleBefore: number, wait: WaitMap):
       return t.status === "CLOSED" || t.status === "REJECTED";
     case "cho-duyet":
       return canApprove(me, t);
+    case "sap-han": {
+      // Hạn kế tiếp còn dưới 4 giờ (hoặc đã qua). Bóng đang ở phía người gửi /
+      // đơn vị duyệt thì không tính.
+      if (!ACTIVE.includes(t.status) || t.approvalStatus === "PENDING") return false;
+      return dueOf(t) < Date.now() + 4 * 3_600_000;
+    }
     default:
       return true;
   }
+}
+
+/** Hạn kế tiếp: chưa phản hồi → hạn phản hồi; đã phản hồi → hạn xử lý xong. */
+function dueOf(t: Row): number {
+  const d = deadlines(t.approvedAt ?? t.createdAt, t.priority);
+  return (t.firstResponseAt ? d.resolve : d.response).getTime();
 }
 
 const PRIO_RANK = { URGENT: 0, HIGH: 1, NORMAL: 2, LOW: 3 } as const;
@@ -112,7 +128,7 @@ export async function StaffBoard({ me, p, base = "/phieu" }: { me: Me; p: Params
   const handler = isHandler(me.access);
   const approver = me.access.sysAdmin || !!me.access.liaisonUnitId;
   // Mặc định: phiếu chờ phản hồi lâu nhất lên đầu — đúng câu hỏi "làm gì trước".
-  const sort = ["moi", "cu", "uu-tien", "cap-nhat"].includes(p.sx ?? "") ? p.sx! : "cho";
+  const sort = ["moi", "cu", "uu-tien", "cap-nhat", "han"].includes(p.sx ?? "") ? p.sx! : "cho";
   const q = (p.q ?? "").trim().toLowerCase();
   const tt = p.tt && p.tt in STATUS_LABEL ? (p.tt as TicketStatus) : undefined;
   const page = Math.max(1, Number(p.trang) || 1);
@@ -149,6 +165,8 @@ export async function StaffBoard({ me, p, base = "/phieu" }: { me: Me; p: Params
         approvalUnitName: true,
         boardEscalated: true,
         escalation: true,
+        firstResponseAt: true,
+        approvedAt: true,
         createdAt: true,
         updatedAt: true,
         form: { select: { key: true, name: true } },
@@ -287,7 +305,10 @@ export async function StaffBoard({ me, p, base = "/phieu" }: { me: Me; p: Params
   const dateOf = (t: Row) => (sort === "cap-nhat" ? t.updatedAt : t.createdAt);
   const waitOf = (t: Row) => wait.get(t.id) ?? Number.POSITIVE_INFINITY;
   rows.sort((a, b) =>
-    sort === "cho"
+    sort === "han"
+      ? (ACTIVE.includes(a.status) ? dueOf(a) : Infinity) - (ACTIVE.includes(b.status) ? dueOf(b) : Infinity) ||
+        a.createdAt.getTime() - b.createdAt.getTime()
+      : sort === "cho"
       ? waitOf(a) - waitOf(b) || a.createdAt.getTime() - b.createdAt.getTime()
       : sort === "uu-tien"
       ? PRIO_RANK[a.priority] - PRIO_RANK[b.priority] || b.updatedAt.getTime() - a.updatedAt.getTime()
@@ -322,6 +343,7 @@ export async function StaffBoard({ me, p, base = "/phieu" }: { me: Me; p: Params
   ];
   const SORTS = [
     { v: "cho", label: "Chờ phản hồi lâu nhất" },
+    { v: "han", label: "Hạn gần nhất" },
     { v: "moi", label: "Mới nhất" },
     { v: "uu-tien", label: "Mức độ cao trước" },
     { v: "cap-nhat", label: "Cập nhật gần đây" },
@@ -334,6 +356,12 @@ export async function StaffBoard({ me, p, base = "/phieu" }: { me: Me; p: Params
   const groups =
     sort === "uu-tien"
       ? [{ label: "Theo mức độ", items: shown }]
+      : sort === "han"
+        ? groupRuns(shown, (t) => {
+            if (!ACTIVE.includes(t.status) || t.approvalStatus === "PENDING") return "Không tính hạn (chờ người gửi / chờ duyệt / đã xong)";
+            const d = dueOf(t) - now;
+            return d < 0 ? "Đã quá hạn" : d < 4 * 3_600_000 ? "Tới hạn trong 4 giờ" : "Còn thời gian";
+          })
       : sort === "cho"
         ? groupRuns(shown, (t) => (wait.get(t.id) != null ? "Đang chờ bên xử lý trả lời" : "Không chờ bên xử lý"))
         : groupRuns(shown, (t) => bucketOf(dateOf(t)));

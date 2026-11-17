@@ -1,0 +1,40 @@
+# Hệ CHẠY THỬ cho bộ kiểm thử vai trò — tách hẳn khỏi máy chủ thật.
+#   CSDL trống, dựng bằng ĐÚNG các tệp SQL dùng trên máy chủ (setup + migrate-*),
+#   nên kiểm luôn cả việc các migration chạy nối tiếp nhau không lỗi.
+# Chạy: ticket/e2e/run.sh   (không chạy tay `up` ở thư mục gốc dự án)
+name: physupport-e2e
+
+services:
+  db:
+    image: postgres:16-alpine
+    environment: { POSTGRES_USER: e2e, POSTGRES_PASSWORD: e2e, POSTGRES_DB: hcmus_ticket }
+    tmpfs: [/var/lib/postgresql/data]
+    volumes:
+      - ./00-role.sql:/docker-entrypoint-initdb.d/00-role.sql:ro
+      - ../prisma/setup.sql:/docker-entrypoint-initdb.d/01-setup.sql:ro
+      - ../prisma/migrate-002.sql:/docker-entrypoint-initdb.d/02-migrate.sql:ro
+      - ../prisma/migrate-003.sql:/docker-entrypoint-initdb.d/03-migrate.sql:ro
+      - ../prisma/migrate-004.sql:/docker-entrypoint-initdb.d/04-migrate.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U e2e -d hcmus_ticket"]
+      interval: 2s
+      retries: 30
+
+  cms:
+    image: node:20-alpine
+    command: node /app/fake-cms.mjs
+    volumes: ["./fake-cms.mjs:/app/fake-cms.mjs:ro"]
+
+  ticket:
+    image: hcmus-ticket:e2e
+    environment:
+      TICKET_DATABASE_URL: postgresql://e2e:e2e@db:5432/hcmus_ticket?schema=public
+      CMS_API_URL: http://cms:3001
+      # Ghi thư ra log thay vì gửi; quét leo thang mỗi lần có người vào trang.
+      TICKET_MAIL_DRYRUN: "1"
+      TICKET_SWEEP_GAP_MS: "0"
+      TICKET_DIGEST_ANYTIME: "1"
+    ports: ["3199:3003"]
+    depends_on:
+      db: { condition: service_healthy }
+      cms: { condition: service_started }

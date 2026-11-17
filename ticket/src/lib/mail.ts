@@ -38,7 +38,13 @@ function html(m: Mail): string {
 }
 
 export function sendMail(m: Mail): void {
-  if (!KEY || !m.to) return;
+  if (!m.to) return;
+  // Chạy thử (e2e): ghi ra log thay vì gửi, để bộ kiểm thử biết thư tới ĐÚNG ai.
+  if (process.env.TICKET_MAIL_DRYRUN === "1") {
+    console.log(`[mail-dryrun] ${JSON.stringify({ to: m.to, subject: m.subject })}`);
+    return;
+  }
+  if (!KEY) return;
   void fetch("https://api.resend.com/emails", {
     method: "POST",
     headers: { Authorization: `Bearer ${KEY}`, "content-type": "application/json" },

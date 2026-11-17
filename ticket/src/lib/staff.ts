@@ -13,9 +13,9 @@ const lastWrite = new Map<string, number>();
 const GAP_MS = 10 * 60 * 1000;
 
 export async function rememberStaff(u: SessionUser): Promise<void> {
-  // Ghi sổ mọi tài khoản admin bên CMS (người xử lý lẫn đầu mối đơn vị): sổ
-  // này cho biết đơn vị nào có đầu mối để gửi thư duyệt / chuyển phiếu.
-  if (!u.isStaff && u.role !== "ADMIN" && u.role !== "SUPER_ADMIN") return;
+  // Ghi sổ MỌI người đã đăng nhập (kèm đơn vị, vai trò CMS): sổ này cho biết
+  // đơn vị nào có đầu mối, ai giao việc được, và để quản trị thêm người vào
+  // nhóm / Ban Chủ nhiệm chỉ bằng email mà không phải gõ lại họ tên.
   const now = Date.now();
   if (now - (lastWrite.get(u.id) ?? 0) < GAP_MS) return;
   lastWrite.set(u.id, now);

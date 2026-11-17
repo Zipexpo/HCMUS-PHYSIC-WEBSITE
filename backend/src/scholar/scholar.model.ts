@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { MaScopusSchema } from './scopus';
 
 // ── Hằng dùng chung ─────────────────────────────────────────────────────────
 export const PUBLICATION_STATUSES = [
@@ -137,7 +138,8 @@ export const UpdateScholarProfileBodySchema = z.object({
       'ORCID phải có dạng 0000-0000-0000-0000',
     )
     .nullish(),
-  scopusAuthorId: OptionalText(40),
+  // Một người có thể có NHIỀU mã Scopus — xem scopus.ts.
+  scopusAuthorId: MaScopusSchema,
   researcherId: OptionalText(40),
   googleScholarId: OptionalText(40),
   researchGateUrl: z.string().url().max(300).nullish(),

@@ -22,6 +22,8 @@ function dur(ms: number | null): string {
   return `${(ms / DAY_MS).toFixed(1).replace(".", ",")} ngày`;
 }
 
+const avg = (xs: number[]): number | null => (xs.length ? xs.reduce((a, b) => a + b, 0) / xs.length : null);
+
 const median = (xs: number[]): number | null => {
   if (!xs.length) return null;
   const s = [...xs].sort((a, b) => a - b);
@@ -71,6 +73,7 @@ export default async function Page({ searchParams }: { searchParams: Promise<Par
         reporterUnit: true,
         assigneeUserId: true,
         assigneeName: true,
+        rating: true,
         form: { select: { name: true } },
       },
     }),
@@ -147,6 +150,8 @@ export default async function Page({ searchParams }: { searchParams: Promise<Par
         resolve: median(
           ts.map((t) => (doneAt(t) ? doneAt(t)!.getTime() - t.createdAt.getTime() : null)).filter((x): x is number => x != null),
         ),
+        rating: avg(ts.map((t) => t.rating).filter((x): x is number => x != null)),
+        rated: ts.filter((t) => t.rating != null).length,
         first: median(ts.map((t) => (firstOf.get(t.id) != null ? firstOf.get(t.id)! - t.createdAt.getTime() : null)).filter((x): x is number => x != null)),
       }))
       .sort((a, b) => b.n - a.n);
@@ -164,11 +169,17 @@ export default async function Page({ searchParams }: { searchParams: Promise<Par
     n: tickets.filter((t) => t.status === s).length,
   }));
 
+  const ratings = tickets.map((t) => t.rating).filter((x): x is number => x != null);
   const KPI = [
     { n: String(tickets.length), label: "Phiếu mới", sub: range.label },
     { n: String(done), label: "Đã xử lý xong", sub: tickets.length ? `${Math.round((done / tickets.length) * 100)}% số phiếu` : "—" },
     { n: dur(median(firstResp)), label: "Phản hồi đầu (trung vị)", sub: `${firstResp.length} phiếu có phản hồi` },
     { n: dur(median(resolveTimes)), label: "Thời gian xử lý (trung vị)", sub: `${resolveTimes.length} phiếu đã xong` },
+    {
+      n: ratings.length ? `${avg(ratings)!.toFixed(1).replace(".", ",")} ★` : "—",
+      label: "Mức hài lòng",
+      sub: ratings.length ? `${ratings.length} lượt chấm · ${ratings.filter((r) => r <= 2).length} chưa ổn` : "chưa có lượt chấm",
+    },
   ];
 
   return (
@@ -203,7 +214,7 @@ export default async function Page({ searchParams }: { searchParams: Promise<Par
       <CurveDown />
 
       <section className="band px-5 pb-6 sm:px-9">
-        <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
+        <div className="grid grid-cols-2 gap-3 lg:grid-cols-5">
           {KPI.map((k) => (
             <div key={k.label} className="raise-d flex flex-col gap-1 rounded-[26px] px-5 py-4">
               <span className="text-3xl font-medium tabular-nums">{k.n}</span>
@@ -294,6 +305,7 @@ export default async function Page({ searchParams }: { searchParams: Promise<Par
                     <th className="px-2 py-1.5 text-right font-normal">Đang mở</th>
                     <th className="hidden px-2 py-1.5 text-right font-normal sm:table-cell">Phản hồi đầu</th>
                     <th className="px-2 py-1.5 text-right font-normal">Xử lý xong</th>
+                    <th className="px-2 py-1.5 text-right font-normal">Hài lòng</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -309,6 +321,9 @@ export default async function Page({ searchParams }: { searchParams: Promise<Par
                       <td className={"px-2 py-2 text-right font-mono tabular-nums " + (r.open ? "" : "muted")}>{r.open}</td>
                       <td className="muted hidden px-2 py-2 text-right sm:table-cell">{dur(r.first)}</td>
                       <td className="muted px-2 py-2 text-right">{dur(r.resolve)}</td>
+                      <td className={"px-2 py-2 text-right " + (r.rating != null && r.rating < 3.5 ? "font-medium text-[#a1301f]" : "muted")} title={`${r.rated} lượt chấm`}>
+                        {r.rating != null ? `${r.rating.toFixed(1).replace(".", ",")} ★` : "—"}
+                      </td>
                     </tr>
                   ))}
                 </tbody>
@@ -319,7 +334,7 @@ export default async function Page({ searchParams }: { searchParams: Promise<Par
           </section>
         ))}
         <p className="muted text-xs xl:col-span-2">
-          “Phản hồi đầu”: từ lúc gửi tới lần đầu bên xử lý trả lời, nhận phiếu hoặc đổi trạng thái. “Xử lý xong”: từ lúc gửi tới lúc chuyển sang Đã xong. Cả hai lấy trung vị, để một phiếu kéo dài bất thường không làm lệch số.
+          “Phản hồi đầu”: từ lúc gửi tới lần đầu bên xử lý trả lời, nhận phiếu hoặc đổi trạng thái. “Xử lý xong”: từ lúc gửi tới lúc chuyển sang Đã xong. Cả hai lấy trung vị, để một phiếu kéo dài bất thường không làm lệch số. “Hài lòng”: điểm trung bình người gửi chấm (1–5 sao) khi phiếu xong; dưới 3,5 tô đỏ.
         </p>
       </div>
     </>

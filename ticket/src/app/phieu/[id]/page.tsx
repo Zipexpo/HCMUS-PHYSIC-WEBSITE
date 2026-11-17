@@ -12,6 +12,7 @@ import { CurveDown, CurveUp, StatusTag } from "@/components/ui";
 import {
   ApprovalBox,
   CloseTicket,
+  RatingCard,
   Composer,
   NotifyToggle,
   ResolvedChoice,
@@ -83,6 +84,8 @@ function eventText(e: { kind: string; actorName: string | null; fromValue: strin
       return `${who}: ${e.toValue}`;
     case "escalate":
       return `Cảnh báo: ${e.toValue}`;
+    case "rating":
+      return `Người gửi chấm ${e.toValue}`;
     default:
       return e.kind;
   }
@@ -485,6 +488,16 @@ export default async function Page({ params }: { params: Promise<{ id: string }>
                   <dd className={f.link ? "break-all font-mono text-[13px]" : "whitespace-pre-line font-medium"}>{f.text}</dd>
                 </div>
               ))}
+              {t.rating != null && staffView ? (
+                <div className="press rounded-[20px] px-4 py-2.5">
+                  <dt className="muted text-xs">Người gửi chấm</dt>
+                  <dd className="font-medium">
+                    <span className="text-[var(--amber)]">{"★".repeat(t.rating)}</span>
+                    <span className="text-[#c9c8c3]">{"★".repeat(5 - t.rating)}</span>
+                    {t.ratingNote ? <span className="block whitespace-pre-line text-sm font-normal">“{t.ratingNote}”</span> : null}
+                  </dd>
+                </div>
+              ) : null}
               {staffView && !["RESOLVED", "CLOSED", "REJECTED"].includes(t.status) && !pending ? (
                 <div className="press rounded-[20px] px-4 py-2.5">
                   <dt className="muted text-xs">Thời hạn</dt>
@@ -555,7 +568,10 @@ export default async function Page({ params }: { params: Promise<{ id: string }>
               </section>
             </>
           ) : isOwner ? (
-            <NotifyToggle ticketId={t.id} on={t.notifyEmail} />
+            <>
+              {t.status === "CLOSED" && t.rating == null && t.resolvedAt ? <RatingCard ticketId={t.id} /> : null}
+              <NotifyToggle ticketId={t.id} on={t.notifyEmail} />
+            </>
           ) : null}
         </aside>
       </div>

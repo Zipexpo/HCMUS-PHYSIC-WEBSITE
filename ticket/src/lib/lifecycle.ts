@@ -3,6 +3,7 @@ import { STATUS_LABEL } from "@/lib/labels";
 import { sendMail, ticketUrl } from "@/lib/mail";
 import { staffEmail } from "@/lib/staff";
 import { SLA_HOURS, deadlines, slaText, type Priority } from "@/lib/sla";
+import { sweepDigest } from "@/lib/digest";
 
 /**
  * Phiếu "Đã xong" mà người gửi không xác nhận thì sau 7 ngày tự đóng — đúng
@@ -14,8 +15,10 @@ let lastSweep = 0;
 
 export async function sweepAutoClose(): Promise<void> {
   const now = Date.now();
-  // Mỗi 10 phút: leo thang cần đúng giờ hơn tự đóng phiếu.
-  if (now - lastSweep < 10 * 60 * 1000) return;
+  // Mỗi 10 phút: leo thang cần đúng giờ hơn tự đóng phiếu. Bộ kiểm thử đặt
+  // TICKET_SWEEP_GAP_MS=0 để quét ngay mỗi lần có người vào trang.
+  const gap = Number(process.env.TICKET_SWEEP_GAP_MS ?? 10 * 60 * 1000);
+  if (now - lastSweep < gap) return;
   lastSweep = now;
   try {
     const cutoff = new Date(now - AUTO_CLOSE_DAYS * 24 * 60 * 60 * 1000);
@@ -26,6 +29,9 @@ export async function sweepAutoClose(): Promise<void> {
     });
     void sweepEscalation().catch((e: unknown) =>
       console.warn("[escalate]", e instanceof Error ? e.message : e),
+    );
+    void sweepDigest().catch((e: unknown) =>
+      console.warn("[digest]", e instanceof Error ? e.message : e),
     );
     for (const t of stale) {
       await prisma.$transaction([

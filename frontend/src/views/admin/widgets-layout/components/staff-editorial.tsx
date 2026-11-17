@@ -276,6 +276,14 @@ function StaffProfileEditorialRender(props: Props) {
 
   // Hồ sơ học thuật: mỗi ID có giá trị thì hiện một icon-link màu thương hiệu.
   // Đặt NGOÀI vùng `blend` để logo giữ đúng màu, không bị phép trừ màu đảo.
+  const maScopus = (s?: string) => [
+    ...new Set(
+      (s ?? "")
+        .split(/[;,/\s]+/)
+        .map((x) => x.trim())
+        .filter(Boolean),
+    ),
+  ];
   const scholarLinks = [
     props.orcid?.trim()
       ? {
@@ -331,35 +339,34 @@ function StaffProfileEditorialRender(props: Props) {
           ),
         }
       : null,
-    props.scopus?.trim()
-      ? {
-          key: "scopus",
-          href: `https://www.scopus.com/authid/detail.uri?authorId=${encodeURIComponent(props.scopus.trim())}`,
-          label: "Scopus Author ID",
-          icon: (
-            <svg
-              width="22"
-              height="22"
-              viewBox="0 0 24 24"
-              role="img"
-              aria-hidden="true"
-            >
-              <circle cx="12" cy="12" r="12" fill="#E9711C" />
-              <text
-                x="12"
-                y="16.5"
-                textAnchor="middle"
-                fontFamily="Georgia, 'Times New Roman', serif"
-                fontSize="15"
-                fontWeight="700"
-                fill="#FFF"
-              >
-                S
-              </text>
-            </svg>
-          ),
-        }
-      : null,
+    // Một người có thể có NHIỀU mã Scopus ("a; b") — mỗi mã một icon-link.
+    ...maScopus(props.scopus).map((id, _i, ds) => ({
+      key: `scopus-${id}`,
+      href: `https://www.scopus.com/authid/detail.uri?authorId=${encodeURIComponent(id)}`,
+      label: ds.length > 1 ? `Scopus Author ID ${id}` : "Scopus Author ID",
+      icon: (
+        <svg
+          width="22"
+          height="22"
+          viewBox="0 0 24 24"
+          role="img"
+          aria-hidden="true"
+        >
+          <circle cx="12" cy="12" r="12" fill="#E9711C" />
+          <text
+            x="12"
+            y="16.5"
+            textAnchor="middle"
+            fontFamily="Georgia, 'Times New Roman', serif"
+            fontSize="15"
+            fontWeight="700"
+            fill="#FFF"
+          >
+            S
+          </text>
+        </svg>
+      ),
+    })),
     props.researcherId?.trim()
       ? {
           key: "wos",
@@ -706,7 +713,7 @@ export const StaffProfileEditorial: ComponentConfig<Props> = {
     },
     intro: localizedTextField("Đoạn giới thiệu"),
     orcid: { type: "text", label: "ORCID iD" },
-    scopus: { type: "text", label: "Scopus Author ID" },
+    scopus: { type: "text", label: "Scopus Author ID (nhiều mã thì ngăn bằng dấu ;)" },
     googleScholar: { type: "text", label: "Google Scholar ID" },
     researcherId: { type: "text", label: "ResearcherID (Web of Science)" },
     email: { type: "text", label: "Email (hiện cạnh icon học thuật)" },

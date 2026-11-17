@@ -137,6 +137,11 @@ model Ticket {
   /// Đã báo lên Ban Chủ nhiệm (phiếu Khẩn quá hạn xử lý) — Ban Chủ nhiệm thấy phiếu này.
   boardEscalated  Boolean @default(false)
 
+  // ── Người gửi chấm điểm sau khi xong (1–5) ───────────────────────────────
+  rating     Int?
+  ratingNote String?
+  ratedAt    DateTime?
+
   resolvedAt DateTime?
   closedAt   DateTime?
   createdAt  DateTime  @default(now())
@@ -269,4 +274,12 @@ model TicketRole {
   name      String
   role      String
   createdAt DateTime @default(now())
+}
+
+/// Cài đặt chung dạng khoá–giá trị: "notice" (thông báo sự cố đầu trang),
+/// "digest:last" (ngày đã gửi thư tóm tắt — chống gửi trùng khi có nhiều tiến trình).
+model TicketSetting {
+  key       String   @id
+  value     Json
+  updatedAt DateTime @default(now()) @updatedAt
 }
