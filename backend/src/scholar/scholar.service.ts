@@ -80,6 +80,7 @@ type AuthorRow = {
   sequence?: 'first' | 'additional' | null;
   affiliation?: string | null;
   isNonSchool?: boolean | null;
+  notLastAuthor?: boolean | null;
 };
 
 /** Một tài khoản trên bài, sau khi áp các thay đổi hàng của lần lưu này. */
@@ -1171,6 +1172,13 @@ export class ScholarService {
    * ngoài hệ thống không có dòng riêng, chỉ có SỐ (`externalMainAuthors`) — chặn
    * số đó tụt xuống dưới số hàng đầu/cuối không gắn tài khoản.
    *
+   * NGOẠI LỆ TÁC GIẢ CUỐI (Khoa cho phép 19/11/2026): có bài người đứng cuối KHÔNG
+   * phải tác giả chính (xếp tên theo ABC…). Người khai bỏ đánh dấu thì form ghi
+   * `notLastAuthor` vào hàng cuối của authorsRaw — lựa chọn rõ ràng, không phải cờ
+   * thiếu. Khi có cờ đó: người ngoài hệ thống đứng cuối thôi tính tác giả chính;
+   * TÀI KHOẢN đứng cuối thì chỉ CHÍNH người đó bỏ được vai trò của mình — đồng
+   * nghiệp bỏ hộ vẫn bị chặn như ca 4/10.
+   *
    * Trả về: bài có tác giả đầu/cuối THUỘC TRƯỜNG không — sàn cho
    * `mainAuthorAtSchool` mà form gửi lên.
    */
@@ -1210,6 +1218,9 @@ export class ScholarService {
         : '';
       return t ? `«${t}»` : `Người đứng hàng ${i + 1}`;
     };
+    // Hàng cuối mà người khai đã ghi rõ là KHÔNG tính tác giả chính.
+    const boCuoi = (i: number) =>
+      soTacGia > 1 && i === soTacGia - 1 && raw[i]?.notLastAuthor === true;
     const daGan = new Set<number>();
     let thuocTruong = false;
     for (const r of rows) {
@@ -1229,19 +1240,29 @@ export class ScholarService {
           `${ten(viTri)} đứng đầu danh sách tác giả`,
         );
       }
-      if (giuHang && can.isLast && r.isLast && moi?.isLast === false) {
+      if (
+        giuHang &&
+        can.isLast &&
+        r.isLast &&
+        moi?.isLast === false &&
+        !(cuaToi && boCuoi(viTri))
+      ) {
         throw PositionalRoleException(
           `${ten(viTri)} đứng cuối danh sách tác giả (${viTri + 1}/${soTacGia})`,
         );
       }
-      if ((can.isFirst || can.isLast) && raw[viTri]?.isNonSchool !== true) {
+      if (
+        (can.isFirst || (can.isLast && !boCuoi(viTri))) &&
+        raw[viTri]?.isNonSchool !== true
+      ) {
         thuocTruong = true;
       }
     }
-    // Hàng đầu/cuối KHÔNG gắn tài khoản = tác giả chính ngoài hệ thống.
+    // Hàng đầu/cuối KHÔNG gắn tài khoản = tác giả chính ngoài hệ thống (trừ hàng
+    // cuối người khai đã ghi rõ không tính).
     const ngoai = (
       raw.length ? [0, ...(soTacGia > 1 ? [soTacGia - 1] : [])] : []
-    ).filter((i) => !daGan.has(i));
+    ).filter((i) => !daGan.has(i) && !boCuoi(i));
     if (body.externalAuthors !== undefined && ngoai.length) {
       const moi = body.externalAuthors.filter(
         (a) => a.isFirst || a.isCorresponding || a.isLast,
@@ -1546,7 +1567,11 @@ export class ScholarService {
         ...body.me,
         authorIndex: idx,
         isFirst: idx === 0 ? true : idx > 0 ? false : body.me.isFirst,
-        isLast: idx >= 0 ? n > 1 && idx === n - 1 : body.me.isLast,
+        // Hàng cuối đã được ghi rõ là KHÔNG tính tác giả chính thì không tự bật lại.
+        isLast:
+          idx >= 0
+            ? n > 1 && idx === n - 1 && raw[idx]?.notLastAuthor !== true
+            : body.me.isLast,
       },
     });
     if (body.catalogCode && !bai.catalogCode) {

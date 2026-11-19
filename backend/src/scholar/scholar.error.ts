@@ -101,7 +101,10 @@ export const PositionalRoleException = (moTa: string) =>
         `${moTa} nên không bỏ được vai trò này: người đứng đầu danh sách tác ` +
         'giả là tác giả đầu, người đứng cuối là tác giả cuối, và Phụ lục 2 tính ' +
         'cả hai là tác giả chính. Nếu tên đang đứng SAI HÀNG thì sửa hàng (vị ' +
-        'trí) của người đó, đừng bỏ vai trò.',
+        'trí) của người đó, đừng bỏ vai trò. Người đứng cuối mà không phải tác ' +
+        'giả chính (vd bài xếp tên theo ABC) thì bỏ đánh dấu ô "Last Author" ở ' +
+        'hàng cuối — hàng đó là tài khoản của đồng nghiệp thì chỉ chính người đó ' +
+        'bỏ được.',
     },
   ]);
 

@@ -165,3 +165,75 @@ describe('ScholarService.update — chặn bỏ vai trò theo vị trí', () => 
     expect(prisma.publication.update).toHaveBeenCalledTimes(1);
   });
 });
+
+/**
+ * NGƯỜI ĐỨNG CUỐI KHÔNG PHẢI TÁC GIẢ CHÍNH (Khoa cho phép 19/11/2026) — bài xếp tên
+ * theo ABC… Người khai bỏ đánh dấu thì form ghi `notLastAuthor` vào hàng cuối.
+ * Người ngoài hệ thống: người khai bỏ được. Tài khoản: chỉ chính người đó.
+ */
+describe('ScholarService.update — người đứng cuối không tính tác giả chính', () => {
+  const rawBoCuoi = raw4.map((a, i) => (i === 3 ? { ...a, notLastAuthor: true } : a));
+
+  it('chính người đứng cuối tự bỏ, danh sách ghi rõ → cho lưu', async () => {
+    const { svc, prisma } = dung([THANH, AN]);
+    await svc.update(
+      'an',
+      'p1',
+      than({ authorsRaw: rawBoCuoi, me: { authorIndex: 3, isFirst: false, isCorresponding: true, isLast: false } }),
+    );
+    expect(prisma.publication.update).toHaveBeenCalledTimes(1);
+  });
+
+  it('đồng nghiệp bỏ hộ — dù danh sách có ghi — vẫn chặn như ca 4/10', async () => {
+    const { svc, prisma } = dung([THANH, AN]);
+    const loi = await loiCua(
+      svc.update(
+        'thanh',
+        'p1',
+        than({ authorsRaw: rawBoCuoi, memberUpdates: [{ userId: 'an', isFirst: false, isCorresponding: true, isLast: false }] }),
+      ),
+    );
+    expect(loi?.field).toBe('memberUpdates');
+    expect(loi?.error).toContain('chỉ chính người đó bỏ được');
+    expect(prisma.publication.update).not.toHaveBeenCalled();
+  });
+
+  it('người ngoài hệ thống đứng cuối, bỏ đánh dấu → số tác giả chính ngoài giảm, không còn "chính thuộc Trường" theo vị trí', async () => {
+    const raw = [
+      { name: 'Huong Tran Thi Mai', isNonSchool: true },
+      raw4[1],
+      raw4[2],
+      { name: 'Truong An Dang', isNonSchool: false, notLastAuthor: true },
+    ];
+    const { svc, prisma } = dung([THANH], { authorsRaw: raw, externalMainAuthors: 2 });
+    await svc.update(
+      'thanh',
+      'p1',
+      than({
+        authorsRaw: raw,
+        mainAuthorAtSchool: false,
+        externalAuthors: [{ name: 'Huong Tran Thi Mai', isFirst: true }, { name: 'Minh Thien Bui' }, { name: 'Truong An Dang' }],
+      }),
+    );
+    const data = prisma.publication.update.mock.calls[0][0].data;
+    expect(data.externalMainAuthors).toBe(1);
+    expect(data.mainAuthorAtSchool).toBe(false);
+  });
+
+  it('KHÔNG ghi rõ trên danh sách: bỏ "tác giả cuối" của người ngoài hệ thống vẫn chặn', async () => {
+    const raw = [{ name: 'Huong Tran Thi Mai', isNonSchool: true }, raw4[1], raw4[2], { name: 'Truong An Dang', isNonSchool: false }];
+    const { svc, prisma } = dung([THANH], { authorsRaw: raw, externalMainAuthors: 2 });
+    const loi = await loiCua(
+      svc.update(
+        'thanh',
+        'p1',
+        than({
+          authorsRaw: raw,
+          externalAuthors: [{ name: 'Huong Tran Thi Mai', isFirst: true }, { name: 'Minh Thien Bui' }, { name: 'Truong An Dang' }],
+        }),
+      ),
+    );
+    expect(loi?.error).toContain('«Truong An Dang» đứng đầu và cuối danh sách tác giả');
+    expect(prisma.publication.update).not.toHaveBeenCalled();
+  });
+});

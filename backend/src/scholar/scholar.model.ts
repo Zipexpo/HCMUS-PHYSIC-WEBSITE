@@ -216,6 +216,14 @@ export const ResolvedAuthorSchema = z.object({
    * (soát 3/10/2026: IJHE, MLST, JoCS).
    */
   isCorresponding: z.boolean().nullish(),
+  /**
+   * Người đứng CUỐI nhưng KHÔNG tính tác giả chính — Khoa cho phép 19/11/2026 (bài
+   * xếp tên theo ABC, người cuối đóng góp như mọi người…). Mặc định người đứng cuối
+   * là Last Author (Phụ lục 2 tr. 2.5); cờ này là lựa chọn RÕ RÀNG của người khai,
+   * lưu ở đây để lần sửa sau không tự bật lại theo vị trí. Chỉ có nghĩa ở hàng cuối;
+   * tài khoản khác đứng cuối thì chỉ chính người đó bỏ được (chotVaiTroTheoViTri).
+   */
+  notLastAuthor: z.boolean().nullish(),
 });
 
 export const ResolvedWorkSchema = z.object({
