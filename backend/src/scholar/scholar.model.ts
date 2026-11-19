@@ -224,6 +224,12 @@ export const ResolvedAuthorSchema = z.object({
    * tài khoản khác đứng cuối thì chỉ chính người đó bỏ được (chotVaiTroTheoViTri).
    */
   notLastAuthor: z.boolean().nullish(),
+  /**
+   * Lý do người đứng cuối KHÔNG tính tác giả chính — BẮT BUỘC khi `notLastAuthor`
+   * (Khoa yêu cầu 19/11/2026, để tránh tranh chấp về sau). Mỗi lần đặt / đổi / bỏ
+   * đều ghi AuditLog `publication.last-author` kèm người sửa và nguyên văn lý do.
+   */
+  notLastAuthorReason: z.string().trim().max(500).nullish(),
 });
 
 export const ResolvedWorkSchema = z.object({

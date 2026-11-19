@@ -41,6 +41,7 @@ import {
   HangNgoaiDanhSachException,
   KhongPhaiBanTrungException,
   LastSaiViTriException,
+  LyDoBoTacGiaCuoiException,
   MotTacGiaChuaXacNhanException,
   SoatKhongConDungException,
   SoTacGiaLechException,
@@ -104,6 +105,35 @@ const AUTHOR_INCLUDE = {
 type PublicationWithAuthors = Prisma.PublicationGetPayload<{
   include: typeof AUTHOR_INCLUDE;
 }>;
+
+/** Lý do bỏ đánh dấu Last Author ngắn nhất được nhận — một câu, không phải một chữ. */
+const LY_DO_BO_CUOI_TOI_THIEU = 10;
+
+/**
+ * Hàng CUỐI của danh sách tác giả nếu người khai đã ghi rõ người đứng cuối KHÔNG
+ * tính tác giả chính (`notLastAuthor`) — kèm lý do; còn lại null.
+ */
+function tacGiaCuoiBoChinh(
+  raw: unknown,
+): { hang: number; ten: string; lyDo: string } | null {
+  if (!Array.isArray(raw) || raw.length < 2) return null;
+  const a = raw[raw.length - 1] as Record<string, unknown> | null;
+  if (a?.notLastAuthor !== true) return null;
+  const ten = String(a.name ?? [a.given, a.family].filter(Boolean).join(' ')).trim();
+  return {
+    hang: raw.length,
+    ten,
+    lyDo: String(a.notLastAuthorReason ?? '').trim(),
+  };
+}
+
+/** Bỏ đánh dấu Last Author thì BẮT BUỘC có một câu giải thích (Khoa yêu cầu 19/11/2026). */
+function kiemLyDoBoCuoi(raw: unknown) {
+  const cuoi = tacGiaCuoiBoChinh(raw);
+  if (cuoi && cuoi.lyDo.length < LY_DO_BO_CUOI_TOI_THIEU) {
+    throw LyDoBoTacGiaCuoiException;
+  }
+}
 
 /** First / Corresponding / Last — người được làm ĐẠI DIỆN nhóm khai Cách 1. */
 const laTacGiaChinh = (
@@ -497,6 +527,7 @@ export class ScholarService {
 
     // Chốt danh sách tác giả + chặn công trình trùng tên — trước MỌI lệnh ghi.
     this.kiemKhaiMoi(body);
+    kiemLyDoBoCuoi(w.authors);
     // Cách 1: đại diện (tác giả chính) khai tỷ lệ cho cả nhóm — xem kiemTyLe.
     this.kiemTyLe({
       daiDien: laTacGiaChinh(body.me),
@@ -594,6 +625,7 @@ export class ScholarService {
           laTacGiaChinh(body.me),
         );
         await this.recount(dead.id);
+        await this.ghiNhatKyTacGiaCuoi(userId, dead.id, null, w.authors);
         this.bus.emit('publication.changed', {
           id: dead.id,
           userIds: [userId, ...(body.coAuthorUserIds ?? [])],
@@ -632,6 +664,7 @@ export class ScholarService {
       laTacGiaChinh(body.me),
     );
     await this.recount(created.id);
+    await this.ghiNhatKyTacGiaCuoi(userId, created.id, null, w.authors);
     this.bus.emit('publication.changed', {
       id: created.id,
       userIds: [userId, ...(body.coAuthorUserIds ?? [])],
@@ -980,6 +1013,7 @@ export class ScholarService {
     });
     // Danh sách tác giả nhất quán (T = số hàng, hàng không trùng, Last đứng cuối).
     await this.kiemSuaDanhSach(id, userId, body, current);
+    if (body.authorsRaw !== undefined) kiemLyDoBoCuoi(body.authorsRaw);
     // Không ai bỏ được vai trò theo vị trí — kiểm TRƯỚC mọi lệnh ghi.
     const chinhTheoViTriThuocTruong = await this.chotVaiTroTheoViTri(
       id,
@@ -1069,6 +1103,9 @@ export class ScholarService {
       ? await this.rutLoiMoi(id, userId, body.rutMoi)
       : [];
     if (body.mainAuthorAtSchool === undefined || daRut.length) await this.recount(id);
+    if (body.authorsRaw !== undefined) {
+      await this.ghiNhatKyTacGiaCuoi(userId, id, current.authorsRaw, body.authorsRaw);
+    }
 
     await this.revalidateStaffPages(id);
     this.bus.emit('publication.changed', {
@@ -1077,6 +1114,87 @@ export class ScholarService {
     });
     if (boLienHe.length) await this.baoBoVaiTroLienHe(id, boLienHe);
     return this.findOne(id, userId);
+  }
+
+  /**
+   * Ghi lại MỌI lần đặt, đổi lý do hay bỏ cờ "người đứng cuối không phải tác giả
+   * chính" — AuditLog bất biến, kèm người sửa và nguyên văn lý do. Lý do trong
+   * authorsRaw thì ai lưu bài cũng ghi đè được; nhật ký thì không (Khoa yêu cầu
+   * 19/11/2026, để tránh tranh chấp về sau). Lưu lại y nguyên thì không ghi gì.
+   *
+   * Vừa BỎ đánh dấu một người (cờ mới đặt, hoặc chuyển sang người khác đứng cuối)
+   * mà hàng cuối là TÀI KHOẢN của người khác người sửa → báo tin cho họ kèm lý do
+   * (Khoa chốt: "cứ bỏ là phải ghi lý do và thông báo cho người bị bỏ").
+   */
+  private async ghiNhatKyTacGiaCuoi(
+    userId: string,
+    publicationId: string,
+    cu: unknown,
+    moi: unknown,
+  ) {
+    const truoc = tacGiaCuoiBoChinh(cu);
+    const sau = tacGiaCuoiBoChinh(moi);
+    if (!truoc && !sau) return;
+    const cungNguoi =
+      !!truoc && !!sau && truoc.hang === sau.hang && truoc.ten === sau.ten;
+    if (cungNguoi && truoc?.lyDo === sau?.lyDo) return;
+    const viec = !sau ? 'danh-dau-lai' : cungNguoi ? 'doi-ly-do' : 'bo-danh-dau';
+    await this.prisma.auditLog.create({
+      data: {
+        userId,
+        action: 'publication.last-author',
+        entityType: 'Publication',
+        entityId: publicationId,
+        changes: { viec, truoc, sau } as unknown as Prisma.InputJsonValue,
+      },
+    });
+    if (viec === 'bo-danh-dau' && sau) {
+      await this.baoBoTacGiaCuoi(publicationId, userId, sau.hang - 1, sau.lyDo);
+    }
+  }
+
+  /**
+   * Báo người đứng hàng `viTri` (nếu là tài khoản, không phải người sửa) rằng họ
+   * vừa bị bỏ đánh dấu Last Author, kèm nguyên văn lý do và tên người sửa. Đi
+   * cùng đường với baoBoVaiTroLienHe: ACADsoom gửi email + thông báo đẩy. Không
+   * bao giờ làm hỏng việc lưu.
+   */
+  private async baoBoTacGiaCuoi(
+    publicationId: string,
+    nguoiSua: string,
+    viTri: number,
+    lyDo: string,
+  ) {
+    try {
+      const dong = await this.prisma.publicationAuthor.findFirst({
+        where: {
+          publicationId,
+          authorIndex: viTri,
+          claimStatus: { not: 'REJECTED' },
+        },
+        select: { userId: true },
+      });
+      if (!dong || dong.userId === nguoiSua) return;
+      const ds = await this.prisma.user.findMany({
+        where: { id: { in: [dong.userId, nguoiSua] } },
+        select: { id: true, email: true, firstName: true, lastName: true },
+      });
+      const nguoiBi = ds.find((u) => u.id === dong.userId);
+      const sua = ds.find((u) => u.id === nguoiSua);
+      if (!nguoiBi?.email) return;
+      this.bus.emit('publication.role-removed', {
+        id: publicationId,
+        userIds: [dong.userId],
+        emails: [nguoiBi.email],
+        key: 'isLast',
+        note: lyDo,
+        by: sua
+          ? [sua.lastName, sua.firstName].filter(Boolean).join(' ') || null
+          : null,
+      });
+    } catch {
+      // thông báo là phụ — lỗi thì thôi, bài vẫn lưu (nhật ký đã ghi ở trên)
+    }
   }
 
   /**
@@ -1175,9 +1293,12 @@ export class ScholarService {
    * NGOẠI LỆ TÁC GIẢ CUỐI (Khoa cho phép 19/11/2026): có bài người đứng cuối KHÔNG
    * phải tác giả chính (xếp tên theo ABC…). Người khai bỏ đánh dấu thì form ghi
    * `notLastAuthor` vào hàng cuối của authorsRaw — lựa chọn rõ ràng, không phải cờ
-   * thiếu. Khi có cờ đó: người ngoài hệ thống đứng cuối thôi tính tác giả chính;
-   * TÀI KHOẢN đứng cuối thì chỉ CHÍNH người đó bỏ được vai trò của mình — đồng
-   * nghiệp bỏ hộ vẫn bị chặn như ca 4/10.
+   * thiếu. Khi có cờ đó, người đứng cuối thôi tính tác giả chính — người ngoài hệ
+   * thống, chính mình, hay tài khoản đồng nghiệp đều vậy. Khoa chốt cùng ngày:
+   * "cứ bỏ là phải ghi lý do và thông báo cho người bị bỏ" — lý do bắt buộc
+   * (kiemLyDoBoCuoi), mỗi lần bỏ ghi AuditLog, và người đứng cuối có tài khoản
+   * (không phải người sửa) được báo tin kèm lý do (ghiNhatKyTacGiaCuoi). Không có
+   * cờ thì bỏ vai trò người đứng cuối vẫn bị chặn như ca 4/10.
    *
    * Trả về: bài có tác giả đầu/cuối THUỘC TRƯỜNG không — sàn cho
    * `mainAuthorAtSchool` mà form gửi lên.
@@ -1245,7 +1366,7 @@ export class ScholarService {
         can.isLast &&
         r.isLast &&
         moi?.isLast === false &&
-        !(cuaToi && boCuoi(viTri))
+        !boCuoi(viTri)
       ) {
         throw PositionalRoleException(
           `${ten(viTri)} đứng cuối danh sách tác giả (${viTri + 1}/${soTacGia})`,

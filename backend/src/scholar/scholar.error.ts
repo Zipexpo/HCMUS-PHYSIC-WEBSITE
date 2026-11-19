@@ -103,10 +103,24 @@ export const PositionalRoleException = (moTa: string) =>
         'cả hai là tác giả chính. Nếu tên đang đứng SAI HÀNG thì sửa hàng (vị ' +
         'trí) của người đó, đừng bỏ vai trò. Người đứng cuối mà không phải tác ' +
         'giả chính (vd bài xếp tên theo ABC) thì bỏ đánh dấu ô "Last Author" ở ' +
-        'hàng cuối — hàng đó là tài khoản của đồng nghiệp thì chỉ chính người đó ' +
-        'bỏ được.',
+        'hàng cuối và ghi lý do — người đứng cuối có tài khoản sẽ được báo tin ' +
+        'kèm lý do đó.',
     },
   ]);
+
+/**
+ * Bỏ đánh dấu Last Author mà không nói vì sao — Khoa yêu cầu 19/11/2026 phải có một
+ * câu giải thích, lưu lại cùng tên người sửa, để tránh tranh chấp về sau.
+ */
+export const LyDoBoTacGiaCuoiException = new UnprocessableEntityException([
+  {
+    field: 'notLastAuthorReason',
+    error:
+      'Bỏ đánh dấu Last Author thì phải ghi một câu giải thích vì sao người đứng ' +
+      'cuối không phải tác giả chính (ít nhất 10 ký tự). Lý do được lưu lại cùng ' +
+      'tên người sửa.',
+  },
+]);
 
 export const NoStaffPageException = new NotFoundException([
   {

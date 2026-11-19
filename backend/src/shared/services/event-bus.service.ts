@@ -41,6 +41,14 @@ export type DomainEvent = {
    * không có nghĩa ở bên kia, còn địa chỉ công vụ thì vốn đã in trên trang nhân sự.
    */
   emails?: string[];
+  /**
+   * Chỉ cho `publication.role-removed` key `isLast`: NGUYÊN VĂN lý do người sửa ghi
+   * khi bỏ đánh dấu Last Author của người khác (Khoa yêu cầu 19/11/2026) — để thư
+   * báo tin nói rõ vì sao, người bị bỏ khỏi phải đi hỏi.
+   */
+  note?: string | null;
+  /** Họ tên người vừa sửa — cùng sự kiện trên, để người bị bỏ biết hỏi lại ai. */
+  by?: string | null;
   at: string;
 };
 

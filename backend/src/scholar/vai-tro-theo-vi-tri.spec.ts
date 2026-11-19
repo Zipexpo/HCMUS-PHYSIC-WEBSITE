@@ -38,11 +38,19 @@ const raw4 = [
 const THANH: Dong = { userId: 'thanh', claimStatus: 'CONFIRMED', authorIndex: 1, isFirst: false, isCorresponding: false, isLast: false };
 const AN: Dong = { userId: 'an', claimStatus: 'CONFIRMED', authorIndex: 3, isFirst: false, isCorresponding: true, isLast: true };
 
+const NGUOI: Record<string, { id: string; email: string; firstName: string; lastName: string }> = {
+  an: { id: 'an', email: 'an@hcmus.edu.vn', firstName: 'An', lastName: 'Đặng Trường' },
+  thanh: { id: 'thanh', email: 'thanh@hcmus.edu.vn', firstName: 'Thành', lastName: 'Nguyễn Tiến' },
+};
+
 function dung(rows: Dong[], hienTai: Record<string, unknown> = {}) {
   const prisma = {
     publicationAuthor: {
       findUnique: vi.fn().mockResolvedValue({ claimStatus: 'CONFIRMED' }),
       findMany: vi.fn().mockResolvedValue(rows),
+      findFirst: vi.fn(({ where }: { where: { authorIndex: number } }) =>
+        Promise.resolve(rows.find((r) => r.authorIndex === where.authorIndex) ?? null),
+      ),
       update: vi.fn().mockResolvedValue({}),
       upsert: vi.fn().mockResolvedValue({}),
     },
@@ -59,7 +67,11 @@ function dung(rows: Dong[], hienTai: Record<string, unknown> = {}) {
       }),
       update: vi.fn().mockResolvedValue({}),
     },
-    user: { findMany: vi.fn().mockResolvedValue([{ email: 'an@hcmus.edu.vn' }]) },
+    user: {
+      findMany: vi.fn(({ where }: { where: { id: { in: string[] } } }) =>
+        Promise.resolve(where.id.in.map((id) => NGUOI[id]).filter(Boolean)),
+      ),
+    },
     auditLog: { create: vi.fn().mockResolvedValue({}) },
     $transaction: vi.fn((ops: unknown[]) => Promise.all(ops)),
   };
@@ -172,30 +184,56 @@ describe('ScholarService.update — chặn bỏ vai trò theo vị trí', () => 
  * Người ngoài hệ thống: người khai bỏ được. Tài khoản: chỉ chính người đó.
  */
 describe('ScholarService.update — người đứng cuối không tính tác giả chính', () => {
-  const rawBoCuoi = raw4.map((a, i) => (i === 3 ? { ...a, notLastAuthor: true } : a));
+  const LY_DO = 'Bài xếp tên theo thứ tự ABC, người cuối chỉ đo mẫu.';
+  const rawBoCuoi = raw4.map((a, i) => (i === 3 ? { ...a, notLastAuthor: true, notLastAuthorReason: LY_DO } : a));
 
   it('chính người đứng cuối tự bỏ, danh sách ghi rõ → cho lưu', async () => {
-    const { svc, prisma } = dung([THANH, AN]);
+    const { svc, prisma, bus } = dung([THANH, AN]);
     await svc.update(
       'an',
       'p1',
       than({ authorsRaw: rawBoCuoi, me: { authorIndex: 3, isFirst: false, isCorresponding: true, isLast: false } }),
     );
     expect(prisma.publication.update).toHaveBeenCalledTimes(1);
+    // Tự bỏ của chính mình: không ai cần báo.
+    expect(bus.emit).not.toHaveBeenCalledWith('publication.role-removed', expect.anything());
   });
 
-  it('đồng nghiệp bỏ hộ — dù danh sách có ghi — vẫn chặn như ca 4/10', async () => {
-    const { svc, prisma } = dung([THANH, AN]);
+  it('đồng nghiệp bỏ hộ, có ghi rõ + lý do → cho lưu, và người bị bỏ được báo tin kèm lý do', async () => {
+    const { svc, prisma, bus } = dung([THANH, AN]);
+    await svc.update(
+      'thanh',
+      'p1',
+      than({ authorsRaw: rawBoCuoi, memberUpdates: [{ userId: 'an', isFirst: false, isCorresponding: true, isLast: false }] }),
+    );
+    expect(prisma.publicationAuthor.update).toHaveBeenCalledWith({
+      where: { publicationId_userId: { publicationId: 'p1', userId: 'an' } },
+      data: { isFirst: false, isCorresponding: true, isLast: false },
+    });
+    expect(bus.emit).toHaveBeenCalledWith('publication.role-removed', {
+      id: 'p1',
+      userIds: ['an'],
+      emails: ['an@hcmus.edu.vn'],
+      key: 'isLast',
+      note: LY_DO,
+      by: 'Nguyễn Tiến Thành',
+    });
+  });
+
+  it('đồng nghiệp bỏ hộ mà không ghi lý do → chặn, không ghi, không báo', async () => {
+    const { svc, prisma, bus } = dung([THANH, AN]);
+    const khongLyDo = raw4.map((a, i) => (i === 3 ? { ...a, notLastAuthor: true } : a));
     const loi = await loiCua(
       svc.update(
         'thanh',
         'p1',
-        than({ authorsRaw: rawBoCuoi, memberUpdates: [{ userId: 'an', isFirst: false, isCorresponding: true, isLast: false }] }),
+        than({ authorsRaw: khongLyDo, memberUpdates: [{ userId: 'an', isFirst: false, isCorresponding: true, isLast: false }] }),
       ),
     );
-    expect(loi?.field).toBe('memberUpdates');
-    expect(loi?.error).toContain('chỉ chính người đó bỏ được');
+    expect(loi?.field).toBe('notLastAuthorReason');
     expect(prisma.publication.update).not.toHaveBeenCalled();
+    expect(prisma.publicationAuthor.update).not.toHaveBeenCalled();
+    expect(bus.emit).not.toHaveBeenCalled();
   });
 
   it('người ngoài hệ thống đứng cuối, bỏ đánh dấu → số tác giả chính ngoài giảm, không còn "chính thuộc Trường" theo vị trí', async () => {
@@ -203,7 +241,7 @@ describe('ScholarService.update — người đứng cuối không tính tác gi
       { name: 'Huong Tran Thi Mai', isNonSchool: true },
       raw4[1],
       raw4[2],
-      { name: 'Truong An Dang', isNonSchool: false, notLastAuthor: true },
+      { name: 'Truong An Dang', isNonSchool: false, notLastAuthor: true, notLastAuthorReason: LY_DO },
     ];
     const { svc, prisma } = dung([THANH], { authorsRaw: raw, externalMainAuthors: 2 });
     await svc.update(
@@ -218,6 +256,23 @@ describe('ScholarService.update — người đứng cuối không tính tác gi
     const data = prisma.publication.update.mock.calls[0][0].data;
     expect(data.externalMainAuthors).toBe(1);
     expect(data.mainAuthorAtSchool).toBe(false);
+  });
+
+  it('người ngoài hệ thống đứng cuối mới bị bỏ → ghi nhật ký, không có ai để báo', async () => {
+    const goc = [{ name: 'Huong Tran Thi Mai', isNonSchool: true }, raw4[1], raw4[2], { name: 'Truong An Dang', isNonSchool: false }];
+    const moi = goc.map((a, i) => (i === 3 ? { ...a, notLastAuthor: true, notLastAuthorReason: LY_DO } : a));
+    const { svc, prisma, bus } = dung([THANH], { authorsRaw: goc, externalMainAuthors: 2 });
+    await svc.update(
+      'thanh',
+      'p1',
+      than({
+        authorsRaw: moi,
+        mainAuthorAtSchool: false,
+        externalAuthors: [{ name: 'Huong Tran Thi Mai', isFirst: true }, { name: 'Minh Thien Bui' }, { name: 'Truong An Dang' }],
+      }),
+    );
+    expect(prisma.auditLog.create.mock.calls.map((c) => c[0].data.action)).toContain('publication.last-author');
+    expect(bus.emit).not.toHaveBeenCalledWith('publication.role-removed', expect.anything());
   });
 
   it('KHÔNG ghi rõ trên danh sách: bỏ "tác giả cuối" của người ngoài hệ thống vẫn chặn', async () => {
@@ -235,5 +290,89 @@ describe('ScholarService.update — người đứng cuối không tính tác gi
     );
     expect(loi?.error).toContain('«Truong An Dang» đứng đầu và cuối danh sách tác giả');
     expect(prisma.publication.update).not.toHaveBeenCalled();
+  });
+});
+
+/**
+ * Bỏ đánh dấu Last Author thì BẮT BUỘC một câu giải thích, lưu nguyên văn kèm người
+ * sửa vào AuditLog (Khoa yêu cầu 19/11/2026 — tránh tranh chấp về sau).
+ */
+describe('ScholarService.update — lý do bỏ đánh dấu Last Author', () => {
+  const LY_DO = 'Bài xếp tên theo thứ tự ABC, người cuối chỉ đo mẫu.';
+  const voiLyDo = (lyDo?: string) =>
+    raw4.map((a, i) => (i === 3 ? { ...a, notLastAuthor: true, notLastAuthorReason: lyDo } : a));
+  const anTuBo = (raw: unknown) =>
+    than({ authorsRaw: raw, me: { authorIndex: 3, isFirst: false, isCorresponding: true, isLast: false } });
+  const nhatKy = (prisma: { auditLog: { create: ReturnType<typeof vi.fn> } }) =>
+    prisma.auditLog.create.mock.calls
+      .map((c) => c[0].data)
+      .filter((d) => d.action === 'publication.last-author');
+
+  it('không ghi lý do → 422 ở ô notLastAuthorReason, KHÔNG ghi gì', async () => {
+    const { svc, prisma } = dung([THANH, AN]);
+    const loi = await loiCua(svc.update('an', 'p1', anTuBo(voiLyDo(undefined))));
+    expect(loi?.field).toBe('notLastAuthorReason');
+    expect(prisma.publication.update).not.toHaveBeenCalled();
+    expect(prisma.auditLog.create).not.toHaveBeenCalled();
+  });
+
+  it('lý do chỉ vài chữ / toàn khoảng trắng → cũng chặn', async () => {
+    for (const lyDo of ['ABC', '          ']) {
+      const { svc, prisma } = dung([THANH, AN]);
+      const loi = await loiCua(svc.update('an', 'p1', anTuBo(voiLyDo(lyDo))));
+      expect(loi?.field).toBe('notLastAuthorReason');
+      expect(prisma.publication.update).not.toHaveBeenCalled();
+    }
+  });
+
+  it('có lý do → lưu, và ghi nhật ký người bỏ + nguyên văn lý do', async () => {
+    const { svc, prisma } = dung([THANH, AN]);
+    await svc.update('an', 'p1', anTuBo(voiLyDo(`  ${LY_DO}  `)));
+    expect(prisma.publication.update).toHaveBeenCalledTimes(1);
+    expect(nhatKy(prisma)).toEqual([
+      {
+        userId: 'an',
+        action: 'publication.last-author',
+        entityType: 'Publication',
+        entityId: 'p1',
+        changes: {
+          viec: 'bo-danh-dau',
+          truoc: null,
+          sau: { hang: 4, ten: 'Truong An Dang', lyDo: LY_DO },
+        },
+      },
+    ]);
+  });
+
+  it('lưu lại y nguyên → không ghi nhật ký trùng; đổi lý do → ghi lý do cũ lẫn mới', async () => {
+    const cu = voiLyDo(LY_DO);
+    const giuNguyen = dung([THANH, AN], { authorsRaw: cu });
+    await giuNguyen.svc.update('an', 'p1', anTuBo(cu));
+    expect(nhatKy(giuNguyen.prisma)).toEqual([]);
+
+    const doi = dung([THANH, AN], { authorsRaw: cu });
+    await doi.svc.update('an', 'p1', anTuBo(voiLyDo('Người cuối chỉ hỗ trợ đo mẫu, không viết bài.')));
+    const [d] = nhatKy(doi.prisma);
+    expect(d.changes.viec).toBe('doi-ly-do');
+    expect(d.changes.truoc.lyDo).toBe(LY_DO);
+    expect(d.changes.sau.lyDo).toBe('Người cuối chỉ hỗ trợ đo mẫu, không viết bài.');
+  });
+
+  it('đánh dấu lại Last Author → ghi nhật ký kèm lý do đã bỏ trước đó', async () => {
+    const { svc, prisma } = dung([THANH, { ...AN, isLast: false }], { authorsRaw: voiLyDo(LY_DO) });
+    await svc.update('an', 'p1', than({ authorsRaw: raw4, me: { authorIndex: 3, isFirst: false, isCorresponding: true, isLast: true } }));
+    const [d] = nhatKy(prisma);
+    expect(d.changes).toEqual({
+      viec: 'danh-dau-lai',
+      truoc: { hang: 4, ten: 'Truong An Dang', lyDo: LY_DO },
+      sau: null,
+    });
+  });
+
+  it('không gửi danh sách tác giả (chỉ sửa vai trò) → không xét lý do, không ghi nhật ký', async () => {
+    const { svc, prisma } = dung([THANH, AN]);
+    await svc.update('thanh', 'p1', than());
+    expect(prisma.publication.update).toHaveBeenCalledTimes(1);
+    expect(nhatKy(prisma)).toEqual([]);
   });
 });
