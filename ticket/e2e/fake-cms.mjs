@@ -43,6 +43,17 @@ http
       if (url.pathname === "/auth/profile" && u.role === "LECTURER") return send(403, { message: "Insufficient permissions" });
       return send(200, u);
     }
+    if (url.pathname === "/admins/directory") {
+      // Như backend thật: chỉ tài khoản quản trị tra được danh bạ.
+      const u = USERS[(req.headers.authorization || "").replace("Bearer ", "")];
+      if (!u) return send(401, { message: "token" });
+      if (u.role === "LECTURER") return send(403, { message: "Insufficient permissions" });
+      const q = (url.searchParams.get("search") || "").toLowerCase();
+      const items = Object.values(USERS)
+        .filter((x) => `${x.lastName} ${x.firstName} ${x.email}`.toLowerCase().includes(q))
+        .map((x) => ({ id: x.id, email: x.email, name: `${x.lastName} ${x.firstName}`, role: x.role, department: x.department?.name ?? null }));
+      return send(200, { items });
+    }
     send(404, { message: "not found" });
   })
   .listen(3001, () => console.log("fake-cms :3001"));

@@ -41,7 +41,6 @@ export default async function Page() {
             biểu của nhóm và nhận cảnh báo quá hạn.{edit ? "" : " Chỉ quản trị hệ thống sửa được trang này."}
           </p>
         </div>
-        {edit ? <AddTeam /> : null}
       </section>
       <CurveDown />
 
@@ -81,6 +80,7 @@ export default async function Page() {
               </article>
             );
           })}
+          {edit ? <AddTeam /> : null}
         </div>
       </section>
       <CurveUp />

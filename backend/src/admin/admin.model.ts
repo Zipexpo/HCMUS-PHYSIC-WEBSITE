@@ -9,6 +9,24 @@ export const AdminListQuerySchema = z.object({
 
 export type AdminListQueryType = z.infer<typeof AdminListQuerySchema>;
 
+/** Tra cứu nhanh người trong Khoa (ô chọn người của Physupport). */
+export const DirectoryQuerySchema = z.object({
+  search: z.string().trim().min(2).max(120),
+});
+export type DirectoryQueryType = z.infer<typeof DirectoryQuerySchema>;
+
+export const DirectoryResSchema = z.object({
+  items: z.array(
+    z.object({
+      id: z.string(),
+      email: z.string(),
+      name: z.string(),
+      role: z.enum(['SUPER_ADMIN', 'ADMIN', 'LECTURER']),
+      department: z.string().nullable(),
+    }),
+  ),
+});
+
 export const AdminItemSchema = z.object({
   id: z.string(),
   email: z.string(),

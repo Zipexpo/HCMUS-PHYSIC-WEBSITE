@@ -32,16 +32,22 @@ export async function GET(req: Request): Promise<NextResponse> {
     const where: Prisma.TicketWhereInput = {};
     // Người gửi thường CHỈ thấy phiếu của chính mình. Phiếu có thể chứa thông
     // tin nội bộ, nên mặc định là đóng, mở rộng theo vai trò.
+    // Ghép các điều kiện bằng AND — KHÔNG gán thẳng where.OR: phạm vi quyền
+    // (queueScope) cũng là một OR, gán đè là người tìm kiếm thấy phiếu mọi nhóm.
     const scope = queueScope(user.access);
-    if (!user.isStaff || mine) where.reporterUserId = user.id;
-    else if (scope) Object.assign(where, scope);
-    if (status) where.status = status as TicketStatus;
+    const and: Prisma.TicketWhereInput[] = [];
+    if (!user.isStaff || mine) and.push({ reporterUserId: user.id });
+    else if (scope) and.push(scope);
+    if (status) and.push({ status: status as TicketStatus });
     if (q) {
-      where.OR = [
-        { code: { contains: q, mode: "insensitive" } },
-        { title: { contains: q, mode: "insensitive" } },
-      ];
+      and.push({
+        OR: [
+          { code: { contains: q, mode: "insensitive" } },
+          { title: { contains: q, mode: "insensitive" } },
+        ],
+      });
     }
+    if (and.length) where.AND = and;
 
     const items = await prisma.ticket.findMany({
       where,

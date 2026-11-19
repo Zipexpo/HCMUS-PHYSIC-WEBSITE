@@ -108,6 +108,10 @@ async function main() {
   }
   expectStatus("quản trị gán Ban Chủ nhiệm", (await sa.api("POST", "/nhom", { action: "addRole", email: E("truongkhoa"), role: "BOARD" })).status, 200);
   expectStatus("thêm người chưa từng đăng nhập mà thiếu họ tên", (await sa.api("POST", "/nhom", { action: "addMember", teamId: KTW, email: E("nguoila") })).status, 400);
+  const found = await sa.api("GET", `/nhom/tim?q=${encodeURIComponent("Trâm")}`);
+  check("quản trị tra danh bạ Khoa theo tên", found.status === 200 && found.json.items?.some((x) => x.email === E("taikhoan")), JSON.stringify(found.json));
+  check("tìm người không có trong danh bạ → không ra ai", (await sa.api("GET", "/nhom/tim?q=xyz-khong-co")).json.items?.length === 0);
+  expectStatus("người gửi tra danh bạ", (await gv.api("GET", "/nhom/tim?q=Tr")).status, 403);
   // Quyền đọc lại từ CSDL mỗi lần tải trang → không cần đăng nhập lại.
 
   step("1. Ai mở được trang nào");
@@ -174,6 +178,8 @@ async function main() {
   check("trả lời công khai → thư tới người gửi", has(r.mails, E("giangvien"), /trả lời/));
   r = await mailsDuring(() => web2.api("POST", `/tickets/${BUG}/comments`, { body: "BÍ-MẬT-NỘI-BỘ: lỗi 413 ở Caddy, nhờ @Lê Quang Huy xem", isInternal: true }));
   check("ghi chú nội bộ có @tên → thư tới đúng người được nhắc", has(r.mails, E("web1"), /nhắc/) && !has(r.mails, E("giangvien")), JSON.stringify(to(r.mails)));
+  r = await mailsDuring(() => web2.api("POST", `/tickets/${BUG}/comments`, { body: "LỘ? nhờ @TS. Trần Thu Hà xem", isInternal: true }));
+  check("@nhắc tên người NGOÀI nhóm trong ghi chú nội bộ → KHÔNG gửi thư (không lộ nội dung)", !r.mails.length, JSON.stringify(to(r.mails)));
   check("người gửi KHÔNG thấy ghi chú nội bộ", !(await gv.page(`/phieu/${BUG}`)).html.includes("BÍ-MẬT-NỘI-BỘ"));
   check("đầu mối (chỉ xem) KHÔNG thấy ghi chú nội bộ", !(await dm.page(`/phieu/${BUG}`)).html.includes("BÍ-MẬT-NỘI-BỘ"));
   check("trưởng nhóm thấy ghi chú nội bộ", (await web1.page(`/phieu/${BUG}`)).html.includes("BÍ-MẬT-NỘI-BỘ"));
@@ -195,6 +201,11 @@ async function main() {
   expectStatus("chấm điểm lần hai", (await gv.api("PATCH", `/tickets/${BUG}`, { rating: 1 })).status, 409);
   expectStatus("người khác chấm điểm hộ", (await web1.api("PATCH", `/tickets/${BUG}`, { rating: 1 })).status, 403);
   check("điểm được lưu đúng", sql(`select rating from "Ticket" where id='${BUG}'`) === "5");
+
+  const leak = await tk.api("GET", `/tickets?q=${encodeURIComponent("ảnh đại diện")}`);
+  check("API danh sách có từ khoá vẫn giữ phạm vi (nhóm khác không thấy phiếu)", leak.status === 200 && !leak.json.items?.some((x) => x.id === BUG), JSON.stringify(leak.json.items?.map((x) => x.code)));
+  const own = await web1.api("GET", `/tickets?q=${encodeURIComponent("ảnh đại diện")}`);
+  check("…còn nhóm phụ trách tìm thấy", own.json.items?.some((x) => x.id === BUG));
 
   step("3. Xin cấp quyền — đầu mối đơn vị DUYỆT");
   const xinQuyen = (who, title) =>

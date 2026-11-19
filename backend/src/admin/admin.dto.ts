@@ -2,6 +2,8 @@ import { createZodDto } from 'nestjs-zod';
 import {
   AdminListQuerySchema,
   AdminListResSchema,
+  DirectoryQuerySchema,
+  DirectoryResSchema,
   AdminItemSchema,
   AdminMessageResSchema,
   AddHeroBackgroundBodySchema,
@@ -13,6 +15,8 @@ import {
 } from './admin.model';
 
 export class AdminListQueryDTO extends createZodDto(AdminListQuerySchema) {}
+export class DirectoryQueryDTO extends createZodDto(DirectoryQuerySchema) {}
+export class DirectoryResDTO extends createZodDto(DirectoryResSchema) {}
 export class AdminListResDTO extends createZodDto(AdminListResSchema) {}
 export class AdminItemDTO extends createZodDto(AdminItemSchema) {}
 export class AdminMessageResDTO extends createZodDto(AdminMessageResSchema) {}

@@ -15,6 +15,8 @@ import {
   AdminListQueryDTO,
   AdminListResDTO,
   AdminItemDTO,
+  DirectoryQueryDTO,
+  DirectoryResDTO,
   AdminMessageResDTO,
   CreateStaffBodyDTO,
   HeroBackgroundListResDTO,
@@ -58,6 +60,21 @@ export class AdminController {
   @ZodSerializerDto(AdminMessageResDTO)
   removeHeroBackground(@Param('id') id: string) {
     return this.adminService.removeHeroBackground(id);
+  }
+
+  /**
+   * Tra cứu NHANH người trong Khoa — họ tên, email, đơn vị; tối đa 15 người.
+   *
+   * Mở cho mọi tài khoản quản trị (ADMIN), không riêng Super Admin: dùng cho ô
+   * chọn người ở Physupport (thêm thành viên nhóm hỗ trợ). Chỉ trả những gì
+   * vốn đã công khai trên trang nhân sự của web Khoa — KHÔNG có MSCB, lần đăng
+   * nhập, trạng thái khoá… như danh sách đầy đủ ở dưới.
+   */
+  @Get('directory')
+  @Roles(RoleName.Admin, RoleName.SuperAdmin)
+  @ZodSerializerDto(DirectoryResDTO)
+  directory(@Query() query: DirectoryQueryDTO) {
+    return this.adminService.directory(query.search);
   }
 
   @Get()
@@ -104,10 +121,7 @@ export class AdminController {
   /** Bật/tắt quyền xem thống kê NCKH (phys-profile) — không đổi vai trò. */
   @Patch(':id/stats-access')
   @ZodSerializerDto(AdminItemDTO)
-  setStatsAccess(
-    @Param('id') id: string,
-    @Body() body: SetStatsAccessBodyDTO,
-  ) {
+  setStatsAccess(@Param('id') id: string, @Body() body: SetStatsAccessBodyDTO) {
     return this.adminService.setStatsAccess(id, body.canViewStats);
   }
 

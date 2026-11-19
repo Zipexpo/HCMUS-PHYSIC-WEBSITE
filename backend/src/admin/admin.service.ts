@@ -48,6 +48,42 @@ export class AdminService {
     return this.listByKind('admin', query);
   }
 
+  /** Tra cứu nhanh: cả cán bộ lẫn quản trị, chỉ tài khoản đang hoạt động. */
+  async directory(search: string) {
+    // Lọc TRONG ỨNG DỤNG thay vì SQL: người dùng hay gõ không dấu ("nguyen",
+    // "vat ly tin hoc"), mà ILIKE của Postgres phân biệt dấu. Khoa chỉ vài trăm
+    // tài khoản nên nạp hết rồi so khớp đã bỏ dấu vẫn rất nhẹ.
+    const fold = (s: string) =>
+      s
+        .normalize('NFD')
+        .replace(/[̀-ͯ]/g, '')
+        .replace(/đ/g, 'd')
+        .replace(/Đ/g, 'd')
+        .toLowerCase();
+    const tokens = fold(search).split(/\s+/).filter(Boolean);
+    const [staff, admins] = await Promise.all([
+      this.adminRepository.listPaged('staff', 0, 2000),
+      this.adminRepository.listPaged('admin', 0, 500),
+    ]);
+    const items = [...admins, ...staff]
+      .filter((u) => u.isActive)
+      .filter((u) => {
+        const hay = fold(
+          `${u.lastName ?? ''} ${u.firstName ?? ''} ${u.email} ${u.teacherId ?? ''} ${u.department?.name ?? ''}`,
+        );
+        return tokens.every((t) => hay.includes(t));
+      })
+      .slice(0, 15)
+      .map((u) => ({
+        id: u.id,
+        email: u.email,
+        name: `${u.lastName ?? ''} ${u.firstName ?? ''}`.trim() || u.email,
+        role: u.role,
+        department: u.department?.name ?? null,
+      }));
+    return { items };
+  }
+
   /** Danh sách CÁN BỘ (giảng viên) — trang quản lý cán bộ, tách khỏi admin. */
   async listStaff(query: AdminListQueryType) {
     return this.listByKind('staff', query);

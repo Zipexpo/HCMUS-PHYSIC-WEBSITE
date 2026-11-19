@@ -120,13 +120,17 @@ export async function notifyAssignee(t: T, what: string): Promise<void> {
  * Khớp theo tên đầy đủ trong sổ người xử lý; không nhắc chính người viết.
  */
 export async function notifyMentions(
-  t: T,
+  t: T & { team: string | null },
   author: { id: string; name: string },
   body: string,
 ): Promise<void> {
-  const staff = await prisma.ticketStaff
-    .findMany({ select: { userId: true, name: true, email: true } })
-    .catch(() => []);
+  // CHỈ những người đọc được ghi chú nội bộ của phiếu này: thành viên nhóm phụ
+  // trách + quản trị hệ thống. Sổ người dùng có cả giảng viên — nhắc nhầm tên
+  // một giảng viên mà gửi thư là lộ nội dung nội bộ ra ngoài.
+  const allowed = new Set([...(await teamEmails(t.team)), ...(await sysAdminEmails())]);
+  const staff = (
+    await prisma.ticketStaff.findMany({ select: { userId: true, name: true, email: true } }).catch(() => [])
+  ).filter((s) => allowed.has(s.email.toLowerCase()));
   // Tên dài trước: "@Lê Quang Huy" không bị bắt nhầm thành "@Lê Quang".
   const hit = staff
     .filter((s) => s.userId !== author.id && body.includes(`@${s.name}`))

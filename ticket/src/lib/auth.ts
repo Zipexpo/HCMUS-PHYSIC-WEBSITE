@@ -210,3 +210,28 @@ export class UnauthorizedError extends Error {
     this.name = "UnauthorizedError";
   }
 }
+
+export type DirectoryPerson = { email: string; name: string; department: string | null };
+
+/**
+ * Tra người trong Khoa từ CMS (GET /admins/directory) bằng CHÍNH phiên của người
+ * đang dùng — hệ hỗ trợ không giữ khoá quản trị nào của CMS. Backend chưa có
+ * route này / người dùng không đủ quyền bên CMS → trả mảng rỗng, nơi gọi tự
+ * dùng nguồn dự phòng.
+ */
+export async function searchCmsDirectory(search: string): Promise<DirectoryPerson[]> {
+  const token = (await cookies()).get(COOKIE)?.value;
+  if (!token) return [];
+  try {
+    const res = await fetch(`${API}/admins/directory?search=${encodeURIComponent(search)}`, {
+      headers: { Authorization: `Bearer ${token}` },
+      cache: "no-store",
+      signal: AbortSignal.timeout(8_000),
+    });
+    if (!res.ok) return [];
+    const d = (await res.json()) as { items?: { email: string; name: string; department: string | null }[] };
+    return (d.items ?? []).map((x) => ({ email: x.email.toLowerCase(), name: x.name, department: x.department }));
+  } catch {
+    return [];
+  }
+}
