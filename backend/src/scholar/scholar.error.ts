@@ -122,6 +122,21 @@ export const LyDoBoTacGiaCuoiException = new UnprocessableEntityException([
   },
 ]);
 
+/** Cách 1 có tác giả thuộc Trường bị để 0% / trống — xem ty-le-cach-1.ts. */
+export const ThieuTyLeCach1Exception = (hang: number[]) => {
+  const co = hang.filter((h) => h > 0);
+  return new UnprocessableEntityException([
+    {
+      field: 'sharePercent',
+      error:
+        'Cách 1: mọi tác giả thuộc Trường phải có tỷ lệ lớn hơn 0%' +
+        (co.length ? ` — hàng ${co.join(', ')} đang để 0% hoặc trống` : '') +
+        '. Người để 0% sẽ bị tính Cách 2 trên một bài cả nhóm đã chọn Cách 1. ' +
+        'Nhập % cho từng người, hoặc chuyển cả bài về Cách 2.',
+    },
+  ]);
+};
+
 export const NoStaffPageException = new NotFoundException([
   {
     field: 'staffPageSlug',

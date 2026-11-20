@@ -55,8 +55,11 @@ import {
   PublicationNotFoundException,
   ShareSetByRepresentativeException,
   TooFewAuthorsException,
+  ThieuTyLeCach1Exception,
   TotalShareExceededException,
 } from './scholar.error';
+import { hangThieuTyLeCach1 } from './ty-le-cach-1';
+import type { DeNghiThayDoiType } from './de-nghi-sua.model';
 import type {
   ClaimResponseBodyType,
   CoAuthorRoleType,
@@ -535,6 +538,16 @@ export class ScholarService {
       dongTacGia: body.memberUpdates,
       ngoai: body.externalAuthors,
     });
+    // Cách 1: mọi tác giả thuộc Trường phải > 0% (Khoa chốt 20/11/2026, ty-le-cach-1.ts).
+    if (laTacGiaChinh(body.me)) {
+      const thieu = hangThieuTyLeCach1({
+        me: body.me,
+        dongTacGia: body.memberUpdates,
+        ngoai: body.externalAuthors,
+        raw: w.authors,
+      });
+      if (thieu.length) throw ThieuTyLeCach1Exception(thieu);
+    }
     if (!body.khongTrung) {
       const trung = await this.timTrung(w.title, doi, userId);
       if (trung.length) {
@@ -1011,6 +1024,18 @@ export class ScholarService {
       dongTacGia: body.memberUpdates,
       ngoai: body.externalAuthors,
     });
+    // Cách 1: mọi tác giả thuộc Trường phải > 0% (Khoa chốt 20/11/2026, ty-le-cach-1.ts).
+    // Chỉ đại diện mới khai % (kiemTyLe), nên chỉ kiểm lượt lưu của đại diện. Bài cũ
+    // có đồng nghiệp 0% KHÔNG bị hạ — chỉ bị chặn khi đại diện lưu lại.
+    if (daiDien) {
+      const thieu = hangThieuTyLeCach1({
+        me: body.me ?? undefined,
+        dongTacGia: body.memberUpdates,
+        ngoai: body.externalAuthors,
+        raw: body.authorsRaw ?? current.authorsRaw,
+      });
+      if (thieu.length) throw ThieuTyLeCach1Exception(thieu);
+    }
     // Danh sách tác giả nhất quán (T = số hàng, hàng không trùng, Last đứng cuối).
     await this.kiemSuaDanhSach(id, userId, body, current);
     if (body.authorsRaw !== undefined) kiemLyDoBoCuoi(body.authorsRaw);
@@ -1114,6 +1139,46 @@ export class ScholarService {
     });
     if (boLienHe.length) await this.baoBoVaiTroLienHe(id, boLienHe);
     return this.findOne(id, userId);
+  }
+
+  /**
+   * Áp một ĐỀ NGHỊ CHỈNH SỬA đã được chấp nhận (de-nghi-sua.service.ts, Khoa chốt
+   * 20/11/2026). Chỉ các trường THÔNG TIN BÀI (DeNghiThayDoiSchema) — không đụng tác
+   * giả, vai trò, tỷ lệ. Người áp có thể là quản trị Khoa (không phải tác giả), nên
+   * không đi qua update() (assertConfirmedAuthor); các con số suy ra (countYear, ai
+   * phân loại) vẫn tính y như update().
+   */
+  async apDeNghiSua(publicationId: string, actorId: string, doi: DeNghiThayDoiType) {
+    const current = await this.prisma.publication.findFirst({
+      where: { id: publicationId, deletedAt: null },
+      select: { publishedYear: true, acceptedYear: true, catalogCode: true },
+    });
+    if (!current) throw PublicationNotFoundException;
+    const publishedYear =
+      doi.publishedYear === undefined ? current.publishedYear : doi.publishedYear;
+    const acceptedYear =
+      doi.acceptedYear === undefined ? current.acceptedYear : doi.acceptedYear;
+    const classifying =
+      doi.catalogCode !== undefined && doi.catalogCode !== current.catalogCode;
+    await this.prisma.publication.update({
+      where: { id: publicationId },
+      data: {
+        ...doi,
+        title: doi.title ?? undefined,
+        countYear: resolveCountYear({ publishedYear, acceptedYear }),
+        classifiedBy: classifying ? actorId : undefined,
+        classifiedAt: classifying ? new Date() : undefined,
+      },
+    });
+    const tacGia = await this.prisma.publicationAuthor.findMany({
+      where: { publicationId, claimStatus: 'CONFIRMED' },
+      select: { userId: true },
+    });
+    await this.revalidateStaffPages(publicationId);
+    this.bus.emit('publication.changed', {
+      id: publicationId,
+      userIds: tacGia.map((a) => a.userId),
+    });
   }
 
   /**

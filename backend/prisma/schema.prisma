@@ -1068,6 +1068,7 @@ model Publication {
   deletedAt DateTime?
 
   authors PublicationAuthor[]
+  editRequests PublicationEditRequest[]
 
   @@index([countYear])
   @@index([catalogCode])
@@ -1079,6 +1080,43 @@ model Publication {
 /// Một giảng viên trong Khoa đứng tên trong một công trình.
 /// claimStatus là cơ chế xác nhận: người tự khai được CONFIRMED ngay, người bị
 /// đồng nghiệp gắn tên vào ở PENDING cho tới khi chính họ xác nhận.
+/// ĐỀ NGHỊ CHỈNH SỬA một công trình đã khai (Khoa chốt 20/11/2026). Ai có tài khoản
+/// cũng gửi được; NGƯỜI KHAI (Publication.createdBy) chấp nhận / từ chối; im lặng quá
+/// 7 ngày, hoặc bị từ chối mà bên đề nghị không đồng ý → quản trị Khoa quyết. Chấp
+/// nhận thì hệ thống tự áp `changes` (chỉ các trường thông tin bài, KHÔNG đụng tác
+/// giả / vai trò / tỷ lệ). Không xoá dòng nào — đây là hồ sơ để tránh tranh chấp.
+model PublicationEditRequest {
+  id            String    @id @default(cuid())
+  publicationId String
+  /// Người gửi đề nghị (User.id).
+  requesterId   String
+  /// Người khai lúc gửi; null = không còn người khai hợp lệ → thẳng tới Khoa.
+  ownerId       String?
+  /// Vì sao bài đang sai — bắt buộc, cũng là chỗ ghi điều không sửa tự động được
+  /// (vd danh sách tác giả).
+  reason        String
+  /// { trường: { tu, sang } } — giá trị lúc gửi và giá trị đề nghị.
+  changes       Json
+  /// PENDING · ESCALATED · ACCEPTED · REJECTED · WITHDRAWN
+  status        String    @default("PENDING")
+  /// Lời đáp của người quyết gần nhất (bắt buộc khi từ chối).
+  response      String?
+  decidedBy     String?
+  decidedAt     DateTime?
+  escalatedAt   DateTime?
+  /// Mọi bước: [{ at, by, viec, ghiChu }] — gửi, chuyển Khoa, chấp nhận, từ chối, rút.
+  history       Json      @default("[]")
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+
+  publication Publication @relation(fields: [publicationId], references: [id], onDelete: Cascade)
+
+  @@index([publicationId, status])
+  @@index([ownerId, status])
+  @@index([requesterId, createdAt])
+  @@index([status, createdAt])
+}
+
 model PublicationAuthor {
   id              String            @id @default(cuid())
   publicationId   String

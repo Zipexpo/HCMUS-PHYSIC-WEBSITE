@@ -27,7 +27,12 @@ import { createHmac } from 'node:crypto';
  */
 
 export type DomainEvent = {
-  /** publication.changed · project.changed · profile.changed · staff-page.changed */
+  /**
+   * publication.changed · project.changed · profile.changed · staff-page.changed ·
+   * publication.role-removed · publication.edit-requested (báo NGƯỜI KHAI có đề nghị
+   * chỉnh sửa, `key` = id đề nghị) · publication.edit-request-decided (báo NGƯỜI GỬI
+   * kết quả, `key` = ACCEPTED | REJECTED) — hai sự kiện cuối từ 20/11/2026.
+   */
   event: string;
   /** Id của bản ghi vừa đổi, nếu có. */
   id?: string | null;
@@ -47,7 +52,11 @@ export type DomainEvent = {
    * báo tin nói rõ vì sao, người bị bỏ khỏi phải đi hỏi.
    */
   note?: string | null;
-  /** Họ tên người vừa sửa — cùng sự kiện trên, để người bị bỏ biết hỏi lại ai. */
+  /**
+   * Họ tên người vừa sửa — cùng sự kiện trên, để người bị bỏ biết hỏi lại ai. Với
+   * edit-requested / edit-request-decided: người gửi / người quyết; `note` là lý do
+   * đề nghị / lời đáp của người quyết.
+   */
   by?: string | null;
   at: string;
 };
