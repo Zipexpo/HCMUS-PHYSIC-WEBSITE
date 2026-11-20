@@ -12,6 +12,8 @@ import { XepHangController } from './xep-hang.controller';
 import { XepHangService } from './xep-hang.service';
 import { DeNghiSuaController } from './de-nghi-sua.controller';
 import { DeNghiSuaService } from './de-nghi-sua.service';
+import { ThoaThuanController, ThoaThuanIntegrationController } from './thoa-thuan.controller';
+import { ThoaThuanService } from './thoa-thuan.service';
 
 @Module({
   controllers: [
@@ -20,6 +22,8 @@ import { DeNghiSuaService } from './de-nghi-sua.service';
     PhysoomIntegrationController,
     XepHangController,
     DeNghiSuaController,
+    ThoaThuanController,
+    ThoaThuanIntegrationController,
   ],
   providers: [
     ScholarService,
@@ -30,6 +34,7 @@ import { DeNghiSuaService } from './de-nghi-sua.service';
     ActivityService,
     XepHangService,
     DeNghiSuaService,
+    ThoaThuanService,
   ],
   // StaffPageService.ensureStaffPage() được AdminModule dùng để tự dựng trang
   // nhân sự khi tạo cán bộ / gán đơn vị.

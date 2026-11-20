@@ -778,6 +778,11 @@ export const IntegrationPublicationResSchema = z.object({
       mainAuthors: z.number().int(),
       isMainAuthor: z.boolean(),
       sharePercent: z.number().int().nullable(),
+      /**
+       * Đơn thoả thuận Cách 1 mới nhất (20/11/2026). Có đơn mà status khác DA_DUYET
+       * thì sharePercent ở trên là null — đang tính Cách 2 tới khi Khoa duyệt.
+       */
+      thoaThuan: z.object({ id: z.string(), status: z.string() }).nullable().optional(),
 
       /** Vị trí của chính người được hỏi — để đối soát, không dùng để tính. */
       authorIndex: z.number().int(),

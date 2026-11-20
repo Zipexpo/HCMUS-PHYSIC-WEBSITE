@@ -1069,6 +1069,7 @@ model Publication {
 
   authors PublicationAuthor[]
   editRequests PublicationEditRequest[]
+  shareAgreements ShareAgreement[]
 
   @@index([countYear])
   @@index([catalogCode])
@@ -1115,6 +1116,49 @@ model PublicationEditRequest {
   @@index([ownerId, status])
   @@index([requesterId, createdAt])
   @@index([status, createdAt])
+}
+
+/// ĐƠN THOẢ THUẬN CÁCH 1 (Phụ lục 2 tr. 2.5) — Khoa chốt 20/11/2026. Mỗi lần đại diện
+/// KHAI MỚI hoặc ĐỔI tỷ lệ chia thì có một đơn mới (đơn cũ hết hiệu lực). Tác giả
+/// thuộc Trường có tài khoản ký qua phys-profile; người không có tài khoản ký tay,
+/// đại diện tải bản quét lên. Khoa duyệt ở ACADsoom; CHƯA DUYỆT thì kênh tích hợp
+/// không gửi tỷ lệ → ACADsoom tính Cách 2. Bài chưa từng có đơn nào (tỷ lệ khai
+/// trước 20/11/2026) giữ nguyên Cách 1 như cũ.
+model ShareAgreement {
+  id            String    @id @default(cuid())
+  publicationId String
+  /// Ảnh chụp phương án lúc lập đơn: [{ hang, ten, userId, email, sharePercent, thuocTruong }].
+  shares        Json
+  /// Dấu vân tay phương án (ai → bao nhiêu %) — lưu lại giống hệt thì không lập đơn mới.
+  fingerprint   String
+  /// Tài khoản PHẢI ký qua hệ thống (thuộc Trường, có %), để tra "đơn chờ tôi ký".
+  signerIds     String[]
+  /// Người lập đơn = người vừa lưu tỷ lệ (đại diện nhóm).
+  createdBy     String
+  /// CHO_KY · CHO_DUYET · DA_DUYET · KHOA_TU_CHOI · BI_TU_CHOI_KY · HET_HIEU_LUC
+  status        String    @default("CHO_KY")
+  /// [{ userId, ten, at }] — ký qua hệ thống, giờ máy chủ.
+  signatures    Json      @default("[]")
+  /// [{ userId, ten, at, lyDo }] — tác giả không đồng ý phương án.
+  declines      Json      @default("[]")
+  /// Bản quét đơn có chữ ký tay (uploads/share-agreement).
+  scanStoredName String?
+  scanName      String?
+  scanMime      String?
+  scanAt        DateTime?
+  submittedAt   DateTime?
+  /// Quyết định của Khoa (từ ACADsoom).
+  decidedAt     DateTime?
+  decidedBy     String?
+  decisionNote  String?
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+
+  publication Publication @relation(fields: [publicationId], references: [id], onDelete: Cascade)
+
+  @@index([publicationId, createdAt])
+  @@index([status])
+  @@index([createdBy])
 }
 
 model PublicationAuthor {

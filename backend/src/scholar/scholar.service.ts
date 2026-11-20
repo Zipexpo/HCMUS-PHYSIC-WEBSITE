@@ -60,6 +60,8 @@ import {
 } from './scholar.error';
 import { hangThieuTyLeCach1 } from './ty-le-cach-1';
 import type { DeNghiThayDoiType } from './de-nghi-sua.model';
+import { ThoaThuanService } from './thoa-thuan.service';
+import { apDungCach1 } from './thoa-thuan';
 import type {
   ClaimResponseBodyType,
   CoAuthorRoleType,
@@ -157,6 +159,9 @@ export class ScholarService {
     private readonly publicRevalidate: PublicRevalidateService,
     private readonly bus: EventBusService,
     private readonly staffPage: StaffPageService,
+    // Đơn thoả thuận Cách 1 (20/11/2026). Tuỳ chọn để các spec dựng tay
+    // ScholarService với 5 tham số vẫn chạy — thiếu thì không lập đơn.
+    private readonly thoaThuan?: ThoaThuanService,
   ) {}
 
   // ── Lý lịch khoa học ──────────────────────────────────────────────────────
@@ -508,6 +513,7 @@ export class ScholarService {
       });
       if (existing) {
         await this.kiemHangCuaToi(existing.id, userId, body.me);
+        const truocTT = await this.thoaThuan?.chupTruoc(existing.id);
         await this.attachSelf(existing.id, userId, body);
         // Bài đã có nhưng CHƯA phân loại (ví dụ do nhập hàng loạt từ trang nhân
         // sự) mà người khai có chọn mã — áp vào luôn, đừng bắt họ vào màn khác
@@ -524,6 +530,10 @@ export class ScholarService {
           });
         }
         await this.recount(existing.id);
+        await this.thoaThuan?.capNhatSauKhiLuu(existing.id, userId, {
+          truoc: truocTT ?? null,
+          ngoai: undefined,
+        });
         return this.findOne(existing.id, userId);
       }
     }
@@ -639,6 +649,11 @@ export class ScholarService {
         );
         await this.recount(dead.id);
         await this.ghiNhatKyTacGiaCuoi(userId, dead.id, null, w.authors);
+        await this.thoaThuan?.capNhatSauKhiLuu(dead.id, userId, {
+          truoc: null,
+          ngoai: body.externalAuthors,
+          baiMoi: true,
+        });
         this.bus.emit('publication.changed', {
           id: dead.id,
           userIds: [userId, ...(body.coAuthorUserIds ?? [])],
@@ -678,6 +693,12 @@ export class ScholarService {
     );
     await this.recount(created.id);
     await this.ghiNhatKyTacGiaCuoi(userId, created.id, null, w.authors);
+    // Cách 1 khai mới → lập đơn thoả thuận chờ ký (chưa duyệt thì ACADsoom tính Cách 2).
+    await this.thoaThuan?.capNhatSauKhiLuu(created.id, userId, {
+      truoc: null,
+      ngoai: body.externalAuthors,
+      baiMoi: true,
+    });
     this.bus.emit('publication.changed', {
       id: created.id,
       userIds: [userId, ...(body.coAuthorUserIds ?? [])],
@@ -1047,6 +1068,9 @@ export class ScholarService {
       current,
     );
 
+    // Tỷ lệ Cách 1 TRƯỚC lượt lưu — đổi thì lập đơn thoả thuận mới (20/11/2026).
+    const truocTT = await this.thoaThuan?.chupTruoc(id);
+
     const publishedYear =
       body.publishedYear === undefined
         ? current.publishedYear
@@ -1131,6 +1155,10 @@ export class ScholarService {
     if (body.authorsRaw !== undefined) {
       await this.ghiNhatKyTacGiaCuoi(userId, id, current.authorsRaw, body.authorsRaw);
     }
+    await this.thoaThuan?.capNhatSauKhiLuu(id, userId, {
+      truoc: truocTT ?? null,
+      ngoai: body.externalAuthors,
+    });
 
     await this.revalidateStaffPages(id);
     this.bus.emit('publication.changed', {
@@ -2180,6 +2208,7 @@ export class ScholarService {
       });
     }
     if (body.accept) await this.kiemHangCuaToi(publicationId, userId, a);
+    const truocTT = body.accept ? await this.thoaThuan?.chupTruoc(publicationId) : undefined;
 
     await this.prisma.publicationAuthor.update({
       where: { publicationId_userId: { publicationId, userId } },
@@ -2199,6 +2228,14 @@ export class ScholarService {
       },
     });
     await this.recount(publicationId);
+    // Xác nhận kèm đặt tỷ lệ của mình (tác giả chính) có thể đổi phương án Cách 1.
+    // "Không phải tôi" thì KHÔNG lập đơn — người rút tên không phải người đề xuất chia.
+    if (body.accept) {
+      await this.thoaThuan?.capNhatSauKhiLuu(publicationId, userId, {
+        truoc: truocTT ?? null,
+        ngoai: undefined,
+      });
+    }
     await this.revalidateStaffPages(publicationId);
     this.bus.emit('publication.changed', {
       id: publicationId,
@@ -2727,6 +2764,14 @@ export class ScholarService {
       orderBy: { publication: { countYear: 'desc' } },
     });
 
+    // Đơn thoả thuận Cách 1 mới nhất của từng bài (20/11/2026). Bài có đơn mà đơn
+    // CHƯA được Khoa duyệt thì KHÔNG gửi tỷ lệ → ACADsoom tính Cách 2. Bài chưa từng
+    // có đơn (tỷ lệ khai trước 20/11/2026) gửi như cũ — Khoa chốt giữ nguyên.
+    const donTheoBai =
+      (await this.thoaThuan?.donMoiNhatTheoBai([
+        ...new Set(rows.map((r) => r.publicationId)),
+      ])) ?? new Map<string, { id: string; status: string }>();
+
     const mapped = rows.map((r) => {
       const p = r.publication;
       // Người ĐƯỢC HỎI có ghi địa chỉ Trường trên CHÍNH bài này không — câu hỏi
@@ -2811,7 +2856,10 @@ export class ScholarService {
           // NGOÀI Trường, lưu lúc khai). Đây mới là mẫu số thật của phần 1/3 (mục 1).
           mainAuthors: chinh.length + (p.externalMainAuthors ?? 0),
           isMainAuthor: r.isFirst || r.isCorresponding || r.isLast,
-          sharePercent: r.sharePercent,
+          sharePercent: apDungCach1(donTheoBai.get(p.id)) ? r.sharePercent : null,
+          // Trạng thái đơn thoả thuận Cách 1 — để ACADsoom nói "đang tính Cách 2 vì
+          // đơn chưa duyệt" và dẫn người duyệt tới đơn. null = không có đơn.
+          thoaThuan: donTheoBai.get(p.id) ?? null,
 
           // Vị trí của CHÍNH người được hỏi. Không ảnh hưởng công thức — Phụ lục
           // 2 chỉ phân biệt tác giả chính với đồng tác giả — nhưng khi số giờ ra
