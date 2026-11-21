@@ -538,6 +538,15 @@ export type CreatePublicationBodyType = z.infer<
 >;
 
 export const UpdatePublicationBodySchema = z.object({
+  /**
+   * Loại ấn phẩm (journal-article, proceedings-article, book, book-chapter, patent,
+   * posted-content…). Trước 21/11/2026 schema KHÔNG có trường này: form "Sửa thông
+   * tin" vẫn gửi nhưng Zod lặng lẽ bỏ — đổi loại xong mở lại vẫn như cũ. Nhận chuỗi
+   * bất kỳ (không ép danh sách) vì form gửi lại NGUYÊN loại đang lưu, kể cả loại do
+   * Crossref/DataCite đặt khi nạp bài (vd "text" của DOI arXiv) — ép danh sách thì
+   * mọi lần lưu bài loại lạ sẽ hỏng.
+   */
+  type: z.string().trim().min(1).max(50).optional(),
   title: z.string().min(1).max(1000).optional(),
   containerTitle: OptionalText(500),
   volume: OptionalText(50),
@@ -545,7 +554,10 @@ export const UpdatePublicationBodySchema = z.object({
   pages: OptionalText(50),
   publisher: OptionalText(300),
   url: z.string().max(1000).nullish(),
+  /** `null` = xoá (vd ISBN lỡ nhập vào ô ISSN). Bỏ trống = giữ nguyên. */
   issn: OptionalText(20),
+  /** Như `type`: form sách / chương sách / kỷ yếu gửi từ lâu nhưng trước đây bị bỏ. */
+  isbn: OptionalText(50),
   status: z.enum(PUBLICATION_STATUSES).optional(),
   publishedYear: YearNum.nullish(),
   publishedMonth: MonthNum.nullish(),

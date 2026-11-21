@@ -129,6 +129,7 @@ export class XepHangService {
               issns: x.issns,
               sjr: x.sjr,
               bestQuartile: x.bestQuartile,
+              hIndex: x.hIndex,
               code: x.code,
               categories: x.categories as unknown as Prisma.InputJsonValue,
             })),

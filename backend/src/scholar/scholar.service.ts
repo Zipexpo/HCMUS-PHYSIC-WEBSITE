@@ -1088,6 +1088,7 @@ export class ScholarService {
     await this.prisma.publication.update({
       where: { id },
       data: {
+        type: body.type ?? undefined,
         title: body.title ?? undefined,
         containerTitle: body.containerTitle ?? undefined,
         volume: body.volume ?? undefined,
@@ -1095,7 +1096,11 @@ export class ScholarService {
         pages: body.pages ?? undefined,
         publisher: body.publisher ?? undefined,
         url: body.url ?? undefined,
-        issn: body.issn ?? undefined,
+        // ISSN / ISBN: gửi `null` (ô để trống) thì XOÁ — form luôn gửi lại giá trị
+        // đang lưu nên chỉ trống khi người dùng chủ ý xoá. Trước đây `?? undefined`
+        // khiến ISBN lỡ nhập vào ô ISSN không gỡ ra được.
+        issn: body.issn === undefined ? undefined : body.issn?.trim() || null,
+        isbn: body.isbn === undefined ? undefined : body.isbn?.trim() || null,
         // Ghi lại authorsRaw KHI giao diện gửi lên — chỉ dùng để lưu `studentType`
         // (diện học viên) cho từng tác giả. GHI NHẬN thuần tuý, không đụng tới bất
         // kỳ con số quy đổi giờ/điểm nào. Bỏ trống thì giữ nguyên danh sách cũ.

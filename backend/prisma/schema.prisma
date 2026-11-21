@@ -1436,6 +1436,10 @@ model JournalRanking {
   issns        String[]
   sjr          Float?
   bestQuartile String?
+  /// H-index của tạp chí (cột "H index" của SCImago) — HĐGS ngành Vật lý chia Q1
+  /// thành hai bậc theo H-index > 50 (bộ tính điểm hdgs/, 20/11/2026). null = bảng
+  /// nạp trước khi có cột này: nạp lại tệp CSV năm đó là có.
+  hIndex       Int?
   /// Mã Phụ lục 2 theo RIÊNG bảng năm này (1.1a…1.1e; 2.1e cho kỷ yếu).
   code         String?
   /// [{ name, quartile, rank, total }] — hạng trong từng ngành.
@@ -1460,4 +1464,35 @@ model ConferenceRanking {
 
   @@unique([source, title])
   @@index([acronym])
+}
+
+/// Bộ tính điểm HĐGS ngành Vật lý (QĐ 26/QĐ-HĐGSNN 2025, xem src/hdgs/) — phần CÁN
+/// BỘ TỰ NHẬP cho từng công trình của mình, những gì hệ thống không tự biết: IF (Web
+/// of Science), trích dẫn Google Scholar không tính tự trích, online hay không, % đóng
+/// góp ghi trong bài, hạng mục chọn lại. Điểm KHÔNG lưu — tính lại mỗi lần xem.
+model HdgsInput {
+  id            String   @id @default(cuid())
+  userId        String
+  publicationId String
+  /// Khoá trong HANG_MUC (hdgs-vat-ly.ts); null = theo gợi ý tự động.
+  hangMuc       String?
+  impactFactor  Float?
+  /// Trích dẫn Google Scholar của BÀI, không tính tự trích dẫn.
+  trichDan      Int?
+  /// Q (Q1–Q4) và H-index tạp chí nhập tay khi bảng SCImago đúng năm chưa có.
+  quartile      String?
+  hIndex        Int?
+  online        Boolean?
+  /// % đóng góp của người này ghi rõ trong bài (QĐ 37/2018 Điều 8) — chia phần 2/3.
+  dongGop       Float?
+  /// Ghi đè "tác giả chính" (vd tác giả được ghi rõ tỉ lệ đóng góp trong bài).
+  laTacGiaChinh Boolean?
+  /// Sách tại NXB uy tín thế giới: +25% (QĐ 25/2020 III.5).
+  nxbUyTin      Boolean?
+  ghiChu        String?
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  @@unique([userId, publicationId])
+  @@index([publicationId])
 }

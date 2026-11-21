@@ -79,6 +79,8 @@ export type TapChiNam = {
   issns: string[];
   sjr: number | null;
   bestQuartile: string | null;
+  /** Cột "H index" — null nếu tệp không có cột này. */
+  hIndex: number | null;
   categories: NganhHang[];
   /** Mã Phụ lục 2 theo RIÊNG bảng năm này. */
   code: string | null;
@@ -126,6 +128,7 @@ export function docBangSjr(text: string): { nam: number | null; ds: TapChiNam[] 
     issn: h.indexOf('Issn'),
     sjr: h.indexOf('SJR'),
     bq: h.indexOf('SJR Best Quartile'),
+    hi: h.indexOf('H index'),
     cats: h.lastIndexOf('Categories'),
   };
   if (I.sid < 0 || I.sjr < 0 || I.cats < 0) {
@@ -148,6 +151,7 @@ export function docBangSjr(text: string): { nam: number | null; ds: TapChiNam[] 
       issns: chuanHoaIssn(r[I.issn]),
       sjr: Number.isFinite(sjr) ? sjr : null,
       bestQuartile: (r[I.bq] ?? '').trim() || null,
+      hIndex: I.hi < 0 ? null : Number.parseInt((r[I.hi] ?? '').trim(), 10) || null,
       cats: (r[I.cats] ?? '')
         .split(';')
         .map((s) => s.trim())

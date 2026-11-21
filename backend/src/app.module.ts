@@ -19,6 +19,7 @@ import { NotificationModule } from './notification/notification.module';
 import { ChatbotModule } from './chatbot/chatbot.module';
 import { StaticPageModule } from './static-page/static-page.module';
 import { ScholarModule } from './scholar/scholar.module';
+import { HdgsModule } from './hdgs/hdgs.module';
 import { AppController } from './app.controller';
 import { AppService } from './app.service';
 import { CacheModule } from '@nestjs/cache-manager';
@@ -60,6 +61,7 @@ import envConfig from './shared/config/config';
     ChatbotModule,
     StaticPageModule,
     ScholarModule,
+    HdgsModule,
   ],
   controllers: [AppController],
   providers: [AppService],
