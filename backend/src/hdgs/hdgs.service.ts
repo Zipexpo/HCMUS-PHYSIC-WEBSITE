@@ -34,7 +34,14 @@ type Dong = {
   };
 };
 
-type BangSjr = { year: number; issns: string[]; bestQuartile: string | null; hIndex: number | null; type: string };
+type BangSjr = {
+  year: number;
+  issns: string[];
+  bestQuartile: string | null;
+  hIndex: number | null;
+  type: string;
+  createdAt: Date;
+};
 
 const CHON_DONG = {
   userId: true,
@@ -217,7 +224,7 @@ export class HdgsService {
     if (!issn.length) return [];
     return this.prisma.journalRanking.findMany({
       where: { issns: { hasSome: issn } },
-      select: { year: true, issns: true, bestQuartile: true, hIndex: true, type: true },
+      select: { year: true, issns: true, bestQuartile: true, hIndex: true, type: true, createdAt: true },
     });
   }
 
@@ -236,10 +243,19 @@ export class HdgsService {
     if (cua.length) {
       const muc = (nam ?? new Date().getFullYear()) - 1;
       const dung = cua.find((b) => b.year === muc);
-      if (dung) sjr = { nam: dung.year, quartile: dung.bestQuartile, hIndex: dung.hIndex, type: dung.type, lech: false };
+      const thanh = (b: BangSjr, lech: boolean) => ({
+        nam: b.year,
+        quartile: b.bestQuartile,
+        hIndex: b.hIndex,
+        type: b.type,
+        lech,
+        napLuc: b.createdAt,
+        can: muc,
+      });
+      if (dung) sjr = thanh(dung, false);
       else if (!namCo.includes(muc)) {
         const gan = [...cua].sort((a, b) => Math.abs(a.year - muc) - Math.abs(b.year - muc))[0];
-        sjr = { nam: gan.year, quartile: gan.bestQuartile, hIndex: gan.hIndex, type: gan.type, lech: true };
+        sjr = thanh(gan, true);
       }
     }
     const raw = Array.isArray(p.authorsRaw) ? (p.authorsRaw as { isCorresponding?: boolean | null }[]) : [];

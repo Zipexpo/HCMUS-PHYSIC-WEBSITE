@@ -38,8 +38,20 @@ export type CongTrinhVao = {
   toiLaLienHe: boolean;
   /** Hàng của MỌI tác giả liên hệ trên bài (có tài khoản lẫn không). */
   lienHe: number[];
-  /** Bảng SCImago dùng cho bài này (bảng hiện hành lúc xuất bản), nếu tìm thấy. */
-  sjr: { nam: number; quartile: string | null; hIndex: number | null; type: string; lech: boolean } | null;
+  /**
+   * Bảng SCImago dùng cho bài này (bảng hiện hành lúc xuất bản), nếu tìm thấy.
+   * `napLuc` = lúc nạp bảng đó (lần cập nhật cuối); `can` = năm bảng LẼ RA phải dùng
+   * (năm xuất bản − 1) — khác `nam` khi `lech`.
+   */
+  sjr: {
+    nam: number;
+    quartile: string | null;
+    hIndex: number | null;
+    type: string;
+    lech: boolean;
+    napLuc?: Date | string | null;
+    can?: number;
+  } | null;
 };
 
 /** Phần cán bộ tự nhập (bảng HdgsInput). Bỏ trống = theo hệ thống. */
@@ -99,6 +111,20 @@ const TRAN_CO_DINH: Partial<Record<HangMuc, number>> = {
 };
 const SACH_CONG_25: HangMuc[] = ['sach-chuyen-khao', 'giao-trinh', 'sach-tham-khao', 'sach-huong-dan'];
 
+/**
+ * " · nạp 21/11/2026" (giờ Việt Nam) — lần cập nhật cuối của bảng SCImago đã dùng.
+ * Bảng lưu theo tạp chí × năm: nạp một lần là mọi bài dùng chung, muốn cập nhật thì
+ * quản trị nạp lại bảng năm đó ở /xep-hang.
+ */
+function ngayNap(luc: Date | string | null | undefined): string {
+  if (!luc) return '';
+  const t = new Date(luc).getTime();
+  if (Number.isNaN(t)) return '';
+  const d = new Date(t + 7 * 3_600_000);
+  const p = (n: number) => String(n).padStart(2, '0');
+  return ` · nạp ${p(d.getUTCDate())}/${p(d.getUTCMonth() + 1)}/${d.getUTCFullYear()}`;
+}
+
 function doanHangMuc(ct: CongTrinhVao, keTen: TapChiTrongNuoc | null): { h: HangMuc; doan: boolean } {
   if (keTen) return { h: 'trongnuoc-kten', doan: false };
   const tuMa = hangMucTuMa(ct.catalogCode);
@@ -130,7 +156,10 @@ export function tinhCongTrinh(ct: CongTrinhVao, nhap: NhapTay = {}): KetQuaCongT
   let nguonQ: string | null = null;
   if (qNhap) nguonQ = 'nhập tay';
   else if (ct.sjr?.quartile) {
-    nguonQ = `SCImago ${ct.sjr.nam}` + (ct.sjr.lech ? ' (bảng gần nhất đã nạp — kiểm lại nếu năm xuất bản khác hạng)' : '');
+    const luc = ngayNap(ct.sjr.napLuc);
+    nguonQ = ct.sjr.lech
+      ? `SCImago ${ct.sjr.nam}${luc} — chưa nạp bảng ${ct.sjr.can ?? '(năm xuất bản − 1)'}, đang tạm lấy bảng gần nhất; kiểm lại nếu hạng đã đổi`
+      : `SCImago ${ct.sjr.nam}${luc}`;
   } else if (qTuMa(ct.catalogCode)) nguonQ = `theo mã ${ct.catalogCode} đã khai`;
   const hIndex = nhap.hIndex ?? ct.sjr?.hIndex ?? null;
   const muc1 = () => tranMuc1({ quartile, hIndex, impactFactor: nhap.impactFactor, trichDan: nhap.trichDan });

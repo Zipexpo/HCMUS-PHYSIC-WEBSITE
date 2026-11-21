@@ -81,8 +81,20 @@ describe('HdgsService — dữ kiện + bảng SCImago hiện hành lúc xuất 
       dong: [{ userId: 'u1', authorIndex: 1, isFirst: false, isCorresponding: false, publication: bai('p1', { publishedYear: 2019 }) }],
     });
     const r = (await svc.cuaToi('u1', {})).rows[0];
-    expect(r.nguonQ).toMatch(/SCImago 2023 \(bảng gần nhất/);
+    expect(r.nguonQ).toMatch(/^SCImago 2023 — chưa nạp bảng 2018, đang tạm lấy bảng gần nhất/);
     expect(r.laTacGiaChinh).toBe(false);
+  });
+
+  it('ghi lúc nạp bảng SCImago đã dùng (lần cập nhật cuối)', async () => {
+    const { svc } = dung({
+      namCo: [2023],
+      bang: [
+        { year: 2023, issns: ['12345678'], bestQuartile: 'Q2', hIndex: 30, type: 'journal', createdAt: new Date('2026-11-20T15:59:00Z') },
+      ],
+      dong: [{ userId: 'u1', authorIndex: 0, isFirst: true, isCorresponding: false, publication: bai('p1', { publishedYear: 2024 }) }],
+    });
+    const r = (await svc.cuaToi('u1', {})).rows[0];
+    expect(r.nguonQ).toBe('SCImago 2023 · nạp 20/11/2026');
   });
 
   it('phần tự nhập đè lên hệ thống (IF 4,5 → 3,0) và trả lại cho form', async () => {

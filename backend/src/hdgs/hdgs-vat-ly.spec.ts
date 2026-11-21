@@ -153,3 +153,21 @@ describe('Cộng theo chuẩn PGS / GS (QĐ 37/2018 Điều 5–6)', () => {
     expect(t.dat.PGS.find((m) => m.muc.startsWith('Điểm từ bài báo'))?.co).toBe(4);
   });
 });
+
+describe('Nguồn hạng Q ghi bảng SCImago đã dùng + lúc nạp (lần cập nhật cuối)', () => {
+  const sjr = { nam: 2023, quartile: 'Q2', hIndex: 60, type: 'journal', lech: false, napLuc: new Date('2026-11-20T15:59:00Z'), can: 2023 };
+  it('bảng đúng năm: ghi năm bảng và ngày nạp theo giờ Việt Nam', () => {
+    expect(tinhCongTrinh(ct({ nam: 2024, sjr })).nguonQ).toBe('SCImago 2023 · nạp 20/11/2026');
+    // 17:30Z ngày 20 = 00:30 ngày 21 giờ Việt Nam.
+    const muon = { ...sjr, napLuc: '2026-11-20T17:30:00.000Z' };
+    expect(tinhCongTrinh(ct({ nam: 2024, sjr: muon })).nguonQ).toBe('SCImago 2023 · nạp 21/11/2026');
+  });
+  it('chưa nạp bảng năm xuất bản − 1: nói rõ năm thiếu và đang tạm lấy bảng nào', () => {
+    const q = tinhCongTrinh(ct({ nam: 2019, sjr: { ...sjr, lech: true, can: 2018 } })).nguonQ;
+    expect(q).toContain('SCImago 2023 · nạp 20/11/2026');
+    expect(q).toContain('chưa nạp bảng 2018');
+  });
+  it('dữ liệu cũ không có lúc nạp: chỉ ghi năm bảng', () => {
+    expect(tinhCongTrinh(ct({ nam: 2024, sjr: { ...sjr, napLuc: undefined } })).nguonQ).toBe('SCImago 2023');
+  });
+});
