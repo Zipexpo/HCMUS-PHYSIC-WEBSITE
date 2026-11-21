@@ -145,6 +145,10 @@ export default async function Page() {
               ))}
             </tbody>
           </table>
+          <p className="muted text-xs">
+            Thời gian phiếu nằm ở “Chờ bổ sung” không tính vào hạn. Phiếu đã xong mà bị mở lại thì hạn xử lý tính lại từ
+            lúc mở lại. Ngày lễ chưa được trừ.
+          </p>
         </section>
       </div>
     </>

@@ -108,8 +108,19 @@ export async function POST(req: Request): Promise<NextResponse> {
     const rule = ApprovalRule.safeParse(form.approval);
     const needsApproval =
       rule.success && rule.data.values.includes(String(body.answers[rule.data.field] ?? ""));
-    // Đầu mối đơn vị tự xin cho đơn vị mình → chính họ là người duyệt, coi như đã duyệt.
-    const selfApproved = needsApproval && !!user.unitId && user.access.liaisonUnitId === user.unitId;
+    // Đầu mối đơn vị xin cho NGƯỜI KHÁC trong đơn vị mình → chính họ là người
+    // duyệt, coi như đã duyệt. Xin cho CHÍNH MÌNH (không ghi email ai khác) thì
+    // không tự duyệt được: chuyển quản trị hệ thống duyệt.
+    const myEmail = user.email.toLowerCase();
+    const forOthers = Object.values(body.answers).some((v) =>
+      String(v ?? "")
+        .toLowerCase()
+        .match(/[^\s,;<>()]+@[^\s,;<>()]+\.[a-z]{2,}/g)
+        ?.some((e) => e !== myEmail),
+    );
+    const isLiaison = !!user.unitId && user.access.liaisonUnitId === user.unitId;
+    const selfApproved = needsApproval && isLiaison && forOthers;
+    const selfRequest = needsApproval && isLiaison && !forOthers;
     const approval = !needsApproval
       ? {}
       : selfApproved
@@ -121,7 +132,10 @@ export async function POST(req: Request): Promise<NextResponse> {
             approvedAt: new Date(),
             approvalNote: "Đầu mối đơn vị tự gửi",
           }
-        : { approvalStatus: "PENDING", approvalUnitId: user.unitId, approvalUnitName: user.unit };
+        : selfRequest
+          ? // approvalUnitId trống = quản trị hệ thống duyệt (lib/access.ts canApprove).
+            { approvalStatus: "PENDING", approvalUnitId: null, approvalUnitName: null }
+          : { approvalStatus: "PENDING", approvalUnitId: user.unitId, approvalUnitName: user.unit };
 
     // Mã phiếu và phiếu phải sinh trong CÙNG một giao dịch, nếu không hai người
     // bấm gửi cùng lúc sẽ nhận cùng một mã.

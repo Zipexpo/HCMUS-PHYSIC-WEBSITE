@@ -1,3 +1,4 @@
+import { statusEvents } from "@/lib/clock";
 import { prisma } from "@/lib/db";
 import { sendMail } from "@/lib/mail";
 import { claimOncePer } from "@/lib/settings";
@@ -46,9 +47,10 @@ export async function sweepDigest(): Promise<void> {
     },
     take: 2000,
   });
+  const hist = await statusEvents(open.map((t) => t.id));
   // Hạn kế tiếp: chưa phản hồi → hạn phản hồi, đã phản hồi → hạn xử lý.
   const dueOf = (t: (typeof open)[number]) => {
-    const d = deadlines(t.approvedAt ?? t.createdAt, t.priority);
+    const d = deadlines(t.approvedAt ?? t.createdAt, t.priority, hist.get(t.id));
     return (t.firstResponseAt ? d.resolve : d.response).getTime();
   };
   const active = open.filter((t) => t.status !== "WAITING" && t.approvalStatus !== "PENDING");

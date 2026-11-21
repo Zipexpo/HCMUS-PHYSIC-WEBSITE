@@ -115,6 +115,8 @@ export const canAssignOthers = (w: Who, t: TicketLike) => leadOf(w.access, t.tea
 export function canApprove(w: Who, t: TicketLike): boolean {
   if (t.approvalStatus !== "PENDING") return false;
   const a = w.access;
+  // Không ai tự duyệt yêu cầu của chính mình (trừ quản trị hệ thống).
+  if (t.reporterUserId === w.id && !a.sysAdmin) return false;
   // Đơn vị không có mã (người gửi không thuộc đơn vị nào) → quản trị duyệt thay.
   if (!t.approvalUnitId) return a.sysAdmin;
   return a.sysAdmin || a.liaisonUnitId === t.approvalUnitId;

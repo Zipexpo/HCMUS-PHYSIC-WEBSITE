@@ -240,8 +240,19 @@ async function main() {
   expectStatus("đầu mối đơn vị KHÁC duyệt hộ", (await dm.api("PATCH", `/tickets/${AP3}`, { approval: "APPROVE" })).status, 403);
   expectStatus("quản trị duyệt thay", (await sa.api("PATCH", `/tickets/${AP3}`, { approval: "APPROVE" })).status, 200);
 
-  const self = await xinQuyen(dm, "Đầu mối xin quyền cho người trong bộ môn");
-  check("đầu mối tự gửi cho đơn vị mình → coi như đã duyệt", sql(`select "approvalStatus" from "Ticket" where id='${self.json.id}'`) === "APPROVED");
+  const forOther = await dm.api("POST", "/tickets", {
+    formKey: "tai-khoan",
+    title: "Đầu mối xin quyền cho người trong bộ môn",
+    description: "Nhờ cấp quyền đăng tin cho trợ giảng.",
+    answers: { loai_yeu_cau: "Xin thêm quyền", he_thong: "Trang quản trị (/admin)", email_lien_quan: E("giangvien") },
+  });
+  check("đầu mối xin cho NGƯỜI KHÁC trong đơn vị → coi như đã duyệt", sql(`select "approvalStatus" from "Ticket" where id='${forOther.json.id}'`) === "APPROVED");
+  r = await mailsDuring(() => xinQuyen(dm, "Đầu mối xin quyền cho chính mình"));
+  const SELF = r.out.json.id;
+  check("đầu mối xin cho CHÍNH MÌNH → chờ quản trị duyệt", sql(`select "approvalStatus"||'|'||coalesce("approvalUnitId",'-') from "Ticket" where id='${SELF}'`) === "PENDING|-");
+  check("…thư “cần duyệt” tới quản trị, không tới chính đầu mối", has(r.mails, E("superadmin"), /duyệt/) && !has(r.mails, E("daumoi"), /Cần duyệt/), JSON.stringify(to(r.mails)));
+  expectStatus("đầu mối tự duyệt yêu cầu của chính mình", (await dm.api("PATCH", `/tickets/${SELF}`, { approval: "APPROVE" })).status, 403);
+  expectStatus("quản trị duyệt yêu cầu đó", (await sa.api("PATCH", `/tickets/${SELF}`, { approval: "APPROVE" })).status, 200);
 
   step("4. Sửa nội dung — chuyển qua đầu mối đơn vị trước");
   const sua = (who) =>
@@ -281,6 +292,33 @@ async function main() {
   r = await mailsDuring(async () => { await gv.page(""); await sleep(1000); });
   check("leo thang KHÔNG gửi lặp ở lần quét sau", !r.mails.some((m) => /QUÁ HẠN/.test(m.subject)));
   check("hàng đợi có góc “Quá hạn / sắp tới hạn” chứa phiếu này", (await web1.page("/phieu?xem=sap-han")).html.includes(urg.json.code));
+
+  step("5b. Thời hạn: trừ thời gian chờ người gửi, tính lại khi mở lại");
+  // Mở lại phiếu đã leo thang → mức về 0; quá hạn lần nữa thì lại báo.
+  await web2.api("PATCH", `/tickets/${URG}`, { status: "RESOLVED" });
+  await gv.api("PATCH", `/tickets/${URG}`, { status: "IN_PROGRESS" });
+  check("mở lại phiếu đã leo thang → mức leo thang về 0", sql(`select escalation from "Ticket" where id='${URG}'`) === "0");
+  r = await mailsDuring(async () => { await gv.page(""); await sleep(1500); });
+  check("…vừa mở lại thì CHƯA quá hạn (đồng hồ chạy lại)", sql(`select escalation from "Ticket" where id='${URG}'`) === "0" && !r.mails.some((m) => /QUÁ HẠN/.test(m.subject)));
+  sql(`update "TicketEvent" set "createdAt" = now() - interval '9 days' where "ticketId"='${URG}' and kind='status' and "toValue" like '%mở lại%'`);
+  r = await mailsDuring(async () => { await gv.page(""); await sleep(1500); });
+  check("…mở lại rồi lại quá hạn → leo thang LẦN NỮA", sql(`select escalation from "Ticket" where id='${URG}'`) === "2" && has(r.mails, E("web1"), /QUÁ HẠN/), JSON.stringify(to(r.mails)));
+
+  const w = await gv.api("POST", "/tickets", {
+    formKey: "loi-phan-mem",
+    title: "Không tải được tệp PDF",
+    description: "Bấm tải tệp thì báo lỗi.",
+    answers: { he_thong: "Web Khoa (phys.hcmus.edu.vn)", cac_buoc: "Bấm tải" },
+  });
+  const WT = w.json.id;
+  await web2.api("PATCH", `/tickets/${WT}`, { status: "WAITING" });
+  // Giả lập: gửi 10 ngày trước, chờ người gửi bổ sung suốt từ ngày đó tới giờ.
+  sql(`update "Ticket" set "createdAt" = now() - interval '10 days' where id='${WT}'`);
+  sql(`update "TicketEvent" set "createdAt" = now() - interval '10 days' + interval '30 minutes' where "ticketId"='${WT}' and kind='status'`);
+  await gv.api("POST", `/tickets/${WT}/comments`, { body: "Em gửi thêm ảnh chụp ạ." });
+  check("người gửi bổ sung → phiếu quay lại “Đang xử lý”", sql(`select status from "Ticket" where id='${WT}'`) === "IN_PROGRESS");
+  r = await mailsDuring(async () => { await gv.page(""); await sleep(1500); });
+  check("thời gian chờ người gửi KHÔNG tính vào hạn → không bị leo thang", sql(`select escalation from "Ticket" where id='${WT}'`) === "0" && !r.mails.some((m) => m.subject.includes(w.json.code)), JSON.stringify(r.mails));
 
   step("6. Mẫu biểu — ai sửa được gì");
   const formBody = (key, team) => ({

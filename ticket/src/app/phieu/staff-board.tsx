@@ -10,7 +10,8 @@ import {
 import type { Prisma, TicketStatus } from "@/generated/prisma/client";
 import { CurveDown, CurveUp, Led, homNay } from "@/components/ui";
 import { assignableStaff } from "@/lib/staff";
-import { deadlines } from "@/lib/sla";
+import { deadlines, type StatusEvent } from "@/lib/sla";
+import { statusEvents } from "@/lib/clock";
 import { type Who, canApprove, isHandler, queueScope } from "@/lib/access";
 import { FilterMenu, QueueList, SavedFilters, type QueueRow } from "./queue-list";
 import {
@@ -48,6 +49,8 @@ const VIEWS = [
 type ViewKey = (typeof VIEWS)[number]["k"];
 
 type Row = {
+  /** Lịch sử trạng thái (chỉ nạp cho phiếu đang chạy) — để tính hạn đúng. */
+  hist?: StatusEvent[];
   team: string | null;
   reporterUnitId: string | null;
   unitRoute: boolean;
@@ -117,7 +120,7 @@ function inView(t: Row, v: ViewKey, me: Me, staleBefore: number, wait: WaitMap):
 
 /** Hạn kế tiếp: chưa phản hồi → hạn phản hồi; đã phản hồi → hạn xử lý xong. */
 function dueOf(t: Row): number {
-  const d = deadlines(t.approvedAt ?? t.createdAt, t.priority);
+  const d = deadlines(t.approvedAt ?? t.createdAt, t.priority, t.hist);
   return (t.firstResponseAt ? d.resolve : d.response).getTime();
 }
 
@@ -209,6 +212,9 @@ export async function StaffBoard({ me, p, base = "/phieu" }: { me: Me; p: Params
   const wait: WaitMap = new Map(
     waitRows.map((w) => [w.id, !w.staff || w.rep > w.staff ? new Date(w.rep).getTime() : null]),
   );
+
+  const statusHist = await statusEvents(all.filter((t) => ACTIVE.includes(t.status)).map((t) => t.id));
+  for (const t of all) t.hist = statusHist.get(t.id);
 
   const now = Date.now();
   const staleBefore = now - DAY_MS;

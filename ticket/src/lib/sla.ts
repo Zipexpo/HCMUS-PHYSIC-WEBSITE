@@ -48,11 +48,75 @@ export function addBusinessHours(from: Date, hours: number): Date {
   return new Date(t - VN_OFFSET);
 }
 
-export function deadlines(createdAt: Date, priority: Priority) {
+/** Số giờ làm việc nằm giữa hai mốc (a < b). */
+export function businessHoursBetween(a: Date, b: Date): number {
+  let t = a.getTime() + VN_OFFSET;
+  const end = b.getTime() + VN_OFFSET;
+  let ms = 0;
+  for (let guard = 0; guard < 4000 && t < end; guard++) {
+    const d = new Date(t);
+    const day0 = Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate());
+    const iso = new Date(day0).toISOString().slice(0, 10);
+    const wd = d.getUTCDay();
+    if (wd !== 0 && wd !== 6 && !HOLIDAYS.has(iso)) {
+      for (const [x, y] of SHIFTS) {
+        const s = Math.max(t, day0 + x * 3_600_000);
+        const e = Math.min(end, day0 + y * 3_600_000);
+        if (e > s) ms += e - s;
+      }
+    }
+    t = day0 + 24 * 3_600_000;
+  }
+  return ms / 3_600_000;
+}
+
+/** Một dòng đổi trạng thái trong lịch sử phiếu (TicketEvent kind "status"). */
+export type StatusEvent = { createdAt: Date; fromValue: string | null; toValue: string | null };
+
+// Nhãn trạng thái như được ghi trong lịch sử (lib/labels.ts). Không import để
+// file này dùng được ở mọi nơi; nhãn mà đổi thì sửa cả ở đây.
+const WAITING_LABEL = "Chờ bổ sung";
+const DONE_LABELS = ["Đã xong", "Đã đóng", "Không xử lý"];
+const isDone = (v: string | null) => !!v && DONE_LABELS.some((l) => v.startsWith(l));
+
+/**
+ * Đồng hồ thời hạn của MỘT phiếu, dựng lại từ lịch sử trạng thái:
+ *   - Bắt đầu lúc gửi (phiếu phải duyệt: lúc được duyệt).
+ *   - Thời gian "Chờ bổ sung" KHÔNG tính: bóng đang ở phía người gửi.
+ *   - Phiếu đã xong / đã đóng bị mở lại → đồng hồ chạy lại từ lúc mở lại.
+ */
+export function slaClock(start: Date, events: StatusEvent[], now = new Date()) {
+  let from = start;
+  let paused = 0;
+  let waitSince: Date | null = null;
+  const evs = [...events].sort((a, b) => a.createdAt.getTime() - b.createdAt.getTime());
+  for (const e of evs) {
+    if (e.createdAt < from) continue;
+    if (isDone(e.fromValue) && !isDone(e.toValue)) {
+      from = e.createdAt;
+      paused = 0;
+      waitSince = null;
+    }
+    if (waitSince && !e.toValue?.startsWith(WAITING_LABEL)) {
+      paused += businessHoursBetween(waitSince, e.createdAt);
+      waitSince = null;
+    }
+    if (!waitSince && e.toValue?.startsWith(WAITING_LABEL)) waitSince = e.createdAt;
+  }
+  if (waitSince && now > waitSince) paused += businessHoursBetween(waitSince, now);
+  return { from, paused };
+}
+
+/**
+ * Hạn phản hồi đầu và hạn xử lý xong. Truyền `events` (lịch sử trạng thái) để
+ * trừ thời gian chờ người gửi và tính lại khi phiếu bị mở lại.
+ */
+export function deadlines(createdAt: Date, priority: Priority, events: StatusEvent[] = []) {
   const h = SLA_HOURS[priority];
+  const { from, paused } = slaClock(createdAt, events);
   return {
-    response: addBusinessHours(createdAt, h.response),
-    resolve: addBusinessHours(createdAt, h.resolve),
+    response: addBusinessHours(from, h.response + paused),
+    resolve: addBusinessHours(from, h.resolve + paused),
   };
 }
 

@@ -117,7 +117,11 @@ export default async function Page({ params }: { params: Promise<{ id: string }>
   // Nhìn từ phía "bên xử lý" (kể cả đầu mối chỉ-xem, Ban Chủ nhiệm) — không phải người gửi.
   const staffView = !isOwner;
   const backHref = !staffView ? (user.isStaff ? "/phieu?cua=toi" : "/phieu") : isHandler(user.access) ? "/phieu" : "/don-vi";
-  const due = deadlines(t.approvedAt ?? t.createdAt, t.priority);
+  const due = deadlines(
+    t.approvedAt ?? t.createdAt,
+    t.priority,
+    t.events.filter((e) => e.kind === "status"),
+  );
 
   // Ghi chú nội bộ và tệp đính kèm của nó lọc Ở MÁY CHỦ, không phải ẩn bằng CSS.
   const comments = t.comments.filter((c) => internalOk || !c.isInternal);

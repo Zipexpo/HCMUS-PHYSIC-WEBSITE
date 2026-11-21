@@ -4,6 +4,7 @@ import { sendMail, ticketUrl } from "@/lib/mail";
 import { staffEmail } from "@/lib/staff";
 import { SLA_HOURS, deadlines, slaText, type Priority } from "@/lib/sla";
 import { sweepDigest } from "@/lib/digest";
+import { statusEvents } from "@/lib/clock";
 
 /**
  * Phiếu "Đã xong" mà người gửi không xác nhận thì sau 7 ngày tự đóng — đúng
@@ -223,7 +224,9 @@ export async function notifyNewTicket(t: NewT, justApproved = false): Promise<vo
         from,
         to.length
           ? "Đây là yêu cầu cấp tài khoản / thêm quyền. Thầy/cô là đầu mối của đơn vị, vui lòng duyệt hoặc từ chối trước khi nhóm Tài khoản & Quyền thực hiện."
-          : "Đơn vị của người gửi chưa có đầu mối trên hệ hỗ trợ, nên quản trị hệ thống duyệt thay.",
+          : !t.approvalUnitId && t.reporterUnitId
+            ? "Đầu mối đơn vị xin quyền cho chính mình — không tự duyệt được, nên quản trị hệ thống duyệt."
+            : "Đơn vị của người gửi chưa có đầu mối trên hệ hỗ trợ, nên quản trị hệ thống duyệt thay.",
       ],
       t,
     );
@@ -279,9 +282,11 @@ async function sweepEscalation(): Promise<void> {
     },
     take: 500,
   });
+  const hist = await statusEvents(open.map((t) => t.id));
   for (const t of open) {
-    // Phiếu phải duyệt: đồng hồ chạy từ lúc được duyệt.
-    const d = deadlines(t.approvedAt ?? t.createdAt, t.priority);
+    // Phiếu phải duyệt: đồng hồ chạy từ lúc được duyệt; trừ thời gian chờ người
+    // gửi bổ sung; mở lại thì chạy lại từ đầu.
+    const d = deadlines(t.approvedAt ?? t.createdAt, t.priority, hist.get(t.id));
     let level = t.escalation;
     let to: string[] = [];
     let what = "";

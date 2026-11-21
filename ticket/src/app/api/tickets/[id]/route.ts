@@ -146,6 +146,12 @@ export async function PATCH(
         data.closedAt = new Date();
       }
       if (reopened) data.resolvedAt = null;
+      // Mở lại phiếu đã xong / đã đóng: đồng hồ thời hạn chạy lại từ lúc này
+      // (lib/sla.ts slaClock), nên mức leo thang cũng về 0 — quá hạn lần nữa
+      // thì lại báo. boardEscalated giữ nguyên: Ban Chủ nhiệm vẫn xem được.
+      const wasDone = ["RESOLVED", "CLOSED", "REJECTED"].includes(ticket.status);
+      const nowActive = ["NEW", "ACKNOWLEDGED", "IN_PROGRESS", "WAITING"].includes(body.status);
+      if (wasDone && nowActive) data.escalation = 0;
       events.push({
         kind: "status",
         from: STATUS_LABEL[ticket.status],
