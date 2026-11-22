@@ -14,11 +14,15 @@ const khong = new Set<number>();
 
 describe('coChinhKhongTaiKhoanThuocTruong', () => {
   it('sinh viên thuộc Trường đứng đầu, không tài khoản → có', () => {
-    expect(coChinhKhongTaiKhoanThuocTruong([TRONG, NGOAI, NGOAI], new Set([1]))).toBe(true);
+    expect(
+      coChinhKhongTaiKhoanThuocTruong([TRONG, NGOAI, NGOAI], new Set([1])),
+    ).toBe(true);
   });
 
   it('người thuộc Trường đứng cuối → có; đã ghi rõ không tính Last → không', () => {
-    expect(coChinhKhongTaiKhoanThuocTruong([NGOAI, NGOAI, TRONG], khong)).toBe(true);
+    expect(coChinhKhongTaiKhoanThuocTruong([NGOAI, NGOAI, TRONG], khong)).toBe(
+      true,
+    );
     expect(
       coChinhKhongTaiKhoanThuocTruong(
         [NGOAI, NGOAI, { ...TRONG, notLastAuthor: true }],
@@ -28,7 +32,9 @@ describe('coChinhKhongTaiKhoanThuocTruong', () => {
   });
 
   it('đứng giữa: chỉ tính khi được đánh dấu liên hệ', () => {
-    expect(coChinhKhongTaiKhoanThuocTruong([NGOAI, TRONG, NGOAI], khong)).toBe(false);
+    expect(coChinhKhongTaiKhoanThuocTruong([NGOAI, TRONG, NGOAI], khong)).toBe(
+      false,
+    );
     expect(
       coChinhKhongTaiKhoanThuocTruong(
         [NGOAI, { ...TRONG, isCorresponding: true }, NGOAI],
@@ -38,17 +44,27 @@ describe('coChinhKhongTaiKhoanThuocTruong', () => {
   });
 
   it('hàng đã gắn tài khoản thì không xét ở đây (vai trò nằm trên dòng của người đó)', () => {
-    expect(coChinhKhongTaiKhoanThuocTruong([TRONG, NGOAI], new Set([0]))).toBe(false);
+    expect(coChinhKhongTaiKhoanThuocTruong([TRONG, NGOAI], new Set([0]))).toBe(
+      false,
+    );
   });
 
   it('chưa rõ địa chỉ / ngoài Trường / nước ngoài / ĐHQG → không tính', () => {
-    expect(coChinhKhongTaiKhoanThuocTruong([{ name: 'X' }, NGOAI], khong)).toBe(false);
+    expect(coChinhKhongTaiKhoanThuocTruong([{ name: 'X' }, NGOAI], khong)).toBe(
+      false,
+    );
     expect(coChinhKhongTaiKhoanThuocTruong([NGOAI, NGOAI], khong)).toBe(false);
     expect(
-      coChinhKhongTaiKhoanThuocTruong([{ isNonSchool: false, isForeign: true }], khong),
+      coChinhKhongTaiKhoanThuocTruong(
+        [{ isNonSchool: false, isForeign: true }],
+        khong,
+      ),
     ).toBe(false);
     expect(
-      coChinhKhongTaiKhoanThuocTruong([{ isNonSchool: false, isVnu: true }], khong),
+      coChinhKhongTaiKhoanThuocTruong(
+        [{ isNonSchool: false, isVnu: true }],
+        khong,
+      ),
     ).toBe(false);
   });
 
@@ -61,7 +77,9 @@ describe('coChinhKhongTaiKhoanThuocTruong', () => {
 function dung(authorsRaw: unknown, rows: unknown[]) {
   const prisma = {
     publication: {
-      findUnique: vi.fn().mockResolvedValue({ schoolAuthors: 2, totalAuthors: 3, authorsRaw }),
+      findUnique: vi
+        .fn()
+        .mockResolvedValue({ schoolAuthors: 2, totalAuthors: 3, authorsRaw }),
       update: vi.fn().mockResolvedValue({}),
     },
     publicationAuthor: { findMany: vi.fn().mockResolvedValue(rows) },
@@ -73,8 +91,9 @@ function dung(authorsRaw: unknown, rows: unknown[]) {
     { emit: vi.fn() } as never,
     {} as never,
   );
-  const recount = (svc as unknown as { recount: (id: string) => Promise<void> })
-    .recount.bind(svc);
+  const recount = (
+    svc as unknown as { recount: (id: string) => Promise<void> }
+  ).recount.bind(svc);
   return { prisma, recount };
 }
 
@@ -88,24 +107,39 @@ const dong = (o: Record<string, unknown>) => ({
 
 describe('recount(): mainAuthorAtSchool', () => {
   it('đồng nghiệp (đồng tác giả) xác nhận → KHÔNG hạ cờ của bài có sinh viên thuộc Trường đứng đầu', async () => {
-    const { prisma, recount } = dung([TRONG, TRONG, NGOAI], [dong({ authorIndex: 1 })]);
+    const { prisma, recount } = dung(
+      [TRONG, TRONG, NGOAI],
+      [dong({ authorIndex: 1 })],
+    );
     await recount('p1');
-    expect(prisma.publication.update.mock.calls[0][0].data.mainAuthorAtSchool).toBe(true);
+    expect(
+      prisma.publication.update.mock.calls[0][0].data.mainAuthorAtSchool,
+    ).toBe(true);
   });
 
   it('không ai là tác giả chính thuộc Trường → false như cũ', async () => {
-    const { prisma, recount } = dung([NGOAI, TRONG, NGOAI], [dong({ authorIndex: 1 })]);
+    const { prisma, recount } = dung(
+      [NGOAI, TRONG, NGOAI],
+      [dong({ authorIndex: 1 })],
+    );
     await recount('p1');
-    expect(prisma.publication.update.mock.calls[0][0].data.mainAuthorAtSchool).toBe(false);
+    expect(
+      prisma.publication.update.mock.calls[0][0].data.mainAuthorAtSchool,
+    ).toBe(false);
   });
 
   it('hàng đầu là tài khoản CHƯA xác nhận → không tính thay họ (đếm sống ở kênh tích hợp)', async () => {
     const { prisma, recount } = dung(
       [TRONG, TRONG, NGOAI],
-      [dong({ authorIndex: 1 }), dong({ authorIndex: 0, claimStatus: 'PENDING', isFirst: true })],
+      [
+        dong({ authorIndex: 1 }),
+        dong({ authorIndex: 0, claimStatus: 'PENDING', isFirst: true }),
+      ],
     );
     await recount('p1');
-    expect(prisma.publication.update.mock.calls[0][0].data.mainAuthorAtSchool).toBe(false);
+    expect(
+      prisma.publication.update.mock.calls[0][0].data.mainAuthorAtSchool,
+    ).toBe(false);
   });
 
   it('tài khoản đã xác nhận là tác giả chính → true như cũ', async () => {
@@ -114,6 +148,8 @@ describe('recount(): mainAuthorAtSchool', () => {
       [dong({ authorIndex: 1, isCorresponding: true })],
     );
     await recount('p1');
-    expect(prisma.publication.update.mock.calls[0][0].data.mainAuthorAtSchool).toBe(true);
+    expect(
+      prisma.publication.update.mock.calls[0][0].data.mainAuthorAtSchool,
+    ).toBe(true);
   });
 });
