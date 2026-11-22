@@ -514,6 +514,14 @@ export class ScholarService {
       });
       if (existing) {
         await this.kiemHangCuaToi(existing.id, userId, body.me);
+        // Gắn vào bài đã có mà tự đặt tỷ lệ (tác giả chính): cộng cả tỷ lệ đang lưu.
+        if (laTacGiaChinh(body.me)) {
+          this.kiemTyLe({
+            daiDien: true,
+            cuaToi: body.me.sharePercent,
+            dongTacGia: await this.tyLeDongTacGiaSauLuu(existing.id, userId),
+          });
+        }
         const truocTT = await this.thoaThuan?.chupTruoc(existing.id);
         await this.attachSelf(existing.id, userId, body);
         // Bài đã có nhưng CHƯA phân loại (ví dụ do nhập hàng loạt từ trang nhân
@@ -950,6 +958,55 @@ export class ScholarService {
   }
 
   /**
+   * Tỷ lệ Cách 1 của MỌI đồng tác giả có tài khoản (trừ người gọi) SAU lượt lưu —
+   * đầu vào `dongTacGia` của kiemTyLe.
+   *
+   * Trước 22/11/2026 kiemTyLe chỉ cộng `memberUpdates` của lượt gửi. Người không
+   * nằm trong bảng của form (bị đẩy ra ngoài danh sách tên, hoặc chưa chỉ hàng)
+   * vẫn giữ tỷ lệ cũ trên dòng của họ mà không được cộng: ca thật, bài BWRX-300
+   * lưu 50% + 50% «đủ 100%» trong khi lời mời thứ ba còn giữ 20% → 120%.
+   *
+   * Mỗi người tính theo đúng luật ghi của ganVaiTroDongTacGia: có trong lượt gửi
+   * và có gửi tỷ lệ (người lưu là đại diện) thì lấy số mới; còn lại là số đang lưu.
+   * Người sắp bị rút lời mời (`rut`) không tính.
+   */
+  private async tyLeDongTacGiaSauLuu(
+    publicationId: string,
+    callerId: string,
+    sua: CoAuthorRoleType[] = [],
+    rut: string[] = [],
+  ): Promise<{ sharePercent: number | null }[]> {
+    // Lấy cả bài rồi bỏ người gọi ở dưới (không lọc `userId` trong truy vấn).
+    const rows = await this.prisma.publicationAuthor.findMany({
+      where: { publicationId, claimStatus: { not: 'REJECTED' } },
+      select: { userId: true, sharePercent: true },
+    });
+    const theoNguoi = new Map(
+      sua
+        .filter((m) => m.userId !== callerId)
+        .map((m) => [m.userId, m] as const),
+    );
+    const boQua = new Set(rut);
+    const ra: { sharePercent: number | null }[] = [];
+    const daTinh = new Set<string>();
+    for (const r of rows) {
+      if (r.userId === callerId || boQua.has(r.userId)) continue;
+      if (daTinh.has(r.userId)) continue;
+      daTinh.add(r.userId);
+      const m = theoNguoi.get(r.userId);
+      const giaTri =
+        m && m.sharePercent !== undefined ? m.sharePercent : r.sharePercent;
+      ra.push({ sharePercent: giaTri ?? null });
+    }
+    // Người MỚI được mời trong chính lượt này (chưa có dòng).
+    for (const [uid, m] of theoNguoi) {
+      if (daTinh.has(uid) || boQua.has(uid)) continue;
+      ra.push({ sharePercent: m.sharePercent ?? null });
+    }
+    return ra;
+  }
+
+  /**
    * Cập nhật các con số suy ra được từ danh sách tác giả đã xác nhận.
    *
    *   schoolAuthors      — luôn ít nhất bằng số người đã xác nhận, nhưng có thể
@@ -1051,7 +1108,15 @@ export class ScholarService {
       daiDien,
       cuaToi: body.me?.sharePercent,
       cuaToiCu: meCu?.sharePercent ?? null,
-      dongTacGia: body.memberUpdates,
+      // Cộng cả người KHÔNG nằm trong lượt gửi (xem tyLeDongTacGiaSauLuu).
+      dongTacGia: daiDien
+        ? await this.tyLeDongTacGiaSauLuu(
+            id,
+            userId,
+            body.memberUpdates,
+            body.rutMoi,
+          )
+        : body.memberUpdates,
       ngoai: body.externalAuthors,
     });
     // Cách 1: mọi tác giả thuộc Trường phải > 0% (Khoa chốt 20/11/2026, ty-le-cach-1.ts).
@@ -1612,12 +1677,20 @@ export class ScholarService {
         };
       });
     const tenHang = (i: number) => (raw[i] ? joinAuthorName(raw[i]) : '');
+    // Lượt này GHI LẠI danh sách tên → mọi tài khoản trên bài phải nằm trong đó, kể cả
+    // người không đổi hàng. Trước 22/11/2026 chỉ soát hàng ĐỔI, nên bớt hàng trên form
+    // để lại lời mời trỏ ra ngoài danh sách — vẫn giữ tỷ lệ Cách 1 và vai trò cũ (ca
+    // thật: bài BWRX-300, lời mời hàng 4/3 giữ 20% → tổng 120%). Lượt không gửi danh
+    // sách (ô «hiện trên trang», lưu phân loại) không bị chặn vì dữ liệu cũ.
+    const ghiDanhSach =
+      Array.isArray(body.authorsRaw) && body.authorsRaw.length > 0;
+    const ngoaiDanhSach = (h: { authorIndex: number; ten: string }) =>
+      HangNgoaiDanhSachException(h.authorIndex, n, h.ten || undefined);
     for (const h of sau) {
       if (h.authorIndex < 0) continue;
+      if (!h.doi && ghiDanhSach && h.authorIndex >= n) throw ngoaiDanhSach(h);
       if (h.doi) {
-        if (n > 0 && h.authorIndex >= n) {
-          throw HangNgoaiDanhSachException(h.authorIndex, n);
-        }
+        if (n > 0 && h.authorIndex >= n) throw ngoaiDanhSach(h);
         const khac = sau.find(
           (x) => x.userId !== h.userId && x.authorIndex === h.authorIndex,
         );
@@ -1790,18 +1863,24 @@ export class ScholarService {
       if (khac) idx = -1;
     }
     const n = raw.length;
-    await this.attachSelf(bai.id, userId, {
-      me: {
-        ...body.me,
-        authorIndex: idx,
-        isFirst: idx === 0 ? true : idx > 0 ? false : body.me.isFirst,
-        // Hàng cuối đã được ghi rõ là KHÔNG tính tác giả chính thì không tự bật lại.
-        isLast:
-          idx >= 0
-            ? n > 1 && idx === n - 1 && raw[idx]?.notLastAuthor !== true
-            : body.me.isLast,
-      },
-    });
+    const me = {
+      ...body.me,
+      authorIndex: idx,
+      isFirst: idx === 0 ? true : idx > 0 ? false : body.me.isFirst,
+      // Hàng cuối đã được ghi rõ là KHÔNG tính tác giả chính thì không tự bật lại.
+      isLast:
+        idx >= 0
+          ? n > 1 && idx === n - 1 && raw[idx]?.notLastAuthor !== true
+          : body.me.isLast,
+    };
+    if (laTacGiaChinh(me)) {
+      this.kiemTyLe({
+        daiDien: true,
+        cuaToi: me.sharePercent,
+        dongTacGia: await this.tyLeDongTacGiaSauLuu(bai.id, userId),
+      });
+    }
+    await this.attachSelf(bai.id, userId, { me });
     if (body.catalogCode && !bai.catalogCode) {
       await this.prisma.publication.update({
         where: { id: bai.id },
@@ -2219,6 +2298,10 @@ export class ScholarService {
         daiDien,
         cuaToi: a.sharePercent,
         cuaToiCu: row.sharePercent,
+        // Tác giả chính tự đặt tỷ lệ khi xác nhận: cộng cả tỷ lệ đang lưu của nhóm.
+        dongTacGia: daiDien
+          ? await this.tyLeDongTacGiaSauLuu(publicationId, userId)
+          : undefined,
       });
     }
     if (body.accept) await this.kiemHangCuaToi(publicationId, userId, a);

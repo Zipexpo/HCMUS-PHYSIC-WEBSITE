@@ -336,11 +336,17 @@ export const SoTacGiaLechException = (soTacGia: number, soHang: number) =>
     },
   ]);
 
-export const HangNgoaiDanhSachException = (hang: number, soHang: number) =>
+export const HangNgoaiDanhSachException = (
+  hang: number,
+  soHang: number,
+  ten?: string,
+) =>
   new UnprocessableEntityException([
     {
       field: 'authorIndex',
-      error: `Hàng ${hang + 1} không có trong danh sách ${soHang} tác giả của bài.`,
+      error: ten
+        ? `${ten} đang ở hàng ${hang + 1}, ngoài danh sách ${soHang} tác giả của bài — chọn lại hàng cho người này (Liên kết cán bộ ở hàng có tên họ) hoặc rút lời mời rồi lưu.`
+        : `Hàng ${hang + 1} không có trong danh sách ${soHang} tác giả của bài.`,
     },
   ]);
 
