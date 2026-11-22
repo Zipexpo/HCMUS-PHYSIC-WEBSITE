@@ -59,6 +59,7 @@ import {
   TotalShareExceededException,
 } from './scholar.error';
 import { hangThieuTyLeCach1 } from './ty-le-cach-1';
+import { coChinhKhongTaiKhoanThuocTruong } from './chinh-khong-tai-khoan';
 import type { DeNghiThayDoiType } from './de-nghi-sua.model';
 import { ThoaThuanService } from './thoa-thuan.service';
 import { apDungCach1 } from './thoa-thuan';
@@ -958,8 +959,10 @@ export class ScholarService {
    *                        Trường (schoolAuthors 0, chưa ai xác nhận) phải giữ
    *                        được 0 — sàn 1 sẽ tính giờ NV2 cho một bài của nơi khác.
    *   mainAuthorAtSchool — true khi có người đã xác nhận giữ vai trò First,
-   *                        Corresponding hoặc Last. Người dùng vẫn đặt tay được
-   *                        (tác giả chính có thể là người ngoài hệ thống).
+   *                        Corresponding hoặc Last, HOẶC danh sách có tác giả
+   *                        chính thuộc Trường KHÔNG gắn tài khoản (sinh viên…) —
+   *                        xem chinh-khong-tai-khoan.ts. Thiếu vế sau thì lưu phân
+   *                        loại / xác nhận lời mời / gỡ tên là hạ cờ của bài đó.
    */
   private async recount(publicationId: string) {
     const pub = await this.prisma.publication.findUnique({
@@ -968,15 +971,20 @@ export class ScholarService {
     });
     if (!pub) return;
 
-    const confirmed = await this.prisma.publicationAuthor.findMany({
-      where: { publicationId, claimStatus: 'CONFIRMED' },
+    const conHieuLuc = await this.prisma.publicationAuthor.findMany({
+      where: { publicationId, claimStatus: { not: 'REJECTED' } },
       select: {
+        claimStatus: true,
         isFirst: true,
         isCorresponding: true,
         isLast: true,
         authorIndex: true,
       },
     });
+    const confirmed = conHieuLuc.filter((a) => a.claimStatus === 'CONFIRMED');
+    const hangCoTaiKhoan = new Set(
+      conHieuLuc.map((a) => a.authorIndex).filter((i) => i >= 0),
+    );
 
     // Tác giả đã xác nhận nhưng GHI ĐỊA CHỈ NGOÀI TRƯỜNG trên bài này
     // (`isNonSchool` ở `authorsRaw[authorIndex]`) KHÔNG phải "tác giả thuộc
@@ -996,10 +1004,11 @@ export class ScholarService {
       data: {
         schoolAuthors,
         totalAuthors: Math.max(pub.totalAuthors, schoolAuthors),
-        // Tác giả chính THUỘC TRƯỜNG (loại người ghi địa chỉ ngoài).
-        mainAuthorAtSchool: thuocTruong.some(
-          (a) => a.isFirst || a.isCorresponding || a.isLast,
-        ),
+        // Tác giả chính THUỘC TRƯỜNG (loại người ghi địa chỉ ngoài): có tài khoản
+        // đã xác nhận, hoặc không có tài khoản mà danh sách ghi thuộc Trường.
+        mainAuthorAtSchool:
+          thuocTruong.some((a) => a.isFirst || a.isCorresponding || a.isLast) ||
+          coChinhKhongTaiKhoanThuocTruong(pub.authorsRaw, hangCoTaiKhoan),
       },
     });
   }

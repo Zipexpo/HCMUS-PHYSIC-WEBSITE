@@ -1159,3 +1159,75 @@ dùng, và khoá/gỡ tài khoản sinh viên `25c3101514@student.hcmus.edu.vn`.
 ACADsoom cũng thêm chốt chặn phía bên đó (commit `6557e95`): bỏ qua email sinh
 viên khi đồng bộ và khi dựng hồ sơ lúc đăng nhập; giữ tên đang có nếu tên mới chỉ
 là các chữ cũ đảo thứ tự.
+
+## 2026-11-22 — Nhật ký đổi ngạch, và hai ngạch còn thiếu (KTV, NV)
+
+Khoa yêu cầu: *"kể từ bây giờ ghi lại nhật ký chuyển ngạch. Vì mọi người đều có
+khả năng chuyển đổi khác nhau. Khi chuyển ngạch phải có lý do chuyển và thời gian
+hiệu lực"*.
+
+Ngạch không phải một ô thông tin thông thường: nó chọn dòng định mức bên ACADsoom,
+nên đổi ngạch là đổi tiêu chuẩn đánh giá của người đó. Trước bản này, đổi xong
+không còn dấu vết gì — không biết ai đổi, vì sao, từ bao giờ.
+
+### Bảng `RankChange`
+
+`userId` · `fromRank` · `toRank` · `reason` (bắt buộc) · `effectiveFrom` (bắt buộc)
+· `changedBy` · `createdAt`.
+
+`effectiveFrom` tách rời `createdAt` có lý do: quyết định có thể hồi tố hoặc áp dụng
+từ đầu kỳ sau, không suy ra từ ngày nhập được. Một người có nhiều dòng — mỗi lần
+đổi một dòng, mỗi lý do riêng.
+
+Bảng tạo bằng `CREATE TABLE` tay (DB là bản phục hồi từ sản xuất; `push-full`
+KHÔNG chạy `prisma migrate`).
+
+### Chặn ở backend, không chỉ ẩn ở giao diện
+
+`AdminService` so ngạch cũ với ngạch mới (không phân biệt hoa thường và khoảng
+trắng — `GV` và `gv ` là một); có đổi thật mà thiếu lý do hoặc ngày hiệu lực thì
+ném `RankChangeNeedsReasonException`. Gọi thẳng API cũng không lách được.
+
+Trang quản trị: đổi ô **Ngạch** thì hiện khung vàng đòi lý do + ngày hiệu lực, nút
+**Lưu hồ sơ** khoá tới khi điền đủ. Sửa các ô khác không bị đòi gì.
+
+`GET /admins/:id/rank-changes` trả nhật ký của một người.
+
+### Hai ngạch trước đây hiện nhầm thành "Giảng viên"
+
+`RANK_ROLE` bên `staff-page.service.ts` thiếu `ktv` và `nv`. Mã lạ → `roleFromDb`
+trả `null` → lùi về roster, không có thì mặc định `{ vi: 'Giảng viên' }`
+(`staff-page.service.ts:509`). Ô chọn ngạch bên admin đã có `NV` từ trước, nên ai
+để ngạch đó vẫn hiện là giảng viên trên web Khoa.
+
+Nay đủ **9 mã**, nhãn khớp ĐÚNG ba nơi (ô chọn admin · `RANK_ROLE` · bảng dịch
+ACADsoom) — ba nơi cùng một mã mà hiện ba kiểu thì người đọc tưởng là ba chức danh:
+
+    GV GVC GVCC TrG NCV NCVC CV KTV NV
+
+Khoa chọn nhãn **"Nhân viên phòng ban"** cho `NV` (không phải "Nhân viên" trần).
+
+### Kiểm chứng
+
+- `doi-ngach.spec.ts` 10/10, `ngach.spec.ts` 3/3.
+- Sau deploy: route `{/admins/:id/rank-changes, GET}` đã đăng ký; backend và admin
+  healthy, không lỗi lúc khởi động; `/vi` 200.
+- `audit-ranks.ts` đọc được bảng (chính là cách kiểm bảng đã tạo đúng: chưa có
+  bảng thì Prisma báo lỗi ngay). Mọi mã trong dữ liệu đều hiểu; KTV 2 người, NV
+  chưa ai.
+- **Đường GHI chưa chứng bằng dữ liệu thật**: nhật ký còn 0 dòng vì chưa có lần
+  đổi nào đi qua mã mới. Lần đổi ngạch thật đầu tiên sẽ chứng nó.
+
+### Còn phải làm
+
+- **Ghi bù hai người đã chuyển KTV** trước khi có tính năng này.
+  `backfill-rank-change.ts` đã sẵn (chỉ đọc mặc định, cần `--apply` mới ghi, không
+  đổi `User.rank`), chờ Khoa cho lý do + ngày hiệu lực.
+- **22 người đang để trống ngạch** — có từ trước, không phải do bản này. Họ rơi về
+  roster, không có thì mặc định "Giảng viên". Lẫn trong đó có cả tài khoản đơn vị
+  (CLB, Đoàn–Hội) và tài khoản hệ thống, nên không phải cả 22 đều là lỗi.
+- **ACADsoom** — hai commit chờ push, và câu chưa trả lời: hai thầy đã ký phiếu
+  ngày 19–20/11 với tư cách CV; chuyển sang KTV đổi bộ tiêu chí (2C → 2E: `nghdu`
+  100→96, `hqphap` 79→75), mà ACADsoom in phiếu từ dữ liệu HIỆN TẠI chứ không từ
+  `Attestation.snapshot` đã ký — nên phải chốt có ký lại trên mẫu 2E hay không.
+  Khoa đã chốt: **ACADsoom theo web Khoa** về mã ngạch.

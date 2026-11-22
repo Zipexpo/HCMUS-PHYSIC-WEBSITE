@@ -301,6 +301,20 @@ export type StaffProfileUpdate = {
   teacherId?: string | null;
   employmentType?: string | null;
   departmentId?: string | null;
+  /** BẮT BUỘC khi đổi ngạch — backend từ chối nếu thiếu. */
+  rankReason?: string;
+  rankEffectiveFrom?: string;
+};
+
+/** Một lần đổi ngạch đã ghi lại. */
+export type RankChange = {
+  id: string;
+  fromRank: string | null;
+  toRank: string | null;
+  reason: string;
+  effectiveFrom: string;
+  createdAt: string;
+  changedByName: string | null;
 };
 
 // Tạo cán bộ (giảng viên, role LECTURER) — KHÔNG có mật khẩu. `name` là họ tên
@@ -384,6 +398,10 @@ export const adminApi = {
       method: "POST",
       body: JSON.stringify({ password }),
     });
+  },
+  /** Nhật ký đổi ngạch của một cán bộ. */
+  rankChanges(id: string) {
+    return authFetch<RankChange[]>(`/admins/${id}/rank-changes`);
   },
   updateProfile(id: string, body: StaffProfileUpdate) {
     return authFetch<AdminListItem>(`/admins/${id}/profile`, {

@@ -191,7 +191,7 @@ model User {
   teacherId         String?
   /// Học vị: GS · PGS · TS · ThS · CN — chỉ hiển thị.
   degree            String?
-  /// Ngạch: GV · GVC · GVCC · TrG · NCV · NCVC · CV · NV — chọn dòng định mức bên ACADsoom.
+  /// Ngạch: GV · GVC · GVCC · TrG · NCV · NCVC · CV · KTV · NV — chọn dòng định mức bên ACADsoom.
   rank              String?
   /// Chức vụ quản lý (key): truong_bo_mon… (`position` phía trên là nhãn hiển thị cũ).
   positionKey       String?
@@ -210,6 +210,7 @@ model User {
   tourCompletedAt   DateTime?
 
   department             Department?             @relation(fields: [departmentId], references: [id], onDelete: SetNull)
+  rankChanges            RankChange[]
   preference             UserPreference?
   sessions               Session[]
   accounts               Account[]
@@ -303,6 +304,34 @@ model VerificationCode {
 
   @@unique([email, type])
   @@index([expiresAt, email])
+}
+
+/// Nhật ký ĐỔI NGẠCH. `User.rank` vẫn là ngạch hiện hành (mọi chỗ khác đọc nó),
+/// bảng này ghi lại TỪNG LẦN đổi để trả lời được "ngày đó người này ngạch gì".
+///
+/// Cần vì ngạch quyết định mẫu phiếu và bộ tiêu chí chấm bên ACADsoom: đổi ngạch
+/// sau khi đã ký làm tờ in ra khác tờ đã ký. Không có nhật ký thì không ai truy
+/// được đổi lúc nào, vì sao.
+model RankChange {
+  id String @id @default(cuid())
+
+  userId   String
+  fromRank String?
+  toRank   String?
+
+  /// BẮT BUỘC. Vì sao đổi — "tuyển dụng lại", "chuyển vị trí việc làm"…
+  reason        String
+  /// Ngày ngạch mới CÓ HIỆU LỰC. Khác ngày nhập: quyết định có thể hồi tố hoặc
+  /// áp dụng từ đầu kỳ sau, nên không suy từ createdAt được.
+  effectiveFrom DateTime
+  /// Ai bấm đổi. Để trống khi do máy đồng bộ, không phải người.
+  changedBy     String?
+  createdAt     DateTime @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, effectiveFrom])
+  @@index([effectiveFrom])
 }
 
 model Department {
@@ -1067,8 +1096,8 @@ model Publication {
   updatedAt DateTime  @updatedAt
   deletedAt DateTime?
 
-  authors PublicationAuthor[]
-  editRequests PublicationEditRequest[]
+  authors         PublicationAuthor[]
+  editRequests    PublicationEditRequest[]
   shareAgreements ShareAgreement[]
 
   @@index([countYear])
@@ -1125,34 +1154,34 @@ model PublicationEditRequest {
 /// không gửi tỷ lệ → ACADsoom tính Cách 2. Bài chưa từng có đơn nào (tỷ lệ khai
 /// trước 20/11/2026) giữ nguyên Cách 1 như cũ.
 model ShareAgreement {
-  id            String    @id @default(cuid())
-  publicationId String
+  id             String    @id @default(cuid())
+  publicationId  String
   /// Ảnh chụp phương án lúc lập đơn: [{ hang, ten, userId, email, sharePercent, thuocTruong }].
-  shares        Json
+  shares         Json
   /// Dấu vân tay phương án (ai → bao nhiêu %) — lưu lại giống hệt thì không lập đơn mới.
-  fingerprint   String
+  fingerprint    String
   /// Tài khoản PHẢI ký qua hệ thống (thuộc Trường, có %), để tra "đơn chờ tôi ký".
-  signerIds     String[]
+  signerIds      String[]
   /// Người lập đơn = người vừa lưu tỷ lệ (đại diện nhóm).
-  createdBy     String
+  createdBy      String
   /// CHO_KY · CHO_DUYET · DA_DUYET · KHOA_TU_CHOI · BI_TU_CHOI_KY · HET_HIEU_LUC
-  status        String    @default("CHO_KY")
+  status         String    @default("CHO_KY")
   /// [{ userId, ten, at }] — ký qua hệ thống, giờ máy chủ.
-  signatures    Json      @default("[]")
+  signatures     Json      @default("[]")
   /// [{ userId, ten, at, lyDo }] — tác giả không đồng ý phương án.
-  declines      Json      @default("[]")
+  declines       Json      @default("[]")
   /// Bản quét đơn có chữ ký tay (uploads/share-agreement).
   scanStoredName String?
-  scanName      String?
-  scanMime      String?
-  scanAt        DateTime?
-  submittedAt   DateTime?
+  scanName       String?
+  scanMime       String?
+  scanAt         DateTime?
+  submittedAt    DateTime?
   /// Quyết định của Khoa (từ ACADsoom).
-  decidedAt     DateTime?
-  decidedBy     String?
-  decisionNote  String?
-  createdAt     DateTime  @default(now())
-  updatedAt     DateTime  @updatedAt
+  decidedAt      DateTime?
+  decidedBy      String?
+  decisionNote   String?
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
 
   publication Publication @relation(fields: [publicationId], references: [id], onDelete: Cascade)
 
@@ -1464,6 +1493,38 @@ model ConferenceRanking {
 
   @@unique([source, title])
   @@index([acronym])
+}
+
+/// Danh sách nguồn được CHỈ MỤC — Scopus Source List (Elsevier, cập nhật hằng tháng) và
+/// Master Journal List (Web of Science). Để biết nơi đăng có thuộc Scopus / WoS ở năm
+/// công bố không: tạp chí chưa có hạng SJR (mục 1.1f), tạp chí Scopus đã loại (vẫn còn
+/// trong bảng SJR năm trước). Nạp lại = thay trọn danh sách của chỉ mục đó (21/11/2026).
+model IndexedSource {
+  id          String   @id @default(cuid())
+  /// scopus · wos
+  indexer     String
+  /// Scopus: Sourcerecord ID · WoS: ISSN đầu tiên (không có thì "ten:" + tên).
+  sourceId    String
+  title       String
+  /// Scopus: Journal / Book Series / Trade Journal / Conference Proceedings · WoS: SCIE, SSCI, AHCI, ESCI
+  type        String
+  /// ISSN 8 ký tự, không gạch (in lẫn điện tử) — khớp như JournalRanking.issns.
+  issns       String[]
+  /// Scopus: [[từ năm, đến năm], …] · WoS: [] (danh sách chỉ nói hiện tại).
+  coverage    Json
+  /// Scopus: còn nhận bài (Active) · WoS: luôn true.
+  active      Boolean
+  /// Scopus ngừng nhận (sheet "Discontinued Titles"): năm, tập/số cuối cùng có trong Scopus, lý do.
+  finalYear   Int?
+  finalIssue  String?
+  finalReason String?
+  /// Bản danh sách: "Scopus Sources Oct. 2026", "WoS MJL 2026-11-18"…
+  version     String
+  createdAt   DateTime @default(now())
+
+  @@unique([indexer, sourceId])
+  @@index([indexer])
+  @@index([issns], type: Gin)
 }
 
 /// Bộ tính điểm HĐGS ngành Vật lý (QĐ 26/QĐ-HĐGSNN 2025, xem src/hdgs/) — phần CÁN

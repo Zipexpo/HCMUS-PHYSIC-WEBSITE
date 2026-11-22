@@ -131,7 +131,14 @@ export class AdminController {
   updateProfile(
     @Param('id') id: string,
     @Body() body: UpdateAdminProfileBodyDTO,
+    @ActiveUser('userId') actingUserId: string,
   ) {
-    return this.adminService.updateProfile(id, body);
+    return this.adminService.updateProfile(id, body, actingUserId);
+  }
+
+  /** Nhật ký đổi ngạch của một cán bộ — ai đổi, lúc nào, vì sao, hiệu lực từ. */
+  @Get(':id/rank-changes')
+  listRankChanges(@Param('id') id: string) {
+    return this.adminService.listRankChanges(id);
   }
 }

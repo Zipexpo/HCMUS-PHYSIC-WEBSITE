@@ -1,6 +1,12 @@
 import { describe, expect, it, vi } from 'vitest';
 import {
+  chuanHoaChiMuc,
   chuanHoaIssn,
+  docKhoangNam,
+  nhacDanhSachScopus,
+  xetScopus,
+  xetWos,
+  type NguonChiMuc,
   docBangCore,
   docBangSjr,
   docCsv,
@@ -184,6 +190,8 @@ describe('XepHangService.goiY', () => {
         ),
       },
       conferenceRanking: { findMany: vi.fn().mockResolvedValue(core) },
+      // Chưa nạp danh sách Scopus / WoS → gợi ý y như trước 21/11/2026.
+      indexedSource: { findMany: vi.fn().mockResolvedValue([]) },
     };
     return { svc: new XepHangService(prisma as never), prisma };
   }
@@ -296,6 +304,7 @@ describe('XepHangService — soát mã lệch và áp mã', () => {
         ),
       },
       conferenceRanking: { findMany: vi.fn().mockResolvedValue([]) },
+      indexedSource: { findMany: vi.fn().mockResolvedValue([]) },
       auditLog: { create: vi.fn().mockResolvedValue({}) },
       $transaction: vi.fn((ops: unknown[]) => Promise.all(ops)),
     };
@@ -412,5 +421,332 @@ describe('XepHangService.napSjr — bảng đầy đủ ~32.000 dòng', () => {
     expect(tx.journalRanking.createMany).toHaveBeenCalledTimes(6);
     const ghi = tx.journalRanking.createMany.mock.calls.reduce((t, [a]) => t + a.data.length, 0);
     expect(ghi).toBe(10_001);
+  });
+});
+
+// ── Danh sách chỉ mục Scopus / WoS (21/11/2026) ─────────────────────────────
+
+/** Optical and Quantum Electronics: Scopus ghi phủ 1969–2025 nhưng ngừng nhận sau tập 56 số 8 (2024). */
+const OQE: NguonChiMuc = {
+  sourceId: '12313',
+  title: 'Optical and Quantum Electronics',
+  type: 'Journal',
+  issns: ['03068919', '1572817X'],
+  coverage: [[1969, 2025]],
+  active: false,
+  finalYear: 2024,
+  finalIssue: 'tập 56, số 8',
+  finalReason: 'Discontinuation',
+};
+const nguon = (o: Partial<NguonChiMuc>): NguonChiMuc => ({
+  sourceId: '1',
+  title: 'Tap chi',
+  type: 'Journal',
+  issns: ['11112222'],
+  coverage: [[2020, 2026]],
+  active: true,
+  finalYear: null,
+  finalIssue: null,
+  finalReason: null,
+  ...o,
+});
+
+describe('Danh sách chỉ mục — đọc và xét năm', () => {
+  it('cột Coverage của Scopus: nhiều khoảng, năm lẻ, sắp tăng dần', () => {
+    expect(docKhoangNam('2026; 2023-2024; 1997')).toEqual([
+      [1997, 1997],
+      [2023, 2024],
+      [2026, 2026],
+    ]);
+    expect(docKhoangNam('')).toEqual([]);
+  });
+
+  it('Scopus: khoá theo Sourcerecord ID, ISSN chuẩn hoá, gộp dòng trùng', () => {
+    const ds = chuanHoaChiMuc('scopus', [
+      { sourceId: '12313', title: 'Optical and Quantum Electronics', issn: '0306-8919 1572-817x', coverage: '1969-2025', active: false },
+      { sourceId: '12313', title: 'Optical and Quantum Electronics', issn: '0306-8919', finalYear: 2024, finalIssue: 'tập 56, số 8', finalReason: 'Discontinuation' },
+      { sourceId: '99', title: 'Kỷ yếu', type: 'Conference Proceedings', issn: '1742-6588', coverage: '2004-2026', active: true },
+    ]);
+    expect(ds).toHaveLength(2);
+    expect(ds[0]).toMatchObject({
+      sourceId: '12313',
+      issns: ['03068919', '1572817X'],
+      coverage: [[1969, 2025]],
+      active: false,
+      finalYear: 2024,
+      finalIssue: 'tập 56, số 8',
+    });
+    expect(ds[1].type).toBe('Conference Proceedings');
+  });
+
+  it('WoS: một tạp chí ở hai bộ (SCIE và SSCI) thành một dòng', () => {
+    const ds = chuanHoaChiMuc('wos', [
+      { title: 'Energy Policy', type: 'SSCI', issn: '0301-4215 1873-6777' },
+      { title: 'ENERGY POLICY', type: 'SCIE', issn: '0301-4215' },
+      { title: 'Optics Letters', type: 'SCIE', issn: '0146-9592' },
+    ]);
+    expect(ds).toHaveLength(2);
+    expect(ds[0]).toMatchObject({ sourceId: '03014215', type: 'SCIE, SSCI', coverage: [], active: true });
+  });
+
+  it('Scopus đã ngừng nhận: bài năm sau → không thuộc; cùng năm → phải xem số; trước đó → thuộc', () => {
+    const sau = xetScopus([OQE], 2025, 'Scopus Sources Oct. 2026');
+    expect(sau.trangThai).toBe('khong');
+    expect(sau.lyDo).toContain('ngừng nhận «Optical and Quantum Electronics» sau tập 56, số 8, năm 2024');
+    expect(xetScopus([OQE], 2024, 'x').trangThai).toBe('xem');
+    expect(xetScopus([OQE], 2023, 'x')).toMatchObject({
+      trangThai: 'co',
+      lyDo: '«Optical and Quantum Electronics» — Scopus phủ 1969–2025.',
+    });
+  });
+
+  it('ISSN ghi nhầm sang tạp chí khác: lời giải thích nêu tên theo Scopus', () => {
+    // Đo 21/11/2026: một bài "Archives of Medical Research" ghi ISSN 0066-6769 của tạp chí khác.
+    const x = xetScopus(
+      [nguon({ title: 'Archivos de Investigacion Medica', coverage: [[1970, 1991]], active: false })],
+      2020,
+      'x',
+    );
+    expect(x).toMatchObject({ trangThai: 'khong', tieuDe: 'Archivos de Investigacion Medica' });
+    expect(x.lyDo).toBe('«Archivos de Investigacion Medica» — Scopus phủ 1970–1991; năm 2020 không nằm trong đó.');
+  });
+
+  it('khoảng trống trong Coverage, nguồn còn nhận bài, không có trong danh sách', () => {
+    const gian = nguon({ coverage: [[1997, 2015], [2018, 2026]] });
+    expect(xetScopus([gian], 2016, 'x')).toMatchObject({ trangThai: 'khong' });
+    expect(xetScopus([gian], 2016, 'x').lyDo).toContain('1997–2015, 2018–2026; năm 2016 không nằm trong đó');
+    expect(xetScopus([nguon({})], 2027, 'x')).toMatchObject({ trangThai: 'co' });
+    expect(xetScopus([nguon({ active: false })], 2027, 'x')).toMatchObject({ trangThai: 'khong' });
+    expect(xetScopus([], 2026, 'Scopus Sources Oct. 2026')).toEqual({
+      trangThai: 'khong',
+      tieuDe: null,
+      lyDo: 'Không có trong danh sách Scopus (Scopus Sources Oct. 2026).',
+    });
+  });
+
+  it('WoS chỉ nói hiện tại — lời giải thích ghi rõ bản danh sách', () => {
+    expect(xetWos([nguon({ type: 'ESCI' })], 'WoS MJL 2026-11-18')).toMatchObject({
+      trangThai: 'co',
+      lyDo: expect.stringContaining('Thuộc Web of Science (ESCI) theo danh sách WoS MJL 2026-11-18'),
+    });
+    expect(xetWos([], 'WoS MJL 2026-11-18').trangThai).toBe('khong');
+  });
+
+  it('nhắc nạp danh sách Scopus: chưa nạp, hoặc nạp quá 120 ngày', () => {
+    const nay = new Date('2026-11-21T00:00:00Z');
+    expect(nhacDanhSachScopus(null, nay)[0]).toContain('Chưa nạp danh sách Scopus');
+    expect(nhacDanhSachScopus(new Date('2026-11-01T00:00:00Z'), nay)).toEqual([]);
+    expect(nhacDanhSachScopus(new Date('2026-05-01T00:00:00Z'), nay)[0]).toContain('nạp đã 204 ngày');
+  });
+});
+
+/** Dịch vụ với bảng SJR + danh sách chỉ mục giả — `findMany` lọc theo ISSN như Postgres. */
+function dungChiMuc(o: {
+  sjr?: Record<string, unknown>[];
+  scopus?: NguonChiMuc[];
+  wos?: NguonChiMuc[];
+  pubs?: Record<string, unknown>[];
+}) {
+  const ban = [
+    ...(o.scopus ? [{ indexer: 'scopus', version: 'Scopus Sources Oct. 2026' }] : []),
+    ...(o.wos ? [{ indexer: 'wos', version: 'WoS MJL 2026-11-18' }] : []),
+  ];
+  const dong = [
+    ...(o.scopus ?? []).map((x) => ({ ...x, indexer: 'scopus' })),
+    ...(o.wos ?? []).map((x) => ({ ...x, indexer: 'wos' })),
+  ];
+  type Args = { distinct?: string[]; where?: { issns?: { hasSome: string[] } } };
+  const theoIssn = <T extends { issns: string[] }>(ds: T[], args: Args) => {
+    const can = args.where?.issns?.hasSome;
+    return can ? ds.filter((x) => x.issns.some((i) => can.includes(i))) : [];
+  };
+  const prisma = {
+    publication: { findMany: vi.fn().mockResolvedValue(o.pubs ?? []) },
+    journalRanking: {
+      findMany: vi.fn((args: Args) =>
+        Promise.resolve(
+          args.distinct
+            ? [{ year: 2025 }, { year: 2024 }, { year: 2023 }]
+            : theoIssn((o.sjr ?? []) as { issns: string[] }[], args),
+        ),
+      ),
+    },
+    conferenceRanking: { findMany: vi.fn().mockResolvedValue([]) },
+    indexedSource: {
+      findMany: vi.fn((args: Args) => Promise.resolve(args.distinct ? ban : theoIssn(dong, args))),
+    },
+  };
+  return { svc: new XepHangService(prisma as never), prisma };
+}
+
+const sjrOqe = (year: number, code: string, quartile: string) => ({
+  year,
+  sourceId: '12313',
+  title: 'Optical and Quantum Electronics',
+  issns: ['03068919', '1572817X'],
+  bestQuartile: quartile,
+  code,
+  categories: [{ name: 'Electrical and Electronic Engineering', quartile, rank: 300, total: 900 }],
+});
+
+describe('XepHangService.goiY — có danh sách Scopus / WoS', () => {
+  it('bảng SJR năm trước còn cho hạng nhưng Scopus đã loại → giữ mã, CẢNH BÁO', async () => {
+    const { svc } = dungChiMuc({
+      sjr: [sjrOqe(2024, '1.1c', 'Q2'), sjrOqe(2023, '1.1b', 'Q1')],
+      scopus: [OQE],
+    });
+    const g = await svc.goiY({ issn: '1572-817X', year: 2025 });
+    expect(g).toMatchObject({ nguon: 'sjr', ma: '1.1b' });
+    expect(g.canhBao).toContain('ngừng nhận «Optical and Quantum Electronics»');
+    expect(g.canhBao).toContain('Khoa quyết');
+  });
+
+  it('Scopus còn nhận → không cảnh báo', async () => {
+    const { svc } = dungChiMuc({
+      sjr: [sjrOqe(2024, '1.1c', 'Q2')],
+      scopus: [{ ...OQE, active: true, finalYear: null, finalIssue: null, finalReason: null, coverage: [[1969, 2026]] }],
+    });
+    const g = await svc.goiY({ issn: '1572-817X', year: 2025 });
+    expect(g.canhBao ?? null).toBeNull();
+  });
+
+  it('không có hạng SJR nhưng thuộc WoS → 1.1f', async () => {
+    const { svc } = dungChiMuc({
+      scopus: [],
+      wos: [nguon({ title: 'Journal of Wos Only', type: 'ESCI', issns: ['55556666'] })],
+    });
+    const g = await svc.goiY({ issn: '5555-6666', year: 2026 });
+    expect(g).toMatchObject({ nguon: 'wos', ma: '1.1f', tieuDe: 'Journal of Wos Only' });
+    expect(g.giaiThich).toContain('Không có hạng Scopus Q1–Q4 → 1.1f');
+  });
+
+  it('thuộc Scopus mà chưa có hạng, chưa nạp WoS → không đoán mã, nói rõ', async () => {
+    const { svc } = dungChiMuc({ scopus: [nguon({ title: 'Tap chi moi', issns: ['77778888'] })] });
+    const g = await svc.goiY({ issn: '7777-8888', year: 2026 });
+    expect(g).toMatchObject({ nguon: 'scopus', ma: null, tieuDe: 'Tap chi moi' });
+    expect(g.giaiThich).toContain('chưa có hạng Q1–Q4');
+    expect(g.giaiThich).toContain('chưa nạp danh sách WoS');
+  });
+
+  it('không thuộc Scopus lẫn WoS → nói không phải mục 1.1', async () => {
+    const { svc } = dungChiMuc({ scopus: [], wos: [] });
+    const g = await svc.goiY({ issn: '3009-3953', year: 2026 });
+    expect(g).toMatchObject({ nguon: null, ma: null });
+    expect(g.giaiThich).toContain('không thuộc Scopus / WoS năm công bố');
+  });
+
+  it('kỷ yếu: bộ kỷ yếu thuộc Scopus → 2.1e', async () => {
+    const { svc } = dungChiMuc({
+      scopus: [nguon({ title: 'Journal of Physics: Conference Series', type: 'Conference Proceedings', issns: ['17426588'], coverage: [[2004, 2026]] })],
+    });
+    const g = await svc.goiY({ issn: '1742-6588', venue: 'Journal of Physics: Conference Series', year: 2026, loai: 'hoi-nghi' });
+    expect(g).toMatchObject({ nguon: 'scopus', ma: '2.1e' });
+  });
+});
+
+describe('XepHangService.lechMa — có danh sách Scopus / WoS', () => {
+  const bai = (o: Record<string, unknown>) => ({
+    id: 'p',
+    title: 'Bài thử',
+    containerTitle: null,
+    issn: null,
+    type: 'journal-article',
+    publishedYear: 2025,
+    publishedMonth: 12,
+    catalogCode: '1.1c',
+    authors: [],
+    ...o,
+  });
+
+  it('khai mã Scopus ở tạp chí Scopus đã loại → "ngoai", không có mã để áp', async () => {
+    const { svc } = dungChiMuc({
+      sjr: [sjrOqe(2024, '1.1c', 'Q2'), sjrOqe(2023, '1.1c', 'Q2')],
+      scopus: [OQE],
+      pubs: [bai({ id: 'oqe', issn: '1572-817X', containerTitle: 'Optical and Quantum Electronics' })],
+    });
+    const kq = await svc.lechMa('2025-11', '2026-10');
+    expect(kq.items).toHaveLength(1);
+    expect(kq.items[0]).toMatchObject({ id: 'oqe', maKhai: '1.1c', maGoiY: null, huong: 'ngoai' });
+    expect(kq.items[0].giaiThich).toContain('Khai 1.1c (mã Scopus) — Scopus ngừng nhận');
+  });
+
+  it('khai 1.1e mà tạp chí chỉ thuộc WoS (không hạng SJR) → đổi mục sang 1.1f', async () => {
+    const { svc } = dungChiMuc({
+      scopus: [],
+      wos: [nguon({ title: 'Journal of Wos Only', type: 'ESCI', issns: ['55556666'] })],
+      pubs: [bai({ id: 'w', issn: '5555-6666', catalogCode: '1.1e', publishedYear: 2026, publishedMonth: 3 })],
+    });
+    const kq = await svc.lechMa('2025-11', '2026-10');
+    // Có mã thay thế áp được (1.1f) → mục thường, có nút sửa — không phải "ngoai".
+    expect(kq.items.map((x) => [x.id, x.huong, x.maGoiY])).toEqual([['w', 'doi', '1.1f']]);
+    expect(kq.items[0].giaiThich).toContain('→ 1.1f');
+  });
+
+  it('bảng SJR có tạp chí mà danh sách Scopus ghi ISSN khác → không kết luận "ngoai"', async () => {
+    const { svc } = dungChiMuc({
+      sjr: [sjrOqe(2024, '1.1c', 'Q2'), sjrOqe(2023, '1.1c', 'Q2')],
+      scopus: [nguon({ issns: ['99990000'] })],
+      pubs: [bai({ id: 'k', issn: '1572-817X' })],
+    });
+    const kq = await svc.lechMa('2025-11', '2026-10');
+    expect(kq.items).toEqual([]);
+  });
+
+  it('khai 1.1f ở tạp chí không có trong danh sách WoS (và không hạng SJR) → "ngoai"', async () => {
+    const { svc } = dungChiMuc({
+      scopus: [],
+      wos: [],
+      pubs: [bai({ id: 'f', issn: '3126-3011', catalogCode: '1.1f', publishedYear: 2026, publishedMonth: 5 })],
+    });
+    const kq = await svc.lechMa('2025-11', '2026-10');
+    expect(kq.items.map((x) => [x.id, x.huong])).toEqual([['f', 'ngoai']]);
+    expect(kq.items[0].giaiThich).toContain('Khai 1.1f (WoS) — Không có trong danh sách Web of Science');
+  });
+});
+
+describe('XepHangService.napChiMuc — gói trình duyệt dựng từ tệp gốc', () => {
+  const tx = () => ({
+    indexedSource: {
+      deleteMany: vi.fn().mockResolvedValue({ count: 0 }),
+      createMany: vi.fn().mockResolvedValue({ count: 2000 }),
+    },
+  });
+
+  it('không phải gói JSON → 422, không ghi gì', async () => {
+    const prisma = { $transaction: vi.fn() };
+    await expect(new XepHangService(prisma as never).napChiMuc('scopus', 'Sourcerecord ID;Title')).rejects.toThrow();
+    expect(prisma.$transaction).not.toHaveBeenCalled();
+  });
+
+  it('gói Scopus quá ít nguồn (tệp đã lọc) → từ chối, không xoá danh sách đang có', async () => {
+    const prisma = { $transaction: vi.fn() };
+    const goi = { phienBan: 'Scopus Sources Oct. 2026', ds: [{ sourceId: '1', title: 'A', issn: '1111-2222' }] };
+    await expect(new XepHangService(prisma as never).napChiMuc('scopus', JSON.stringify(goi))).rejects.toThrow();
+    expect(prisma.$transaction).not.toHaveBeenCalled();
+  });
+
+  it('WoS đủ bộ: thay trọn danh sách WoS trong một giao dịch, đếm theo bộ', async () => {
+    const t = tx();
+    const prisma = { $transaction: vi.fn((fn: (x: typeof t) => Promise<unknown>) => fn(t)) };
+    const ds = Array.from({ length: 3200 }, (_, i) => ({
+      title: `Journal ${i}`,
+      type: i < 2000 ? 'SCIE' : 'ESCI',
+      issn: `${String(20_000_000 + i)}`,
+    }));
+    const kq = await new XepHangService(prisma as never).napChiMuc(
+      'wos',
+      JSON.stringify({ phienBan: 'WoS MJL 2026-11-18', ds }),
+    );
+    expect(kq).toMatchObject({ loai: 'wos', ten: 'WoS MJL 2026-11-18', soDong: 3200 });
+    expect(kq.ghiChu).toBe('SCIE 2.000 · ESCI 1.200.');
+    expect(t.indexedSource.deleteMany).toHaveBeenCalledWith({ where: { indexer: 'wos' } });
+    expect(t.indexedSource.createMany).toHaveBeenCalledTimes(2);
+    expect(t.indexedSource.createMany.mock.calls[0][0].data[0]).toMatchObject({
+      indexer: 'wos',
+      version: 'WoS MJL 2026-11-18',
+      sourceId: '20000000',
+      issns: ['20000000'],
+      coverage: [],
+    });
   });
 });

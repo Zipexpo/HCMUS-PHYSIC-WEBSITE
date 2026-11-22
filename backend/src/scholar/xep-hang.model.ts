@@ -13,12 +13,21 @@ export const GoiYQuerySchema = z.object({
 export type GoiYQueryType = z.infer<typeof GoiYQuerySchema>;
 
 export const GoiYResSchema = z.object({
-  /** Bảng nào cho ra gợi ý — null = không tìm thấy trong bảng đã nạp. */
-  nguon: z.enum(['sjr', 'core']).nullable(),
+  /**
+   * Bảng nào cho ra gợi ý — null = không tìm thấy trong bảng đã nạp. `scopus` / `wos`
+   * = danh sách chỉ mục (21/11/2026): wos cho mã 1.1f; scopus chỉ giải thích (thuộc
+   * Scopus mà chưa có hạng, hoặc đã bị loại).
+   */
+  nguon: z.enum(['sjr', 'core', 'scopus', 'wos']).nullable(),
   ma: z.string().nullable(),
   /** Tên trong bảng xếp hạng — để người khai thấy đã khớp ĐÚNG nơi đăng chưa. */
   tieuDe: z.string().nullable(),
   giaiThich: z.string(),
+  /**
+   * Nơi đăng KHÔNG thuộc Scopus ở năm công bố (Scopus đã loại…) dù bảng SJR năm trước
+   * vẫn cho hạng — form hiện nổi bật, Khoa quyết. Thiếu = không có gì để cảnh báo.
+   */
+  canhBao: z.string().nullable().optional(),
   bang: z.array(
     z.object({
       ten: z.string(),
@@ -29,19 +38,50 @@ export const GoiYResSchema = z.object({
 });
 export type GoiYResType = z.infer<typeof GoiYResSchema>;
 
-/** Nạp bảng: tệp CSV gửi multipart ở trường `file`. Năm SJR đọc ngay trong tệp. */
+const LoaiBangSchema = z.enum(['sjr', 'core', 'scopus', 'wos']);
+
+/**
+ * Nạp bảng: tệp gửi multipart ở trường `file`. SJR / CORE: tệp CSV gốc (năm SJR đọc
+ * ngay trong tệp). Scopus / WoS: GÓI JSON trình duyệt dựng từ tệp gốc (GoiChiMucSchema).
+ */
 export const NapBangBodySchema = z.object({
-  loai: z.enum(['sjr', 'core']),
+  loai: LoaiBangSchema,
 });
 export type NapBangBodyType = z.infer<typeof NapBangBodySchema>;
 
 export const NapBangResSchema = z.object({
-  loai: z.enum(['sjr', 'core']),
-  /** SJR: năm của bảng · CORE: các phiên bản trong tệp. */
+  loai: LoaiBangSchema,
+  /** SJR: năm của bảng · CORE: các phiên bản trong tệp · Scopus / WoS: bản danh sách. */
   ten: z.string(),
   soDong: z.number().int(),
   ghiChu: z.string(),
 });
+
+/**
+ * Gói danh sách chỉ mục trình duyệt quản trị dựng từ tệp gốc — Scopus Source List
+ * (.xlsx của Elsevier) hoặc các tệp CSV của Master Journal List (WoS). Giá trị giữ
+ * nguyên như tệp; máy chủ chuẩn hoá (chuanHoaChiMuc).
+ */
+export const GoiChiMucSchema = z.object({
+  /** "Scopus Sources Oct. 2026", "WoS MJL 2026-11-18"… */
+  phienBan: z.string().trim().min(1).max(200),
+  ds: z
+    .array(
+      z.object({
+        sourceId: z.string().max(100).optional(),
+        title: z.string().max(1000),
+        type: z.string().max(100).optional(),
+        issn: z.string().max(200).optional(),
+        coverage: z.string().max(2000).optional(),
+        active: z.boolean().optional(),
+        finalYear: z.number().int().min(1800).max(2200).nullable().optional(),
+        finalIssue: z.string().max(200).nullable().optional(),
+        finalReason: z.string().max(200).nullable().optional(),
+      }),
+    )
+    .max(200_000),
+});
+export type GoiChiMucType = z.infer<typeof GoiChiMucSchema>;
 
 export const TinhTrangBangResSchema = z.object({
   sjr: z.array(
@@ -49,6 +89,15 @@ export const TinhTrangBangResSchema = z.object({
   ),
   core: z.array(
     z.object({ ban: z.string(), soDong: z.number().int(), luc: z.date().nullable() }),
+  ),
+  /** Danh sách Scopus / WoS đã nạp — mỗi chỉ mục một bản. */
+  chiMuc: z.array(
+    z.object({
+      loai: z.enum(['scopus', 'wos']),
+      phienBan: z.string(),
+      soDong: z.number().int(),
+      luc: z.date().nullable(),
+    }),
   ),
   /** Nhắc quản trị: bảng SJR kỳ đang chạy còn thiếu, chưa có CORE… */
   canhBao: z.array(z.string()),
@@ -78,9 +127,14 @@ export const LechResSchema = z.object({
       nam: z.number().int().nullable(),
       thang: z.number().int().nullable(),
       maKhai: z.string(),
-      maGoiY: z.string(),
-      /** nang = bảng cho mã cao hơn · ha = khai cao hơn bảng · doi = cùng định mức, khác mục. */
-      huong: z.enum(['nang', 'ha', 'doi']),
+      /** null khi huong = ngoai — không có mã nào để áp tự động. */
+      maGoiY: z.string().nullable(),
+      /**
+       * nang = bảng cho mã cao hơn · ha = khai cao hơn bảng · doi = cùng định mức, khác
+       * mục · ngoai = khai mã Scopus (1.1a–e) / WoS (1.1f) mà nơi đăng không thuộc chỉ
+       * mục đó năm công bố — KHÔNG sửa tự động, Khoa xem từng bài.
+       */
+      huong: z.enum(['nang', 'ha', 'doi', 'ngoai']),
       giaiThich: z.string(),
       tacGia: z.array(z.string()),
     }),

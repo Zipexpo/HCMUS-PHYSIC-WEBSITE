@@ -11,6 +11,7 @@ import { PrismaService } from '../prisma/prisma.service';
 import { EventBusService } from '../shared/services/event-bus.service';
 import {
   banCoreCanCo,
+  chuanHoaChiMuc,
   chuanHoaIssn,
   docBangCore,
   docBangSjr,
@@ -19,15 +20,28 @@ import {
   goiYTheoCore,
   goiYTheoTr22,
   khopHoiNghi,
+  MA_SCOPUS,
+  MA_WOS_CHUA_HANG,
   maTheoCore,
   namBanCore,
   nhacBangSjr,
+  nhacDanhSachScopus,
   QUARTILE_MA,
   soSanhMa,
+  xetScopus,
+  xetWos,
+  type ChiMuc,
   type HoiNghiCore,
   type NganhHang,
+  type NguonChiMuc,
+  type XetChiMuc,
 } from './xep-hang';
-import type { GoiYQueryType, GoiYResType } from './xep-hang.model';
+import {
+  GoiChiMucSchema,
+  type GoiChiMucType,
+  type GoiYQueryType,
+  type GoiYResType,
+} from './xep-hang.model';
 
 const loiTep = (error: string) =>
   new UnprocessableEntityException([{ field: 'file', error }]);
@@ -68,6 +82,40 @@ type BaiCanGoiY = {
   type: string | null;
   publishedYear: number | null;
 };
+
+const CHON_CHI_MUC = {
+  indexer: true,
+  sourceId: true,
+  title: true,
+  type: true,
+  issns: true,
+  coverage: true,
+  active: true,
+  finalYear: true,
+  finalIssue: true,
+  finalReason: true,
+} as const;
+
+type DongChiMuc = Omit<NguonChiMuc, 'coverage'> & {
+  indexer: string;
+  coverage: Prisma.JsonValue;
+};
+
+/** Danh sách Scopus / WoS cho một lượt gợi ý: các nguồn khớp ISSN + bản đã nạp (null = chưa nạp). */
+type DuLieuChiMuc = {
+  dong: DongChiMuc[];
+  ban: Record<ChiMuc, string | null>;
+};
+
+/** Kết quả xét một nơi đăng — null ở chỉ mục chưa nạp danh sách. */
+type KetQuaChiMuc = { scopus: XetChiMuc | null; wos: XetChiMuc | null };
+
+const KHONG_CHI_MUC: DuLieuChiMuc = { dong: [], ban: { scopus: null, wos: null } };
+
+const nguonTu = (d: DongChiMuc): NguonChiMuc => ({
+  ...d,
+  coverage: (Array.isArray(d.coverage) ? d.coverage : []) as unknown as [number, number][],
+});
 
 const CHUA_NAP: GoiYResType = {
   nguon: null,
@@ -172,6 +220,75 @@ export class XepHangService {
   }
 
   /**
+   * Thay TRỌN danh sách một chỉ mục (Scopus hoặc WoS) bằng gói trình duyệt dựng từ tệp
+   * gốc. ~50.000 nguồn Scopus ghi ~10 giây — giao dịch tự mở với trần riêng như napSjr.
+   */
+  async napChiMuc(loai: ChiMuc, text: string) {
+    const ten = loai === 'scopus' ? 'Scopus' : 'Web of Science';
+    let goi: GoiChiMucType;
+    try {
+      goi = GoiChiMucSchema.parse(JSON.parse(text));
+    } catch {
+      throw loiTep(
+        `Tệp không phải gói danh sách ${ten} — chọn tệp gốc ở trang Bảng xếp hạng (phys-profile) để trình duyệt đọc rồi gửi.`,
+      );
+    }
+    const ds = chuanHoaChiMuc(loai, goi.ds);
+    // Ít hơn hẳn danh sách đầy đủ = tệp đã lọc / chọn thiếu bộ. Nạp vào là XOÁ các
+    // nguồn còn lại, và bài ở đó sẽ bị báo "không thuộc chỉ mục".
+    const toiThieu = loai === 'scopus' ? 20_000 : 3_000;
+    if (ds.length < toiThieu) {
+      throw loiTep(
+        `Gói chỉ có ${ds.length} nguồn — ` +
+          (loai === 'scopus'
+            ? 'danh sách Scopus đầy đủ có khoảng 50.000. Tải lại tệp Source List (.xlsx) ở trang Scopus Content của Elsevier.'
+            : 'danh sách WoS đủ bốn bộ (SCIE, SSCI, AHCI, ESCI) có khoảng 22.000. Chọn cùng lúc mọi tệp CSV tải ở Master Journal List.'),
+      );
+    }
+    await this.prisma.$transaction(
+      async (tx) => {
+        await tx.indexedSource.deleteMany({ where: { indexer: loai } });
+        for (const lo of chia(ds, 2000)) {
+          await tx.indexedSource.createMany({
+            data: lo.map((x) => ({
+              indexer: loai,
+              version: goi.phienBan,
+              sourceId: x.sourceId,
+              title: x.title,
+              type: x.type,
+              issns: x.issns,
+              coverage: x.coverage as unknown as Prisma.InputJsonValue,
+              active: x.active,
+              finalYear: x.finalYear,
+              finalIssue: x.finalIssue,
+              finalReason: x.finalReason,
+            })),
+            skipDuplicates: true,
+          });
+        }
+      },
+      { maxWait: 10_000, timeout: 180_000 },
+    );
+    const dem = new Map<string, number>();
+    for (const x of ds) {
+      for (const t of loai === 'wos' ? x.type.split(', ') : [x.type]) dem.set(t, (dem.get(t) ?? 0) + 1);
+    }
+    const theoLoai = [...dem.entries()]
+      .sort((a, b) => b[1] - a[1])
+      .map(([t, n]) => `${t} ${n.toLocaleString('vi-VN')}`)
+      .join(' · ');
+    return {
+      loai,
+      ten: goi.phienBan,
+      soDong: ds.length,
+      ghiChu:
+        loai === 'scopus'
+          ? `${theoLoai}. Còn nhận bài: ${ds.filter((x) => x.active).length.toLocaleString('vi-VN')}; Scopus đã ngừng nhận (có số cuối cùng): ${ds.filter((x) => x.finalYear !== null).length.toLocaleString('vi-VN')}.`
+          : `${theoLoai}.`,
+    };
+  }
+
+  /**
    * TỰ TẢI CORE: đọc danh sách phiên bản trên portal.core.edu.au rồi nạp hai phiên
    * bản mới nhất (gợi ý xét cả hai). Khác SCImago, trang CORE cho máy chủ tải thẳng.
    * `epBuoc` = tải lại cả phiên bản đã có (nút của quản trị); lượt hằng tháng chỉ
@@ -234,7 +351,7 @@ export class XepHangService {
   }
 
   async tinhTrang() {
-    const [sjr, core] = await Promise.all([
+    const [sjr, core, chiMuc] = await Promise.all([
       this.prisma.journalRanking.groupBy({
         by: ['year'],
         _count: { _all: true },
@@ -246,18 +363,36 @@ export class XepHangService {
         _count: { _all: true },
         _max: { createdAt: true },
       }),
+      this.prisma.indexedSource.groupBy({
+        by: ['indexer', 'version'],
+        _count: { _all: true },
+        _max: { createdAt: true },
+      }),
     ]);
+    const dsChiMuc = chiMuc
+      .map((r) => ({
+        loai: r.indexer as ChiMuc,
+        phienBan: r.version,
+        soDong: r._count._all,
+        luc: r._max.createdAt,
+      }))
+      .sort((a, b) => a.loai.localeCompare(b.loai));
     return {
       sjr: sjr.map((r) => ({ nam: r.year, soDong: r._count._all, luc: r._max.createdAt })),
       core: core
         .map((r) => ({ ban: r.source, soDong: r._count._all, luc: r._max.createdAt }))
         .sort((a, b) => namBanCore(b.ban) - namBanCore(a.ban)),
+      chiMuc: dsChiMuc,
       canhBao: [
         ...nhacBangSjr(
           sjr.map((r) => r.year),
           new Date(),
         ),
         ...(core.length ? [] : ['Chưa có bảng CORE — bấm «Tải CORE tự động».']),
+        ...nhacDanhSachScopus(
+          dsChiMuc.find((c) => c.loai === 'scopus')?.luc ?? null,
+          new Date(),
+        ),
       ],
     };
   }
@@ -279,16 +414,179 @@ export class XepHangService {
     });
   }
 
+  /** Bản danh sách Scopus / WoS đang nạp — null ở chỉ mục chưa nạp. */
+  private async banChiMuc(): Promise<Record<ChiMuc, string | null>> {
+    const ds = await this.prisma.indexedSource.findMany({
+      distinct: ['indexer'],
+      select: { indexer: true, version: true },
+    });
+    return {
+      scopus: ds.find((d) => d.indexer === 'scopus')?.version ?? null,
+      wos: ds.find((d) => d.indexer === 'wos')?.version ?? null,
+    };
+  }
+
+  /** Dòng Scopus / WoS của các ISSN — hoặc đúng tên nơi đăng khi bài không có ISSN. */
+  private async napChiMucCho(issns: string[], venue = ''): Promise<DuLieuChiMuc> {
+    const ban = await this.banChiMuc();
+    if (!ban.scopus && !ban.wos) return KHONG_CHI_MUC;
+    const where = issns.length
+      ? { issns: { hasSome: issns } }
+      : venue
+        ? { title: { equals: venue, mode: 'insensitive' as const } }
+        : null;
+    const dong = where
+      ? ((await this.prisma.indexedSource.findMany({ where, select: CHON_CHI_MUC })) as DongChiMuc[])
+      : [];
+    return { dong, ban };
+  }
+
+  /**
+   * Nơi đăng thuộc Scopus (năm `nam`) / WoS không. Bài không có ISSN thì chỉ tra theo
+   * ĐÚNG tên và chỉ tin kết quả khớp — tên viết khác đi một chữ là không thấy, nên
+   * "không thấy theo tên" không được coi là "không thuộc".
+   */
+  private xetChiMuc(
+    cm: DuLieuChiMuc,
+    issns: string[],
+    venue: string,
+    nam: number,
+  ): KetQuaChiMuc | null {
+    if (!cm.ban.scopus && !cm.ban.wos) return null;
+    const ten = venue.trim().toLowerCase();
+    if (!issns.length && !ten) return null;
+    const cua = cm.dong.filter((d) =>
+      issns.length ? d.issns.some((i) => issns.includes(i)) : d.title.trim().toLowerCase() === ten,
+    );
+    const theo = (k: ChiMuc) => cua.filter((d) => d.indexer === k).map(nguonTu);
+    const xet = (k: ChiMuc, f: (ds: NguonChiMuc[], ban: string) => XetChiMuc) => {
+      const ban = cm.ban[k];
+      if (!ban) return null;
+      const ds = theo(k);
+      return !issns.length && !ds.length ? null : f(ds, ban);
+    };
+    return {
+      scopus: xet('scopus', (ds, ban) => xetScopus(ds, nam, ban)),
+      wos: xet('wos', (ds, ban) => xetWos(ds, ban)),
+    };
+  }
+
+  /**
+   * Ghép danh sách chỉ mục vào gợi ý của bảng xếp hạng:
+   *  · bảng cho mã Scopus (1.1a–e) mà Scopus đã ngừng nhận nơi đăng trước năm công bố
+   *    → giữ mã, kèm CẢNH BÁO (bảng SJR năm trước vẫn còn tên tạp chí; Khoa quyết);
+   *  · bảng không cho mã: thuộc WoS → 1.1f (tạp chí) hoặc 2.1e (kỷ yếu); thuộc Scopus →
+   *    kỷ yếu 2.1e, tạp chí thì nói rõ "thuộc Scopus nhưng chưa có hạng"; không thuộc
+   *    danh sách nào → nói ra, để người khai khỏi chọn mã Scopus.
+   */
+  private boSungChiMuc(
+    kq: GoiYResType,
+    km: KetQuaChiMuc | null,
+    laKyYeu: boolean,
+  ): GoiYResType {
+    if (!km || (!km.scopus && !km.wos) || kq === CHUA_NAP) return kq;
+    const { scopus, wos } = km;
+    if (kq.ma) {
+      // Không thấy ở danh sách Scopus mà bảng SJR có = hai nơi ghi ISSN khác nhau — không kết luận.
+      if (MA_SCOPUS.has(kq.ma) && scopus && scopus.trangThai !== 'co' && scopus.tieuDe) {
+        return {
+          ...kq,
+          canhBao:
+            scopus.lyDo +
+            (scopus.trangThai === 'khong'
+              ? ' Bảng SJR năm trước vẫn còn tên tạp chí nên vẫn ra hạng — Khoa quyết bài có tính mục 1.1 (Scopus) không.'
+              : ' Xem số của bài trước khi chọn mã Scopus.'),
+        };
+      }
+      return kq;
+    }
+    const goc = kq.nguon ? kq.giaiThich : 'Không thấy nơi đăng trong các bảng SJR đã nạp.';
+    const ra = (
+      ma: string | null,
+      nguon: GoiYResType['nguon'],
+      tieuDe: string | null,
+      cau: string,
+    ): GoiYResType => ({
+      ...kq,
+      ma,
+      nguon,
+      tieuDe: kq.tieuDe ?? tieuDe,
+      giaiThich: `${goc} ${cau}`,
+    });
+    const thuoc = scopus?.trangThai === 'co' ? scopus : wos?.trangThai === 'co' ? wos : null;
+    if (laKyYeu) {
+      return thuoc
+        ? ra('2.1e', thuoc === scopus ? 'scopus' : 'wos', thuoc.tieuDe, `${thuoc.lyDo} → kỷ yếu thuộc WoS/Scopus: 2.1e.`)
+        : ra(
+            null,
+            kq.nguon,
+            null,
+            `${[scopus?.lyDo, wos?.lyDo].filter(Boolean).join(' ')} Kỷ yếu WoS (CPCI) không có trong Master Journal List — tra tay nếu cần.`,
+          );
+    }
+    if (wos?.trangThai === 'co') {
+      return ra(
+        MA_WOS_CHUA_HANG,
+        'wos',
+        wos.tieuDe,
+        `${wos.lyDo} Không có hạng Scopus Q1–Q4 → ${MA_WOS_CHUA_HANG}.${scopus ? ` (${scopus.lyDo})` : ''}`,
+      );
+    }
+    if (scopus?.trangThai === 'co') {
+      return ra(
+        null,
+        'scopus',
+        scopus.tieuDe,
+        `${scopus.lyDo} Nhưng chưa có hạng Q1–Q4 trong bảng SJR đã nạp nên chưa xếp được 1.1a–e; nơi đăng thuộc WoS thì ${MA_WOS_CHUA_HANG}${wos ? '' : ' (chưa nạp danh sách WoS để kiểm)'}.`,
+      );
+    }
+    const cau = [scopus?.lyDo, wos?.lyDo].filter(Boolean).join(' ');
+    const ket =
+      scopus && wos
+        ? ' → không thuộc Scopus / WoS năm công bố: không phải mục 1.1, xem mục 1.2 hoặc 1.4.'
+        : !wos
+          ? ' Chưa nạp danh sách WoS nên chưa kiểm được mục 1.1f.'
+          : ' Chưa nạp danh sách Scopus.';
+    return ra(null, kq.nguon, null, cau + ket);
+  }
+
+  /**
+   * Bài khai mã Scopus (1.1a–e) mà nơi đăng không thuộc Scopus năm công bố, hoặc khai
+   * 1.1f mà không có trong danh sách WoS — lý do, hoặc null. Chỉ xét bài có ISSN.
+   */
+  private ngoaiChiMuc(
+    p: BaiCanGoiY & { catalogCode: string | null },
+    g: GoiYResType,
+    duLieu: { tapChi: DongTapChi[]; chiMuc: DuLieuChiMuc },
+  ): string | null {
+    const code = p.catalogCode ?? '';
+    const issns = chuanHoaIssn(p.issn);
+    if (!issns.length) return null;
+    const km = this.xetChiMuc(duLieu.chiMuc, issns, '', p.publishedYear ?? new Date().getFullYear());
+    if (!km) return null;
+    if (MA_SCOPUS.has(code) && km.scopus && km.scopus.trangThai !== 'co') {
+      const coSjr = duLieu.tapChi.some((r) => r.issns.some((i) => issns.includes(i)));
+      if (km.scopus.tieuDe || !coSjr) return `Khai ${code} (mã Scopus) — ${km.scopus.lyDo}`;
+    }
+    // 1.1f mà bảng SJR cho hạng thì đã có gợi ý nâng mã — không báo trùng.
+    if (code === MA_WOS_CHUA_HANG && !g.ma && km.wos?.trangThai === 'khong') {
+      return `Khai ${code} (WoS) — ${km.wos.lyDo}`;
+    }
+    return null;
+  }
+
   async goiY(q: GoiYQueryType): Promise<GoiYResType> {
     const nam = q.year ?? new Date().getFullYear();
     const venue = (q.venue ?? '').trim();
-    if ((q.loai === 'hoi-nghi' || laHoiNghi(venue)) && venue) {
+    const issns = chuanHoaIssn(q.issn);
+    const laKyYeu = q.loai === 'hoi-nghi' || laHoiNghi(venue);
+    const km = this.xetChiMuc(await this.napChiMucCho(issns, venue), issns, venue, nam);
+    if (laKyYeu && venue) {
       const core = this.goiYCore(venue, nam, await this.dsCore());
-      if (core) return core;
+      if (core) return this.boSungChiMuc(core, km, true);
     }
     const namDaNap = await this.namDaNap();
     if (!namDaNap.length) return CHUA_NAP;
-    const issns = chuanHoaIssn(q.issn);
     let rows: DongTapChi[] = issns.length
       ? await this.prisma.journalRanking.findMany({
           where: { issns: { hasSome: issns } },
@@ -301,7 +599,7 @@ export class XepHangService {
         select: CHON_TAP_CHI,
       });
     }
-    return this.goiYTapChi(rows, nam, namDaNap);
+    return this.boSungChiMuc(this.goiYTapChi(rows, nam, namDaNap), km, laKyYeu);
   }
 
   private goiYCore(venue: string, nam: number, ds: HoiNghiCore[]): GoiYResType | null {
@@ -373,23 +671,31 @@ export class XepHangService {
   /** Gợi ý cho MỘT bài với dữ liệu đã nạp sẵn — dùng chung cho danh sách soát và nút áp dụng. */
   private goiYChoBai(
     p: BaiCanGoiY,
-    duLieu: { namDaNap: number[]; tapChi: DongTapChi[]; core: HoiNghiCore[] },
+    duLieu: {
+      namDaNap: number[];
+      tapChi: DongTapChi[];
+      core: HoiNghiCore[];
+      chiMuc: DuLieuChiMuc;
+    },
   ): GoiYResType {
     const nam = p.publishedYear ?? new Date().getFullYear();
     const venue = (p.containerTitle ?? '').trim();
-    if (venue && (/proceedings|conference/i.test(p.type ?? '') || laHoiNghi(venue))) {
-      const core = this.goiYCore(venue, nam, duLieu.core);
-      if (core) return core;
-    }
     const issns = chuanHoaIssn(p.issn);
+    const laKyYeu = /proceedings|conference/i.test(p.type ?? '') || laHoiNghi(venue);
+    // Dữ liệu chỉ mục nạp theo ISSN của cả lô — tra theo tên ở đây sẽ thiếu, nên chỉ xét bài có ISSN.
+    const km = issns.length ? this.xetChiMuc(duLieu.chiMuc, issns, '', nam) : null;
+    if (venue && laKyYeu) {
+      const core = this.goiYCore(venue, nam, duLieu.core);
+      if (core) return this.boSungChiMuc(core, km, true);
+    }
     const rows = issns.length
       ? duLieu.tapChi.filter((r) => r.issns.some((i) => issns.includes(i)))
       : [];
-    return this.goiYTapChi(rows, nam, duLieu.namDaNap);
+    return this.boSungChiMuc(this.goiYTapChi(rows, nam, duLieu.namDaNap), km, laKyYeu);
   }
 
   private async napDuLieu(issns: string[], canCore: boolean) {
-    const [namDaNap, tapChi, core] = await Promise.all([
+    const [namDaNap, tapChi, core, chiMuc] = await Promise.all([
       this.namDaNap(),
       issns.length
         ? this.prisma.journalRanking.findMany({
@@ -398,8 +704,9 @@ export class XepHangService {
           })
         : Promise.resolve([] as DongTapChi[]),
       canCore ? this.dsCore() : Promise.resolve([] as HoiNghiCore[]),
+      this.napChiMucCho(issns),
     ]);
-    return { namDaNap, tapChi, core };
+    return { namDaNap, tapChi, core, chiMuc };
   }
 
   // ── Soát mã lệch ───────────────────────────────────────────────────────────
@@ -447,9 +754,7 @@ export class XepHangService {
     const items = [];
     for (const p of trong) {
       const g = this.goiYChoBai(p, duLieu);
-      const huong = soSanhMa(p.catalogCode, g.ma);
-      if (!huong || !g.ma) continue;
-      items.push({
+      const chung = {
         id: p.id,
         title: p.title,
         venue: p.containerTitle,
@@ -457,13 +762,30 @@ export class XepHangService {
         nam: p.publishedYear,
         thang: p.publishedMonth,
         maKhai: p.catalogCode as string,
-        maGoiY: g.ma,
-        huong,
-        giaiThich: (p.publishedMonth ? '' : 'Bài chưa có tháng công bố. ') + g.giaiThich,
         tacGia: p.authors
           .map((a) => [a.user?.lastName, a.user?.firstName].filter(Boolean).join(' '))
           .filter(Boolean),
-      });
+      };
+      const thang = p.publishedMonth ? '' : 'Bài chưa có tháng công bố. ';
+      // Khai mã Scopus mà nơi đăng không thuộc Scopus năm đó: không có mã nào để áp tự
+      // động (1.2 hay 1.4 là việc Khoa xét), nên chỉ liệt kê — giao diện không có nút sửa.
+      // Có mã thay thế áp được (khai 1.1e mà tạp chí chỉ thuộc WoS → 1.1f) thì để nhánh
+      // thường bên dưới đưa ra, kèm nút sửa.
+      const coMaThay = !!g.ma && !MA_SCOPUS.has(g.ma) && !!soSanhMa(p.catalogCode, g.ma);
+      const ngoai = coMaThay ? null : this.ngoaiChiMuc(p, g, duLieu);
+      if (ngoai) {
+        items.push({
+          ...chung,
+          maGoiY: null,
+          huong: 'ngoai' as const,
+          giaiThich:
+            thang + ngoai + (g.ma && g.ma !== p.catalogCode ? ` (Bảng SJR năm trước cho ${g.ma}.)` : ''),
+        });
+        continue;
+      }
+      const huong = soSanhMa(p.catalogCode, g.ma);
+      if (!huong || !g.ma) continue;
+      items.push({ ...chung, maGoiY: g.ma, huong, giaiThich: thang + g.giaiThich });
     }
     return { tu, den, soBai: trong.length, items };
   }

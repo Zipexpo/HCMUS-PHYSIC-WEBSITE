@@ -53,6 +53,8 @@ export class XepHangController {
   /**
    * Nạp tệp CSV tải từ SCImago ("Download data" ở journalrank.php, KHÔNG lọc) hoặc
    * CORE (nút Export ở portal.core.edu.au/conf-ranks). Bảng SJR đầy đủ ~11 MB.
+   * Scopus Source List / Master Journal List (WoS): trang quản trị đọc tệp gốc trong
+   * trình duyệt rồi gửi gói JSON (~8 MB với Scopus) ở cùng trường `file`.
    */
   @Post('import')
   @Roles(RoleName.Admin, RoleName.SuperAdmin)
@@ -70,9 +72,15 @@ export class XepHangController {
       ]);
     }
     const text = file.buffer.toString('utf8');
-    return body.loai === 'sjr'
-      ? this.xepHang.napSjr(text)
-      : this.xepHang.napCore(text);
+    switch (body.loai) {
+      case 'sjr':
+        return this.xepHang.napSjr(text);
+      case 'core':
+        return this.xepHang.napCore(text);
+      default:
+        // Scopus / WoS: gói JSON trình duyệt dựng từ tệp gốc (.xlsx / các CSV).
+        return this.xepHang.napChiMuc(body.loai, text);
+    }
   }
 
   /**

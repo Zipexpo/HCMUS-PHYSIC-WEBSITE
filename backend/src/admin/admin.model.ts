@@ -79,11 +79,28 @@ export const UpdateAdminProfileBodySchema = z.object({
   teacherId: z.string().nullable().optional(),
   employmentType: z.string().nullable().optional(),
   departmentId: z.string().nullable().optional(),
+  /** Vì sao đổi ngạch. BẮT BUỘC khi `rank` khác giá trị đang lưu. */
+  rankReason: z.string().trim().min(1).max(500).optional(),
+  /** Ngày ngạch mới có hiệu lực. BẮT BUỘC khi `rank` đổi. */
+  rankEffectiveFrom: z.coerce.date().optional(),
 });
 
 export type UpdateAdminProfileBodyType = z.infer<
   typeof UpdateAdminProfileBodySchema
 >;
+
+/** Một dòng nhật ký đổi ngạch, trả về cho trang quản trị. */
+export const RankChangeResSchema = z.object({
+  id: z.string(),
+  fromRank: z.string().nullable(),
+  toRank: z.string().nullable(),
+  reason: z.string(),
+  effectiveFrom: z.date(),
+  createdAt: z.date(),
+  changedByName: z.string().nullable(),
+});
+
+export type RankChangeResType = z.infer<typeof RankChangeResSchema>;
 
 /** Bật/tắt quyền xem thống kê NCKH — không đổi vai trò, không mở trang quản trị. */
 export const SetStatsAccessBodySchema = z.object({

@@ -9,6 +9,7 @@ import {
 } from './admin.model';
 import {
   AdminNotFoundException,
+  RankChangeNeedsReasonException,
   CannotMutateSuperAdminException,
 } from './admin.error';
 import { HashingService } from '../shared/services/hashing.service';
@@ -138,16 +139,55 @@ export class AdminService {
    * Khoa làm chủ các trường này. KHÔNG chặn SUPER_ADMIN như suspend/reset: sửa
    * hồ sơ là vô hại, khác với khoá tài khoản.
    */
-  async updateProfile(id: string, body: UpdateAdminProfileBodyType) {
+  async updateProfile(
+    id: string,
+    body: UpdateAdminProfileBodyType,
+    changedBy?: string,
+  ) {
     const user = await this.adminRepository.findById(id);
     if (!user) throw AdminNotFoundException;
+
+    // ── Đổi ngạch phải có lý do + ngày hiệu lực ───────────────────────────
+    // Ngạch quyết định mẫu phiếu và bộ tiêu chí chấm bên ACADsoom, nên đổi
+    // ngạch sau khi người ta đã ký làm tờ in ra khác tờ đã ký. Bắt khai lý do
+    // và ngày hiệu lực NGAY LÚC ĐỔI, vì sau đó không ai dựng lại được.
+    // So sánh chuẩn hoá: 'CV' và 'cv' là một, đổi hoa thường không tính là đổi.
+    const norm = (v: unknown) => (typeof v === 'string' ? v.trim() : v) || null;
+    const nextRank = body.rank !== undefined ? norm(body.rank) : undefined;
+    const rankChanged =
+      nextRank !== undefined &&
+      String(nextRank ?? '').toLowerCase() !==
+        String(norm(user.rank) ?? '').toLowerCase();
+
+    if (rankChanged && (!body.rankReason || !body.rankEffectiveFrom)) {
+      throw RankChangeNeedsReasonException;
+    }
+
     const updated = await this.adminRepository.updateProfile(id, body);
+
+    if (rankChanged) {
+      await this.adminRepository.logRankChange({
+        userId: id,
+        fromRank: norm(user.rank) as string | null,
+        toRank: nextRank as string | null,
+        reason: body.rankReason as string,
+        effectiveFrom: body.rankEffectiveFrom as Date,
+        changedBy: changedBy ?? null,
+      });
+    }
     // Gán/đổi đơn vị là lúc người này mới đủ điều kiện lên trang — thử dựng trang
     // nhân sự (idempotent, ai đã có trang thì bỏ qua). Chỉ khi có đụng tới đơn vị.
     if (body.departmentId !== undefined && body.departmentId) {
       await this.ensureStaffPageSafely(id);
     }
     return updated;
+  }
+
+  /** Nhật ký đổi ngạch của một cán bộ. */
+  async listRankChanges(id: string) {
+    const user = await this.adminRepository.findById(id);
+    if (!user) throw AdminNotFoundException;
+    return this.adminRepository.listRankChanges(id);
   }
 
   private async loadAdminOrThrow(id: string) {

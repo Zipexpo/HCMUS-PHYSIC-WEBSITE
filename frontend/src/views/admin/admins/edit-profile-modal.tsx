@@ -10,7 +10,7 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
-import { adminApi, type AdminListItem, type StaffUnit } from "@/lib/api";
+import { type AdminListItem, adminApi, type StaffUnit } from "@/lib/api";
 
 // Khoá phải khớp ĐÚNG chuỗi ACADsoom dùng (Mục 10.4).
 // Export để trang "Quản lý cán bộ" (create-staff-modal) dùng chung, khỏi copy.
@@ -22,6 +22,7 @@ export const RANKS: [string, string][] = [
   ["NCV", "Nghiên cứu viên"],
   ["NCVC", "Nghiên cứu viên chính"],
   ["CV", "Chuyên viên"],
+  ["KTV", "Kỹ thuật viên"],
   ["NV", "Nhân viên phòng ban"],
 ];
 export const POSITIONS: [string, string][] = [
@@ -77,6 +78,16 @@ export function EditProfileModal({
   const [departmentId, setDepartmentId] = useState(person.department?.id ?? "");
   const [positionFrom, setPositionFrom] = useState(day(person.positionFrom));
   const [positionTo, setPositionTo] = useState(day(person.positionTo));
+  // Đổi ngạch phải khai lý do + ngày hiệu lực. So không phân biệt hoa thường,
+  // khớp đúng luật backend dùng, để giao diện không chặn/thả lệch với nó.
+  const [rankReason, setRankReason] = useState("");
+  const [rankEffectiveFrom, setRankEffectiveFrom] = useState(
+    new Date().toISOString().slice(0, 10),
+  );
+  const rankChanged =
+    (rank || "").trim().toLowerCase() !==
+    (person.rank ?? "").trim().toLowerCase();
+  const thieuKhai = rankChanged && !rankReason.trim();
 
   const save = useMutation({
     mutationKey: ["ADMINS", "UPDATE_PROFILE", person.id],
@@ -90,6 +101,12 @@ export function EditProfileModal({
         departmentId: nn(departmentId),
         positionFrom: nn(positionFrom),
         positionTo: nn(positionTo),
+        ...(rankChanged
+          ? {
+              rankReason: rankReason.trim(),
+              rankEffectiveFrom: rankEffectiveFrom,
+            }
+          : {}),
       }),
     onSuccess: () => {
       toast.success("Đã lưu hồ sơ");
@@ -141,6 +158,41 @@ export function EditProfileModal({
               ))}
             </select>
           </Field>
+
+          {/* Hai ô này CHỈ hiện khi ngạch thật sự đổi — sửa học vị hay đơn vị
+              thì không bắt khai gì. */}
+          {rankChanged ? (
+            <div className="col-span-2 rounded-lg border border-amber-300 bg-amber-50 dark:border-amber-700/60 dark:bg-amber-950/30 p-3 space-y-3">
+              <p className="text-xs text-amber-900 dark:text-amber-200">
+                Đang đổi ngạch <b>{person.rank || "(chưa đặt)"}</b> →{" "}
+                <b>{rank || "(xoá trắng)"}</b>. Ngạch quyết định mẫu phiếu bên
+                ACADsoom, nên phải ghi lại lý do và ngày có hiệu lực.
+              </p>
+              <Field label="Lý do đổi ngạch *" htmlFor={`${id}-rank-reason`}>
+                <input
+                  id={`${id}-rank-reason`}
+                  value={rankReason}
+                  onChange={(e) => setRankReason(e.target.value)}
+                  maxLength={500}
+                  placeholder="VD: chuyển vị trí việc làm theo QĐ số…"
+                  className={fieldCls}
+                />
+              </Field>
+              <Field label="Có hiệu lực từ *" htmlFor={`${id}-rank-effective`}>
+                <input
+                  id={`${id}-rank-effective`}
+                  type="date"
+                  value={rankEffectiveFrom}
+                  onChange={(e) => setRankEffectiveFrom(e.target.value)}
+                  className={fieldCls}
+                />
+              </Field>
+              <p className="text-[11px] text-amber-700 dark:text-amber-400">
+                Ngày hiệu lực có thể khác hôm nay — hồi tố hoặc áp dụng từ kỳ
+                sau đều được.
+              </p>
+            </div>
+          ) : null}
 
           <Field label="Học vị" htmlFor={`${id}-degree`}>
             <select
@@ -246,7 +298,8 @@ export function EditProfileModal({
             </button>
             <button
               type="submit"
-              disabled={save.isPending}
+              disabled={save.isPending || thieuKhai}
+              title={thieuKhai ? "Đổi ngạch phải ghi lý do" : undefined}
               className="px-3 py-1.5 text-xs font-semibold rounded-md bg-blue-600 hover:bg-blue-700 text-white disabled:opacity-50"
             >
               {save.isPending ? "Đang lưu…" : "Lưu hồ sơ"}

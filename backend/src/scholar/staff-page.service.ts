@@ -152,6 +152,12 @@ const RANK_ROLE: Record<string, Localized> = {
   trg: { vi: 'Trợ giảng', en: 'Teaching Assistant' },
   ncv: { vi: 'Nghiên cứu viên', en: 'Researcher' },
   ncvc: { vi: 'Nghiên cứu viên chính', en: 'Senior Researcher' },
+  ktv: { vi: 'Kỹ thuật viên', en: 'Technician' },
+  // Mã NV đã có trong ô chọn ngạch của trang quản trị từ trước, nhưng bảng này
+  // thiếu nên ai để ngạch đó vẫn hiện nhầm thành "Giảng viên".
+  // Chữ hiển thị phải khớp ĐÚNG ô chọn trong admin và bảng dịch bên ACADsoom —
+  // ba nơi cùng một mã mà hiện ba kiểu thì người đọc tưởng là ba chức danh.
+  nv: { vi: 'Nhân viên phòng ban', en: 'Office Staff' },
 };
 const roleFromDb = (
   u?: {

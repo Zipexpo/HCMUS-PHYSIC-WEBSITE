@@ -409,6 +409,9 @@ export const GIO_MA: Record<string, number> = {
   '1.1c': 3000,
   '1.1d': 2400,
   '1.1e': 1800,
+  // 1.1f (WoS, chưa có hạng Scopus) — so được từ khi có danh sách WoS (21/11/2026):
+  // bài khai 1.1e mà tạp chí không có hạng SJR nhưng thuộc WoS thì đúng mục là 1.1f.
+  '1.1f': 1800,
   '2.1a': 4500,
   '2.1b': 3600,
   '2.1c': 3000,
@@ -439,4 +442,204 @@ export function soSanhMa(
   const b = GIO_MA[maGoiY];
   if (a === undefined || b === undefined) return null;
   return b > a ? 'nang' : b < a ? 'ha' : 'doi';
+}
+
+// ── Danh sách CHỈ MỤC: Scopus (Elsevier) và Web of Science (Clarivate) — 21/11/2026 ──
+//
+// Bảng SJR chỉ có tạp chí đã đủ dữ liệu trích dẫn để xếp hạng, nên "vắng trong SJR"
+// không có nghĩa "không thuộc Scopus", và một tạp chí Scopus đã LOẠI vẫn còn trong
+// bảng SJR của năm trước. Đo 21/11/2026 trên 597 công bố từ 2020: ba bài Optical and
+// Quantum Electronics năm 2025 khai 1.1b/1.1c dù Scopus ngừng nhận tạp chí này sau tập
+// 56 số 8 (2024); một bài 2026 khai 1.1d ở tạp chí Scopus loại năm 2025.
+//
+// Trình duyệt quản trị đọc tệp gốc (Scopus: .xlsx ~27 MB; WoS: các tệp CSV của Master
+// Journal List) rồi gửi một GÓI JSON đã rút gọn cột — máy chủ không cần thư viện xlsx
+// và tệp gốc không qua nổi giới hạn 4,5 MB của Vercel. Chuẩn hoá và luật nằm ở đây.
+
+export type ChiMuc = 'scopus' | 'wos';
+
+/** Một dòng trong gói trình duyệt gửi — tên cột đã đổi, giá trị còn NGUYÊN như tệp gốc. */
+export type DongGoiChiMuc = {
+  sourceId?: string;
+  title: string;
+  /** Scopus: Journal / Book Series / Trade Journal / Conference Proceedings · WoS: SCIE / SSCI / AHCI / ESCI. */
+  type?: string;
+  /** Mọi ISSN của nguồn (in + điện tử), dạng gì cũng được. */
+  issn?: string;
+  /** Cột "Coverage" của Scopus: "2026; 2023-2024". */
+  coverage?: string;
+  active?: boolean;
+  finalYear?: number | null;
+  finalIssue?: string | null;
+  finalReason?: string | null;
+};
+
+/** Một nguồn đã chuẩn hoá — đúng các cột của bảng IndexedSource. */
+export type NguonChiMuc = {
+  sourceId: string;
+  title: string;
+  type: string;
+  issns: string[];
+  /** Các khoảng năm Scopus phủ; WoS để trống — Master Journal List chỉ nói HIỆN TẠI. */
+  coverage: [number, number][];
+  active: boolean;
+  /** Scopus ngừng nhận: năm / tập-số cuối cùng có trong Scopus và lý do (sheet "Discontinued Titles"). */
+  finalYear: number | null;
+  finalIssue: string | null;
+  finalReason: string | null;
+};
+
+/** Cột Coverage của Scopus: "2026; 2023-2024; 1997" → [[2023,2024],[1997,1997],[2026,2026]] (tăng dần). */
+export function docKhoangNam(s?: string | null): [number, number][] {
+  const ra: [number, number][] = [];
+  for (const m of (s ?? '').matchAll(/(\d{4})(?:\s*[-–]\s*(\d{4}))?/g)) {
+    const a = Number(m[1]);
+    const b = Number(m[2] ?? m[1]);
+    ra.push(a <= b ? [a, b] : [b, a]);
+  }
+  return ra.sort((x, y) => x[0] - y[0]);
+}
+
+/** [[1997,2015],[2018,2026]] → "1997–2015, 2018–2026". */
+export const vietKhoangNam = (k: [number, number][]) =>
+  k.map(([a, b]) => (a === b ? `${a}` : `${a}–${b}`)).join(', ');
+
+const BO_WOS = ['SCIE', 'SSCI', 'AHCI', 'ESCI'];
+
+/**
+ * Chuẩn hoá gói trình duyệt gửi. Scopus: khoá là Sourcerecord ID. WoS: một tạp chí có
+ * thể nằm ở hai bộ (SCIE và SSCI) — gộp làm một dòng, type ghi cả hai.
+ */
+export function chuanHoaChiMuc(loai: ChiMuc, ds: DongGoiChiMuc[]): NguonChiMuc[] {
+  const theoKhoa = new Map<string, NguonChiMuc>();
+  for (const d of ds) {
+    const title = (d.title ?? '').trim();
+    const issns = chuanHoaIssn(d.issn);
+    if (!title && !issns.length) continue;
+    const type = (d.type ?? '').trim() || (loai === 'scopus' ? 'Journal' : 'WoS');
+    const khoa =
+      loai === 'scopus'
+        ? (d.sourceId ?? '').trim() || (issns[0] ? `issn:${issns[0]}` : `ten:${title.toLowerCase()}`)
+        : issns[0] ?? `ten:${title.toLowerCase()}`;
+    const cu = theoKhoa.get(khoa);
+    if (cu) {
+      cu.issns = [...new Set([...cu.issns, ...issns])];
+      if (loai === 'wos' && !cu.type.split(', ').includes(type)) {
+        cu.type = [...cu.type.split(', '), type]
+          .sort((a, b) => (BO_WOS.indexOf(a) + 99) % 99 - (BO_WOS.indexOf(b) + 99) % 99)
+          .join(', ');
+      }
+      // Dòng "ngừng nhận" đến trước dòng chính thì chưa có năm phủ — lấy của dòng chính.
+      if (loai === 'scopus' && !cu.coverage.length) cu.coverage = docKhoangNam(d.coverage);
+      cu.finalYear ??= d.finalYear ?? null;
+      cu.finalIssue ??= d.finalIssue?.trim() || null;
+      cu.finalReason ??= d.finalReason?.trim() || null;
+      continue;
+    }
+    theoKhoa.set(khoa, {
+      sourceId: khoa,
+      title,
+      type,
+      issns,
+      coverage: loai === 'scopus' ? docKhoangNam(d.coverage) : [],
+      active: d.active ?? true,
+      finalYear: Number.isInteger(d.finalYear) ? (d.finalYear as number) : null,
+      finalIssue: d.finalIssue?.trim() || null,
+      finalReason: d.finalReason?.trim() || null,
+    });
+  }
+  return [...theoKhoa.values()];
+}
+
+/** co = thuộc · khong = không thuộc · xem = không chắc, phải xem tập/số của bài. */
+export type TrangThaiChiMuc = 'co' | 'khong' | 'xem';
+export type XetChiMuc = { trangThai: TrangThaiChiMuc; tieuDe: string | null; lyDo: string };
+
+/**
+ * Nơi đăng có thuộc Scopus ở NĂM CÔNG BỐ không, theo danh sách đã nạp. `dong` = các
+ * nguồn Scopus khớp ISSN của bài (thường một). Luật:
+ *  · Scopus ngừng nhận sau năm F (bị loại) mà bài năm > F → không thuộc; bài đúng năm
+ *    F → phải xem bài có nằm trong số cuối cùng trở về trước không.
+ *  · Năm công bố nằm trong một khoảng Coverage → thuộc.
+ *  · Nguồn còn nhận bài (Active) mà năm công bố mới hơn cả danh sách → thuộc.
+ *  · Còn lại (trước khi Scopus nhận, rơi vào khoảng trống, sau khi ngừng) → không thuộc.
+ */
+export function xetScopus(dong: NguonChiMuc[], nam: number, phienBan: string): XetChiMuc {
+  if (!dong.length) {
+    return { trangThai: 'khong', tieuDe: null, lyDo: `Không có trong danh sách Scopus (${phienBan}).` };
+  }
+  const phu = (n: NguonChiMuc) => n.coverage.some(([a, b]) => a <= nam && nam <= b);
+  const n = dong.find(phu) ?? dong.find((x) => x.finalYear !== null) ?? dong[0];
+  // Ghi tên theo Scopus: bài khai nhầm ISSN của tạp chí khác thì người đọc thấy ngay tên lạ.
+  const cov = `«${n.title}» — ${n.coverage.length ? `Scopus phủ ${vietKhoangNam(n.coverage)}` : 'Scopus không ghi năm phủ'}`;
+  if (n.finalYear !== null) {
+    const cuoi = `${n.finalIssue ? `${n.finalIssue}, ` : ''}năm ${n.finalYear}`;
+    const vi = n.finalReason ? ` (${n.finalReason})` : '';
+    if (nam > n.finalYear) {
+      return {
+        trangThai: 'khong',
+        tieuDe: n.title,
+        lyDo: `Scopus ngừng nhận «${n.title}» sau ${cuoi}${vi} — bài năm ${nam} không thuộc Scopus.`,
+      };
+    }
+    if (nam === n.finalYear) {
+      return {
+        trangThai: 'xem',
+        tieuDe: n.title,
+        lyDo: `Scopus ngừng nhận «${n.title}» sau ${cuoi}${vi} — bài cùng năm chỉ thuộc Scopus nếu nằm trong số đó trở về trước.`,
+      };
+    }
+  }
+  if (phu(n)) return { trangThai: 'co', tieuDe: n.title, lyDo: `${cov}.` };
+  const cuoiPhu = n.coverage.length ? n.coverage[n.coverage.length - 1][1] : null;
+  if (n.active && cuoiPhu !== null && nam > cuoiPhu) {
+    return { trangThai: 'co', tieuDe: n.title, lyDo: `${cov}, vẫn đang nhận bài.` };
+  }
+  return {
+    trangThai: 'khong',
+    tieuDe: n.title,
+    lyDo: `${cov}; năm ${nam} không nằm trong đó.`,
+  };
+}
+
+/**
+ * Nơi đăng có thuộc Web of Science không. Master Journal List chỉ cho biết danh sách
+ * HIỆN TẠI (không có năm), nên lời giải thích nói rõ bản danh sách nào.
+ */
+export function xetWos(dong: NguonChiMuc[], phienBan: string): XetChiMuc {
+  if (!dong.length) {
+    return {
+      trangThai: 'khong',
+      tieuDe: null,
+      lyDo: `Không có trong danh sách Web of Science (${phienBan}).`,
+    };
+  }
+  const n = dong[0];
+  return {
+    trangThai: 'co',
+    tieuDe: n.title,
+    lyDo: `Thuộc Web of Science (${n.type}) theo danh sách ${phienBan} — danh sách chỉ cho biết hiện tại, không có năm.`,
+  };
+}
+
+/** Mã tạp chí xếp theo hạng Scopus Q1–Q4 — bài ở nơi KHÔNG thuộc Scopus năm đó không dùng được. */
+export const MA_SCOPUS = new Set(['1.1a', '1.1b', '1.1c', '1.1d', '1.1e']);
+
+/** Mã 1.1f: tạp chí thuộc WoS mà chưa có hạng Scopus Q1–Q4. */
+export const MA_WOS_CHUA_HANG = '1.1f';
+
+/**
+ * Danh sách Scopus nạp đã lâu thì nhắc nạp lại — Elsevier cập nhật hằng tháng (thêm
+ * tạp chí mới, loại tạp chí kém). 120 ngày ≈ một kỳ nghỉ giữa hai lần soát.
+ */
+export function nhacDanhSachScopus(luc: Date | null, homNay: Date): string[] {
+  if (!luc) {
+    return [
+      'Chưa nạp danh sách Scopus — gợi ý chưa biết tạp chí nào đã bị Scopus loại, hay thuộc Scopus mà chưa có hạng SJR.',
+    ];
+  }
+  const ngay = Math.floor((homNay.getTime() - luc.getTime()) / 86_400_000);
+  return ngay > 120
+    ? [`Danh sách Scopus nạp đã ${ngay} ngày — Elsevier cập nhật hằng tháng, nên tải bản mới rồi nạp lại.`]
+    : [];
 }

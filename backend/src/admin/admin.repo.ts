@@ -118,6 +118,51 @@ export class AdminRepository {
     return this.prisma.user.findUnique({ where: { id } });
   }
 
+  /** Ghi một dòng nhật ký đổi ngạch. */
+  logRankChange(data: {
+    userId: string;
+    fromRank: string | null;
+    toRank: string | null;
+    reason: string;
+    effectiveFrom: Date;
+    changedBy: string | null;
+  }) {
+    return this.prisma.rankChange.create({ data });
+  }
+
+  /** Nhật ký đổi ngạch của một người, mới nhất trước. */
+  async listRankChanges(userId: string) {
+    const rows = await this.prisma.rankChange.findMany({
+      where: { userId },
+      orderBy: [{ effectiveFrom: 'desc' }, { createdAt: 'desc' }],
+      take: 50,
+    });
+    // Tên người bấm đổi lấy riêng: changedBy không có khoá ngoại (người đó có
+    // thể đã bị xoá, mà nhật ký thì phải còn).
+    const ids = [...new Set(rows.map((r) => r.changedBy).filter(Boolean))];
+    const actors = ids.length
+      ? await this.prisma.user.findMany({
+          where: { id: { in: ids as string[] } },
+          select: { id: true, firstName: true, lastName: true, email: true },
+        })
+      : [];
+    const byId = new Map(actors.map((a) => [a.id, a]));
+    return rows.map((r) => {
+      const a = r.changedBy ? byId.get(r.changedBy) : undefined;
+      return {
+        id: r.id,
+        fromRank: r.fromRank,
+        toRank: r.toRank,
+        reason: r.reason,
+        effectiveFrom: r.effectiveFrom,
+        createdAt: r.createdAt,
+        changedByName: a
+          ? `${a.lastName ?? ''} ${a.firstName ?? ''}`.trim() || a.email
+          : null,
+      };
+    });
+  }
+
   updateProfile(id: string, body: UpdateAdminProfileBodyType) {
     return this.prisma.user.update({
       where: { id },
