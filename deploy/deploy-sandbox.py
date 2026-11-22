@@ -21,6 +21,14 @@ HOST, PORT, USER = "103.88.122.23", 63379, "vlkt"
 REMOTE_DIR = "/home/vlkt/hcmus-cms"
 COMPOSE = f"docker compose -f {REMOTE_DIR}/docker-compose.sandbox.yml"
 
+# KHONG dat ten /tmp/deploy.tar.gz hay /home/vlkt/*.tar.gz: watchdog.sh tren box
+# chay MOI PHUT, va khi o goc con < 2048MB no `rm -f` dung hai mau ten do de don
+# rac. Goi 300MB mat ~35s de tai len, nen nhip watchdog roi trung giua chung la
+# goi bien mat ngay sau khi ghi xong -> sftp bao "[Errno 2] No such file".
+# Dinh hai lan lien tiep ngay 2026-11-22 (o goc con 1769MB). Doi ten la du:
+# nap anh ghi vao /var/lib/docker (loopback rieng), khong phai o goc.
+REMOTE_TGZ = "/tmp/hcmus-upload.tar.gz"
+
 if len(sys.argv) < 3:
     sys.exit(__doc__)
 archive, services = sys.argv[1], sys.argv[2:]
@@ -69,11 +77,11 @@ if free_dk < need_dk:
 
 t0 = time.time()
 sf = c.open_sftp()
-sf.put(archive, "/tmp/deploy.tar.gz")
+sf.put(archive, REMOTE_TGZ)
 sf.close()
 print(f"uploaded {os.path.getsize(archive) // 1048576}MB in {int(time.time() - t0)}s", flush=True)
 
-print(sh("gunzip -c /tmp/deploy.tar.gz | docker load 2>&1 | tail -4"), flush=True)
+print(sh(f"gunzip -c {REMOTE_TGZ} | docker load 2>&1 | tail -4"), flush=True)
 print(sh(f"cd {REMOTE_DIR} && {COMPOSE} up -d --no-deps --no-build --force-recreate {' '.join(services)} 2>&1 | tail -10"), flush=True)
 print(sh("docker exec hcmus-cms-redis-1 redis-cli FLUSHALL"), flush=True)
 print(
@@ -90,7 +98,7 @@ print(
     sh(
         "docker image prune -f 2>&1 | tail -1; "
         "docker builder prune -f --keep-storage 2GB 2>&1 | tail -1; "
-        "rm -f /tmp/deploy.tar.gz; df -h / /var/lib/docker | tail -2"
+        f"rm -f {REMOTE_TGZ}; df -h / /var/lib/docker | tail -2"
     ),
     flush=True,
 )
