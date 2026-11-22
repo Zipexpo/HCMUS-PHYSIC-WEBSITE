@@ -335,6 +335,31 @@ export const MyAuthorshipSchema = z.object({
   showOnWeb: z.boolean().default(true),
 });
 
+/**
+ * Bản SỬA của MyAuthorshipSchema (lưu bài, xác nhận lời mời): trường nào KHÔNG
+ * gửi thì GIỮ NGUYÊN trên dòng đang lưu.
+ *
+ * KHÔNG dùng `MyAuthorshipSchema.partial()`: từ Zod 4, `.default()` nằm trong
+ * `.optional()` VẪN được điền khi thiếu trường. Nút «Hiện trên web» ở danh sách
+ * công bố chỉ gửi `{ me: { showOnWeb } }`, tới service thành `{ authorIndex: -1,
+ * isFirst: false, isCorresponding: false, isLast: false, showOnWeb }` — mỗi lần
+ * bấm là xoá hàng và vai trò tác giả chính của người bấm. Chiều ngược lại, form
+ * sửa bài không gửi `showOnWeb` nên mỗi lần lưu lại bật «hiện trên web» — hai lỗi
+ * đuổi nhau: ẩn bài → mất vai trò, sửa lại vai trò → bài hiện lại, ẩn tiếp → mất
+ * tiếp (ca thật 16–22/11/2026, bài Q3 của một giảng viên mất tác giả chính 2 lần;
+ * 10 dòng khác cùng dấu vết từ 22/8). Xem my-authorship-patch.spec.ts.
+ */
+export const MyAuthorshipPatchSchema = z
+  .object({
+    authorIndex: z.number().int().min(-1),
+    isFirst: z.boolean(),
+    isCorresponding: z.boolean(),
+    isLast: z.boolean(),
+    sharePercent: z.number().int().min(1).max(100).nullish(),
+    showOnWeb: z.boolean(),
+  })
+  .partial();
+
 export const PublicationAuthorResSchema = z.object({
   id: z.string(),
   userId: z.string(),
@@ -581,7 +606,8 @@ export const UpdatePublicationBodySchema = z.object({
   schoolAuthors: z.number().int().min(0).max(2000).optional(),
   mainAuthorAtSchool: z.boolean().optional(),
 
-  me: MyAuthorshipSchema.partial().optional(),
+  /** Không gửi trường nào thì trường đó giữ nguyên — xem MyAuthorshipPatchSchema. */
+  me: MyAuthorshipPatchSchema.optional(),
   coAuthorUserIds: z.array(z.string()).max(50).optional(),
   /** Sửa vai trò của đồng tác giả trong Khoa — xem CoAuthorRoleSchema. */
   memberUpdates: z.array(CoAuthorRoleSchema).max(50).optional(),
@@ -622,7 +648,8 @@ export type ListPublicationsQueryType = z.infer<
 // ── Xác nhận tác giả ────────────────────────────────────────────────────────
 export const ClaimResponseBodySchema = z.object({
   accept: z.boolean(),
-  authorship: MyAuthorshipSchema.partial().optional(),
+  // Như `me` khi sửa bài: không gửi = giữ hàng/vai trò người mời đã đặt sẵn.
+  authorship: MyAuthorshipPatchSchema.optional(),
 });
 export type ClaimResponseBodyType = z.infer<typeof ClaimResponseBodySchema>;
 
