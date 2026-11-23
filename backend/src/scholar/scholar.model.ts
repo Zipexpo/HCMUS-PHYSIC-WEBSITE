@@ -279,6 +279,19 @@ export const BanDaDangSchema = z.object({
   year: z.number().int().nullable(),
 });
 
+/** Một chương của sách tra theo ISBN (Crossref) — người khai chọn rồi tra theo DOI. */
+export const ChuongSachSchema = z.object({
+  doi: z.string(),
+  title: z.string(),
+  pages: z.string().nullable(),
+  year: z.number().int().nullable(),
+  tacGia: z.array(z.string()),
+  /** Người trong Khoa đứng tên chương (khớp chắc). */
+  nguoiKhoa: z.array(z.string()),
+  /** Có hàng tác giả khớp người đang khai. */
+  cuaToi: z.boolean(),
+});
+
 export const ResolvePreviewResSchema = z.object({
   work: ResolvedWorkSchema.nullable(),
   /** Bài đã có sẵn trong CSDL (trùng DOI) — để không tạo bản thứ hai. */
@@ -288,6 +301,18 @@ export const ResolvePreviewResSchema = z.object({
   laBanThao: z.boolean().optional(),
   /** Bản đã đăng tạp chí/hội nghị tìm được theo tên (Crossref), nếu có. */
   banDaDang: BanDaDangSchema.nullable().optional(),
+  /**
+   * Tra bằng ISBN mà Crossref có các chương của cuốn sách — để khai CHƯƠNG.
+   * `namSomNhat` = năm sớm nhất trong mọi bản ghi của cuốn (thường là lần in đầu;
+   * bản điện tử / in lại hay mang năm muộn hơn).
+   */
+  sachIsbn: z
+    .object({
+      tieuDe: z.string().nullable(),
+      namSomNhat: z.number().int().nullable(),
+      chuong: z.array(ChuongSachSchema),
+    })
+    .optional(),
 });
 
 export const ResolveBodySchema = z.object({

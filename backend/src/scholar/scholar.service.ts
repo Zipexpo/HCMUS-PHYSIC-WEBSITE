@@ -27,6 +27,7 @@ import {
 } from '../auth/physoom-sso';
 import { parseBibliographyFile } from './resolve/bibliography';
 import { ResolveService } from './resolve/resolve.service';
+import { danhDauChuong } from './resolve/sach-crossref';
 import { StaffPageService } from './staff-page.service';
 import {
   khoaTieuDe,
@@ -349,7 +350,22 @@ export class ScholarService {
   async resolveOne(userId: string, input: string) {
     const work = await this.resolver.resolve(input);
     if (!work) throw CannotResolveException;
-    return this.decorate(work, userId, true);
+    const kq = await this.decorate(work, userId, true);
+    // Tra bằng ISBN: kèm các CHƯƠNG Crossref biết, để người khai chương sách chọn
+    // chương của mình (rồi tra theo DOI chương — đủ tác giả, số trang).
+    const isbn = this.resolver.isbnTrongChuoi(input);
+    const cr = isbn
+      ? await this.resolver.sachCrossrefTheoIsbn(isbn).catch(() => null)
+      : null;
+    if (!cr?.chuong.length) return kq;
+    return {
+      ...kq,
+      sachIsbn: {
+        tieuDe: cr.sach?.title ?? null,
+        namSomNhat: cr.namSomNhat,
+        chuong: danhDauChuong(cr.chuong, await this.candidates(), userId),
+      },
+    };
   }
 
   async importFile(userId: string, content: string) {

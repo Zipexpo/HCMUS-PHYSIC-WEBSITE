@@ -18,6 +18,16 @@ import {
   type ResolvedAuthor,
   type ResolvedWork,
 } from './work';
+import {
+  docMuc,
+  doiSachTuChuong,
+  gomSach,
+  isbn13,
+  laChuong,
+  laSach,
+  type MucCrossref,
+  type SachCrossref,
+} from './sach-crossref';
 
 /** Bản ĐÃ ĐĂNG của một bản thảo, tìm theo tên trên Crossref. */
 export type BanDaDang = {
@@ -52,6 +62,13 @@ export class ResolveService {
   private readonly timeoutMs = 12_000;
   /** Metadata thư mục gần như không đổi → cache dài. */
   private readonly ttlMs = 7 * 24 * 60 * 60 * 1000;
+  /**
+   * Crossref (nhóm công khai, khi chưa đặt CROSSREF_MAILTO) cho truy vấn DANH SÁCH
+   * `/works?…` 1 lượt/giây, 1 lượt cùng lúc — hỏi dồn là 429 (đo 23/11/2026). Các
+   * lượt hỏi danh sách đi qua một hàng, cách nhau ít nhất chừng này.
+   */
+  khoangCrossrefMs = 1050;
+  private hangCrossref: Promise<void> = Promise.resolve();
 
   constructor(@Inject(CACHE_MANAGER) private readonly cache: Cache) {}
 
@@ -71,11 +88,22 @@ export class ResolveService {
     const storeUrl = this.hcmusBookstoreUrl(raw);
     if (storeUrl) return this.byHcmusBookstore(storeUrl);
 
+    const isbn = this.isbnTrongChuoi(raw);
+    return isbn ? this.byIsbn(isbn) : null;
+  }
+
+  /**
+   * Chuỗi người dùng dán có được tra như ISBN không (cùng thứ tự đoán với
+   * `resolve`: DOI, arXiv, link Nhà sách HCMUS được ưu tiên). Trả ISBN đã làm sạch.
+   */
+  isbnTrongChuoi(input: string): string | null {
+    const raw = String(input ?? '').trim();
+    if (!raw || normalizeDoi(raw) || this.doiInsideUrl(raw)) return null;
+    if (normalizeArxiv(raw) || this.hcmusBookstoreUrl(raw)) return null;
     const isbn = normalizeIsbn(raw);
-    if (isbn && /^\d{9}[\dxX]$|^\d{13}$/.test(raw.replace(/[^0-9xX]/g, ''))) {
-      return this.byIsbn(isbn);
-    }
-    return null;
+    return isbn && /^\d{9}[\dxX]$|^\d{13}$/.test(raw.replace(/[^0-9xX]/g, ''))
+      ? isbn
+      : null;
   }
 
   /** Nhiều trang xuất bản nhét DOI vào giữa URL. */
@@ -144,7 +172,9 @@ export class ResolveService {
         select: 'DOI,title,container-title,type,issued,published-online',
       });
       if (this.mailto) qs.set('mailto', this.mailto);
-      const json = await this.getJson(`https://api.crossref.org/works?${qs}`);
+      const json = await this.theoNhipCrossref(() =>
+        this.getJson(`https://api.crossref.org/works?${qs}`),
+      );
       const goc = normalizeDoi(w.doi);
       for (const raw of asArr(dig(json, 'message', 'items'))) {
         const m = asObj(raw);
@@ -365,16 +395,81 @@ export class ResolveService {
 
   // ── ISBN ──────────────────────────────────────────────────────────────────
   /**
-   * OpenLibrary trước (không cần khoá). Phần lớn sách NXB trong nước không có ở
-   * đó, nên trượt thì hỏi tiếp Google Books — kho phủ sách tiếng Việt rộng hơn.
+   * Crossref trước: sách học thuật quốc tế có bản ghi cả cuốn (DOI, người biên
+   * tập, NXB). Không có thì OpenLibrary (không cần khoá), rồi Google Books — kho phủ
+   * sách tiếng Việt rộng hơn. Cuốn GHÉP từ thông tin chương (Crossref không có bản
+   * ghi cả cuốn) là phương án cuối, vì thiếu tác giả/người biên tập.
    */
   async byIsbn(isbn: string): Promise<ResolvedWork | null> {
-    return this.cached(
-      `scholar:isbn:${isbn}`,
-      async () =>
+    return this.cached(`scholar:isbn:v2:${isbn}`, async () => {
+      const cr = await this.sachCrossrefTheoIsbn(isbn);
+      if (cr?.sach && !cr.ghep) return cr.sach;
+      return (
         (await this.openLibraryByIsbn(isbn)) ??
-        (await this.googleBooksByIsbn(isbn)),
-    );
+        (await this.googleBooksByIsbn(isbn)) ??
+        cr?.sach ??
+        null
+      );
+    });
+  }
+
+  /**
+   * Cuốn sách + các chương của nó trên Crossref, theo ISBN. Hỏi thêm các ISBN anh
+   * em (bìa cứng / điện tử) và bản ghi sách suy từ DOI chương, vì nhà xuất bản hay
+   * đăng ký chương dưới ISBN khác cái người khai cầm — xem sach-crossref.ts.
+   * Lỗi mạng ở lượt hỏi đầu → null (không cache, lần sau hỏi lại).
+   */
+  async sachCrossrefTheoIsbn(isbn: string): Promise<SachCrossref | null> {
+    const i13 = isbn13(isbn);
+    return this.cached(`scholar:isbn-crossref:v1:${i13}`, async () => {
+      const muc: MucCrossref[] = [];
+      const daHoi = new Set<string>();
+      const hoiIsbn = async (x: string): Promise<boolean> => {
+        daHoi.add(x);
+        const qs = new URLSearchParams({ filter: `isbn:${x}`, rows: '200' });
+        if (this.mailto) qs.set('mailto', this.mailto);
+        const json = await this.theoNhipCrossref(() =>
+          this.getJson(`https://api.crossref.org/works?${qs}`),
+        );
+        if (json === null) return false;
+        for (const raw of asArr(dig(json, 'message', 'items'))) {
+          const m = docMuc(raw);
+          if (m && (laSach(m) || laChuong(m))) muc.push(m);
+        }
+        return true;
+      };
+      if (!(await hoiIsbn(i13))) return null;
+      if (!muc.length) return gomSach(i13, []);
+
+      // Bản ghi cả cuốn suy từ DOI chương (tối đa 2 — đoán sai thì chỉ mất 1 lượt 404).
+      const coDoi = new Set(muc.map((m) => m.doi));
+      const doiSach = [
+        ...new Set(
+          muc
+            .filter(laChuong)
+            .map((m) => doiSachTuChuong(m.doi))
+            .filter((d): d is string => !!d && !coDoi.has(d)),
+        ),
+      ].slice(0, 2);
+      for (const d of doiSach) {
+        const qs = this.mailto
+          ? `?mailto=${encodeURIComponent(this.mailto)}`
+          : '';
+        const json = await this.getJson(
+          `https://api.crossref.org/works/${encodeURIComponent(d)}${qs}`,
+        );
+        const m = json ? docMuc(dig(json, 'message')) : null;
+        if (m && laSach(m)) muc.push(m);
+      }
+
+      // ISBN anh em của cùng cuốn (tối đa 3 lượt hỏi thêm).
+      const anhEm = [...new Set(muc.flatMap((m) => m.isbns))]
+        .filter((x) => !daHoi.has(x))
+        .slice(0, 3);
+      for (const x of anhEm) await hoiIsbn(x);
+
+      return gomSach(i13, muc);
+    });
   }
 
   private async openLibraryByIsbn(isbn: string): Promise<ResolvedWork | null> {
@@ -593,6 +688,20 @@ export class ResolveService {
   }
 
   // ── Hạ tầng ───────────────────────────────────────────────────────────────
+  /** Xếp hàng các lượt hỏi DANH SÁCH Crossref, mỗi lượt cách nhau `khoangCrossrefMs`. */
+  private theoNhipCrossref<T>(run: () => Promise<T>): Promise<T> {
+    const truoc = this.hangCrossref;
+    let xong: () => void = () => undefined;
+    this.hangCrossref = new Promise<void>((r) => (xong = r));
+    return truoc.then(async () => {
+      try {
+        return await run();
+      } finally {
+        setTimeout(xong, this.khoangCrossrefMs);
+      }
+    });
+  }
+
   private async cached<T>(key: string, run: () => Promise<T>): Promise<T> {
     const hit = await this.cache.get<T>(key).catch(() => undefined);
     if (hit !== undefined && hit !== null) return hit;
@@ -629,6 +738,7 @@ export class ResolveService {
   private async getText(
     url: string,
     headers: Record<string, string> = {},
+    lanThu = 0,
   ): Promise<string | null> {
     try {
       const res = await fetch(url, {
@@ -638,6 +748,15 @@ export class ResolveService {
         },
         signal: AbortSignal.timeout(this.timeoutMs),
       });
+      // Crossref quá nhịp (lượt khác cùng máy chủ vừa hỏi) → chờ rồi thử lại, tối đa 2 lần.
+      if (
+        res.status === 429 &&
+        lanThu < 2 &&
+        url.startsWith('https://api.crossref.org/')
+      ) {
+        await new Promise((r) => setTimeout(r, 1100 * (lanThu + 1)));
+        return this.getText(url, headers, lanThu + 1);
+      }
       if (!res.ok) return null;
       return await res.text();
     } catch (err: unknown) {
