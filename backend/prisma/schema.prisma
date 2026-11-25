@@ -1346,22 +1346,50 @@ model Initiative {
   reviewedAt       DateTime?
   /// manual (tác giả khai) · import (Khoa nạp từ danh sách công nhận).
   source           String    @default("manual")
-  /// MINH CHỨNG (bản quét quyết định / trích trang danh sách): tên tệp trên đĩa trong
-  /// `uploads/initiative-evidence/` — thư mục này BỊ CHẶN phục vụ tĩnh (main.ts), chỉ
-  /// tải qua route có đăng nhập, vì danh sách công nhận có tên + mã người học.
-  evidenceFile     String?
-  /// Tên hiển thị khi tải về.
-  evidenceName     String?
+  /// MINH CHỨNG dùng chung theo QUYẾT ĐỊNH (người dùng chốt 25/11/2026: "chỉ nên up 1
+  /// lần và các tg có thể reuse nếu cùng số QĐ") — xem DecisionFile. Hai cột dưới chỉ
+  /// là CON TRỎ tới đúng tệp + trang chứa dòng của sáng kiến này (Khoa nạp thì biết
+  /// trang; tác giả khai tay thì để trống).
+  evidenceFileId   String?
+  evidencePage     Int?
   createdBy    String?
   createdAt    DateTime  @default(now())
   updatedAt    DateTime  @updatedAt
   deletedAt    DateTime?
 
-  authors InitiativeAuthor[]
+  authors      InitiativeAuthor[]
+  decisionFile DecisionFile?      @relation(fields: [evidenceFileId], references: [id], onDelete: SetNull)
 
   @@index([deletedAt])
   @@index([decisionDate])
   @@index([reviewStatus])
+}
+
+/// Tệp MINH CHỨNG của một QUYẾT ĐỊNH công nhận (bản quét QĐ, danh sách kèm theo…) —
+/// tải MỘT lần, mọi sáng kiến cùng quyết định dùng chung. Khoá `decisionKey` = số QĐ
+/// chuẩn hoá + NĂM ký ("3771/QD-KHTN|2026"): số QĐ đánh lại từ đầu mỗi năm nên số
+/// không thôi là chưa đủ. Một QĐ có thể có nhiều tệp.
+///
+/// Tệp nằm trong `uploads/initiative-evidence/` — main.ts CHẶN phục vụ tĩnh thư mục
+/// này (danh sách có tên + mã người học); chỉ tải qua route có đăng nhập.
+model DecisionFile {
+  id           String    @id @default(cuid())
+  decisionKey  String
+  /// Số QĐ như người tải ghi — để hiển thị.
+  decisionNo   String
+  /// Nhãn ngắn, vd «Danh sách kèm theo — sáng kiến KHCN».
+  label        String?
+  originalName String
+  storedName   String
+  mimeType     String
+  size         Int
+  uploadedBy   String?
+  createdAt    DateTime  @default(now())
+  deletedAt    DateTime?
+
+  initiatives Initiative[]
+
+  @@index([decisionKey])
 }
 
 /// Một tác giả của sáng kiến, theo ĐÚNG thứ tự trong quyết định (`position`).

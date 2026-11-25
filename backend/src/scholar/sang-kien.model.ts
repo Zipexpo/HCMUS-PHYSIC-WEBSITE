@@ -104,6 +104,24 @@ export const NhanTenBodySchema = z.object({
 
 export const TraLoiMoiBodySchema = z.object({ accept: z.boolean() });
 export const HienTrenWebBodySchema = z.object({ showOnWeb: z.boolean() });
+
+/** Một tệp minh chứng của quyết định; `page` = trang chứa dòng của sáng kiến đang xem. */
+export const TepQdResSchema = z.object({
+  id: z.string(),
+  label: z.string().nullable(),
+  originalName: z.string(),
+  mimeType: z.string(),
+  size: z.number().int(),
+  uploadedBy: z.string().nullable(),
+  createdAt: z.date(),
+  page: z.number().int().nullable(),
+});
+export const TepQdListResSchema = z.object({ items: z.array(TepQdResSchema) });
+export const TepQdQuerySchema = z.object({
+  decisionNo: Text(100).min(1),
+  decisionDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
+});
+export const TaiLenTepQdBodySchema = z.object({ label: z.string().trim().max(200).nullish() });
 export const DongBoTrangBodySchema = z.object({ dryRun: z.boolean().optional() });
 
 // ── Trả về ──────────────────────────────────────────────────────────────────
@@ -133,7 +151,8 @@ export const SangKienResSchema = z.object({
   /** Trạng thái của CHÍNH người đang xem; null = không có tên trong sáng kiến. */
   myStatus: z.enum(CLAIM_STATUSES).nullable(),
   myShowOnWeb: z.boolean().nullable(),
-  evidenceName: z.string().nullable(),
+  /** Minh chứng dùng chung của quyết định (cùng số QĐ + năm). */
+  minhChung: z.array(z.lazy(() => TepQdResSchema)),
   authors: z.array(TacGiaSangKienResSchema),
   reviewStatus: z.enum(TRANG_THAI_DUYET),
   reviewNote: z.string().nullable(),

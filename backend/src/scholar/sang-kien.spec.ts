@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 import { Prisma } from '../generated/prisma/client';
 import { CreateSangKienBodySchema, UpdateSangKienBodySchema } from './sang-kien.model';
-import { SangKienService, chuanHoaMaSangKien, dungDanhSachTacGia } from './sang-kien.service';
+import { SangKienService, chuanHoaMaSangKien, dungDanhSachTacGia, khoaQuyetDinh } from './sang-kien.service';
 
 /**
  * Sáng kiến khai giống bài báo (Khoa yêu cầu 25/11/2026): một mã một bản ghi,
@@ -54,6 +54,7 @@ const NGUOI: Record<string, { firstName: string; lastName: string; email: string
 function taoCsdl() {
   const inits: Init[] = [];
   const authors: Author[] = [];
+  const tepQd: Array<Record<string, any>> = [];
   let seq = 0;
   let clock = Date.UTC(2026, 10, 25, 1, 0, 0);
   const now = () => new Date((clock += 1000));
@@ -187,6 +188,24 @@ function taoCsdl() {
         return { count: ds.length };
       }),
     },
+    decisionFile: {
+      findMany: vi.fn(async ({ where }) =>
+        tepQd.filter((f) => where.decisionKey.in.includes(f.decisionKey) && f.deletedAt === null),
+      ),
+      findFirst: vi.fn(async ({ where }) => tepQd.find((f) => f.id === where.id && f.deletedAt === null) ?? null),
+      create: vi.fn(async ({ data }) => {
+        const f = { id: id('f'), label: null, uploadedBy: null, deletedAt: null, createdAt: now(), ...data };
+        tepQd.push(f);
+        return f;
+      }),
+      delete: vi.fn(async ({ where }) => {
+        const i = tepQd.findIndex((f) => f.id === where.id);
+        const [f] = tepQd.splice(i, 1);
+        // FK onDelete SetNull
+        inits.forEach((x) => (x as Init & { evidenceFileId?: string | null }).evidenceFileId === f.id && Object.assign(x, { evidenceFileId: null }));
+        return f;
+      }),
+    },
     user: {
       count: vi.fn(async ({ where }) => where.id.in.filter((x: string) => NGUOI[x]).length),
       findMany: vi.fn(async ({ where }) =>
@@ -197,7 +216,7 @@ function taoCsdl() {
   };
   const bus = { emit: vi.fn() };
   const svc = new SangKienService(prisma, bus as never);
-  return { svc, prisma, bus, inits, authors };
+  return { svc, prisma, bus, inits, authors, tepQd };
 }
 
 const khai = (over: Record<string, unknown> = {}) =>
@@ -548,6 +567,54 @@ describe('Khoa duyệt', () => {
     const { svc } = await banNap();
     const kq = await svc.integrationList({});
     expect(kq.items.map((x) => (x as { reviewStatus: string }).reviewStatus)).toEqual(['APPROVED', 'APPROVED']);
+  });
+});
+
+// ── Minh chứng DÙNG CHUNG theo quyết định (25/11/2026) ─────────────────────
+describe('minh chứng theo quyết định', () => {
+  const tep = (n = 'qd.pdf') => ({ filename: `x-${n}`, originalname: n, mimetype: 'application/pdf', size: 1000 });
+
+  it('khoá QĐ: chuẩn hoá số + kèm năm (số QĐ đánh lại mỗi năm)', () => {
+    expect(khoaQuyetDinh(' 3771 / QĐ–KHTN ', '2026-11-20')).toBe('3771/QD-KHTN|2026');
+    expect(khoaQuyetDinh('3771/qd-khtn', new Date('2026-01-05T00:00:00Z'))).toBe('3771/QD-KHTN|2026');
+    expect(khoaQuyetDinh('3771/QĐ-KHTN', '2027-03-01')).not.toBe(khoaQuyetDinh('3771/QĐ-KHTN', '2026-11-20'));
+  });
+
+  it('tải MỘT lần ở một sáng kiến → mọi sáng kiến cùng QĐ + năm thấy; khác năm thì không', async () => {
+    const { svc } = taoCsdl();
+    const a = await svc.create('u1', khai({ code: 'SK2026-000001' }));
+    const b = await svc.create('u2', khai({ code: 'SK2026-000002', decisionNo: '3771/QD-KHTN' }));
+    const c = await svc.create('u2', khai({ code: 'SK2027-000003', decisionDate: '2027-11-20' }));
+    await svc.taiLenTepQd('u1', false, a.id, tep(), 'Danh sách kèm theo');
+    expect((await svc.findOne(b.id, 'u2')).minhChung.map((f) => [f.originalName, f.label])).toEqual([
+      ['qd.pdf', 'Danh sách kèm theo'],
+    ]);
+    expect((await svc.findOne(c.id, 'u2')).minhChung).toEqual([]);
+    expect((await svc.tepCuaQuyetDinh('3771/QĐ-KHTN', '2026-11-20')).items).toHaveLength(1);
+  });
+
+  it('số trang chỉ kèm ở sáng kiến có con trỏ tới đúng tệp đó', async () => {
+    const { svc, inits, tepQd } = taoCsdl();
+    const a = await svc.create('u1', khai({ code: 'SK2026-000001' }));
+    const b = await svc.create('u1', khai({ code: 'SK2026-000002' }));
+    await svc.taiLenTepQd('u1', false, a.id, tep());
+    Object.assign(inits[0], { evidenceFileId: tepQd[0].id, evidencePage: 97 });
+    expect((await svc.findOne(a.id, 'u1')).minhChung[0].page).toBe(97);
+    expect((await svc.findOne(b.id, 'u1')).minhChung[0].page).toBeNull();
+  });
+
+  it('chỉ tác giả đã xác nhận hoặc quản trị Khoa được tải; chỉ người tải hoặc quản trị được gỡ', async () => {
+    const { svc, tepQd } = taoCsdl();
+    const a = await svc.create('u1', khai({ authors: [{ userId: 'u1' }, { userId: 'u2' }] }));
+    await expect(svc.taiLenTepQd('u2', false, a.id, tep())).rejects.toMatchObject({ status: 403 }); // u2 chưa xác nhận
+    await expect(svc.taiLenTepQd('u3', false, a.id, tep())).rejects.toMatchObject({ status: 403 });
+    await svc.taiLenTepQd('u3', true, a.id, tep('khoa.pdf'));
+    await svc.taiLenTepQd('u1', false, a.id, tep('cua-u1.pdf'));
+    const [cuaKhoa, cuaU1] = tepQd;
+    await expect(svc.goTepQd('u1', false, cuaKhoa.id)).rejects.toMatchObject({ status: 403 });
+    expect(await svc.goTepQd('u1', false, cuaU1.id)).toEqual({ removed: true });
+    expect(await svc.goTepQd('u2', true, cuaKhoa.id)).toEqual({ removed: true });
+    expect((await svc.findOne(a.id, 'u1')).minhChung).toEqual([]);
   });
 });
 

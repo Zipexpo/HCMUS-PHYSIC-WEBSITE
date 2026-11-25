@@ -25,6 +25,7 @@ import { ActiveUser } from '../shared/decorators/active-user.decorator';
 import { IsPublic } from '../shared/decorators/auth.decorator';
 import { Roles } from '../shared/decorators/roles.decorator';
 import { RoleName } from '../shared/constants/role.constants';
+import type { AccessTokenPayload } from '../shared/types/jwt.type';
 import { IntegrationSecretGuard } from './integration-secret.guard';
 import { IntegrationQueryDTO } from './scholar.dto';
 import { XemThongKeGuard } from './xem-thong-ke.guard';
@@ -34,6 +35,9 @@ import {
   DongBoTrangBodySchema,
   DuyetBodySchema,
   HienTrenWebBodySchema,
+  TaiLenTepQdBodySchema,
+  TepQdListResSchema,
+  TepQdQuerySchema,
   IntegrationSangKienResSchema,
   LoiMoiSangKienResSchema,
   NhanTenBodySchema,
@@ -59,6 +63,9 @@ const chiPdfHoacAnh = (
   cb(ok ? null : new UnprocessableEntityException([{ field: 'file', error: 'Chỉ nhận PDF hoặc ảnh (JPG, PNG).' }]), ok);
 };
 class HienTrenWebBodyDTO extends createZodDto(HienTrenWebBodySchema) {}
+class TepQdQueryDTO extends createZodDto(TepQdQuerySchema) {}
+class TepQdListResDTO extends createZodDto(TepQdListResSchema) {}
+class TaiLenTepQdBodyDTO extends createZodDto(TaiLenTepQdBodySchema) {}
 class DongBoTrangBodyDTO extends createZodDto(DongBoTrangBodySchema) {}
 
 class CreateSangKienBodyDTO extends createZodDto(CreateSangKienBodySchema) {}
@@ -123,10 +130,21 @@ export class SangKienController {
     return this.service.dongBoTrangTatCa(body.dryRun ?? false);
   }
 
-  /** Tải minh chứng (bản quét quyết định) — ai đăng nhập cũng xem được. */
-  @Get('initiatives/:id/evidence')
-  async taiMinhChung(@Param('id') id: string, @Res({ passthrough: true }) res: Response): Promise<StreamableFile> {
-    const f = await this.service.taiMinhChung(id);
+  // ── Minh chứng DÙNG CHUNG theo quyết định (tải một lần cho cả QĐ) ──────────
+  /** Tệp đã có của một QĐ (số + ngày) — form khai mới hỏi trước để khỏi tải lại. */
+  @Get('decision-files')
+  @ZodSerializerDto(TepQdListResDTO)
+  tepCuaQd(@Query() q: TepQdQueryDTO) {
+    return this.service.tepCuaQuyetDinh(q.decisionNo, q.decisionDate);
+  }
+
+  /** Đọc một tệp minh chứng — ai đăng nhập cũng xem được. */
+  @Get('decision-files/:fileId')
+  async docTepQd(
+    @Param('fileId') fileId: string,
+    @Res({ passthrough: true }) res: Response,
+  ): Promise<StreamableFile> {
+    const f = await this.service.docTepQd(fileId);
     res.set({
       'Content-Type': f.mimeType,
       'Content-Disposition': `inline; filename*=UTF-8''${encodeURIComponent(f.originalName)}`,
@@ -134,25 +152,36 @@ export class SangKienController {
     return new StreamableFile(f.stream);
   }
 
-  /** Tác giả đã xác nhận tải lên / thay minh chứng (PDF hoặc ảnh, ≤ 25 MB). */
-  @Post('initiatives/:id/evidence')
+  /** Gỡ tệp tải nhầm — người đã tải hoặc quản trị Khoa. */
+  @Delete('decision-files/:fileId')
+  async goTepQd(@ActiveUser() u: AccessTokenPayload, @Param('fileId') fileId: string) {
+    return this.service.goTepQd(u.userId, await this.service.laQuanTri(u.userId, u.roleName), fileId);
+  }
+
+  /**
+   * Tải tệp minh chứng cho QĐ của sáng kiến này (PDF hoặc ảnh, ≤ 50 MB) — dùng chung
+   * cho MỌI sáng kiến cùng số QĐ + năm. Tác giả đã xác nhận hoặc quản trị Khoa.
+   */
+  @Post('initiatives/:id/decision-files')
   @UseInterceptors(
     FileInterceptor('file', {
       storage: minhChungStorage,
-      limits: { fileSize: 25 * 1024 * 1024 },
+      limits: { fileSize: 50 * 1024 * 1024 },
       fileFilter: chiPdfHoacAnh,
     }),
   )
   @ZodSerializerDto(SangKienResDTO)
-  ganMinhChung(
-    @ActiveUser('userId') userId: string,
+  async taiLenTepQd(
+    @ActiveUser() u: AccessTokenPayload,
     @Param('id') id: string,
     @UploadedFile() file: Express.Multer.File | undefined,
+    @Body() body: TaiLenTepQdBodyDTO,
   ) {
     if (!file) {
       throw new UnprocessableEntityException([{ field: 'file', error: 'Cần chọn một tệp minh chứng.' }]);
     }
-    return this.service.ganMinhChung(userId, id, file);
+    const qt = await this.service.laQuanTri(u.userId, u.roleName);
+    return this.service.taiLenTepQd(u.userId, qt, id, file, body.label);
   }
 
   /** Bật / tắt hiện sáng kiến này trên trang nhân sự của chính mình. */

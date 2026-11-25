@@ -59,7 +59,7 @@ async function bootstrap() {
     },
   );
   // Minh chứng sáng kiến: danh sách công nhận có tên + mã người học → KHÔNG phục vụ
-  // tĩnh; chỉ tải qua GET /scholar/initiatives/:id/evidence (có đăng nhập).
+  // tĩnh; chỉ tải qua GET /scholar/decision-files/:fileId (có đăng nhập).
   app.use('/uploads/initiative-evidence', (_req: Request, res: Response) => {
     res.status(404).end();
   });

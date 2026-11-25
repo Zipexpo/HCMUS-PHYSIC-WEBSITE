@@ -15,9 +15,9 @@ import { pageBySince } from './integration-cursor';
 import { StaffPageService } from './staff-page.service';
 
 /**
- * Minh chứng sáng kiến. Nằm trong volume `uploads/` (bền qua deploy) nhưng main.ts
- * CHẶN phục vụ tĩnh thư mục này — danh sách công nhận có tên + mã người học, chỉ
- * tải qua GET /scholar/initiatives/:id/evidence (có đăng nhập).
+ * Tệp minh chứng của QUYẾT ĐỊNH (DecisionFile). Nằm trong volume `uploads/` (bền qua
+ * deploy) nhưng main.ts CHẶN phục vụ tĩnh thư mục này — danh sách công nhận có tên +
+ * mã người học, chỉ tải qua GET /scholar/decision-files/:fileId (có đăng nhập).
  */
 export const SK_EVIDENCE_DIR = join(process.cwd(), 'uploads', 'initiative-evidence');
 mkdirSync(SK_EVIDENCE_DIR, { recursive: true });
@@ -104,6 +104,55 @@ export const DongCoTaiKhoanException = new UnprocessableEntityException([
     error: 'Dòng này đã gắn với một tài khoản — chỉ nhận được dòng tác giả chưa có tài khoản',
   },
 ]);
+export const TepQdKhongCoException = new NotFoundException([
+  { field: 'fileId', error: 'Không tìm thấy tệp minh chứng' },
+]);
+export const KhongGoTepQdException = new ForbiddenException([
+  { field: 'fileId', error: 'Chỉ người đã tải tệp này hoặc quản trị Khoa gỡ được' },
+]);
+
+/**
+ * KHOÁ của một quyết định để dùng chung minh chứng: số QĐ chuẩn hoá (bỏ khoảng trắng,
+ * chữ hoa, «Đ»→«D», gạch nối Unicode → «-») + «|» + NĂM ký. Số QĐ đánh lại từ đầu mỗi
+ * năm nên phải kèm năm. «3771/QĐ-KHTN» ngày 20/11/2026 → "3771/QD-KHTN|2026".
+ */
+export function khoaQuyetDinh(decisionNo: string, decisionDate: Date | string | null): string {
+  const so = decisionNo
+    .normalize('NFC')
+    .replace(/[‐-―−]/g, '-')
+    .replace(/\s+/g, '')
+    .toUpperCase()
+    .replace(/Đ/g, 'D');
+  const nam =
+    decisionDate instanceof Date
+      ? decisionDate.getUTCFullYear()
+      : decisionDate
+        ? Number(String(decisionDate).slice(0, 4))
+        : '';
+  return `${so}|${nam}`;
+}
+
+type TepQd = {
+  id: string;
+  label: string | null;
+  originalName: string;
+  mimeType: string;
+  size: number;
+  uploadedBy: string | null;
+  createdAt: Date;
+};
+/** Tệp minh chứng cho giao diện; `page` = trang chứa dòng của sáng kiến đang xem (nếu biết). */
+const hinhTep = (f: TepQd, page: number | null) => ({
+  id: f.id,
+  label: f.label,
+  originalName: f.originalName,
+  mimeType: f.mimeType,
+  size: f.size,
+  uploadedBy: f.uploadedBy,
+  createdAt: f.createdAt,
+  page,
+});
+
 export const KhongChoDuyetException = new UnprocessableEntityException([
   { field: 'id', error: 'Sáng kiến này không ở trạng thái chờ Khoa duyệt' },
 ]);
@@ -300,7 +349,8 @@ export class SangKienService {
     });
   }
 
-  private shape(r: HangDayDu, viewer: string | null) {
+  private shape(r: HangDayDu, viewer: string | null, tepQd?: Map<string, TepQd[]>) {
+    const tep = tepQd?.get(khoaQuyetDinh(r.decisionNo, r.decisionDate)) ?? [];
     const ban = laBan(r.approvedSnapshot) ? r.approvedSnapshot : null;
     const tacGia = r.authors.map((a) => ({
       id: a.id,
@@ -328,8 +378,11 @@ export class SangKienService {
       myStatus: viewer ? (r.authors.find((a) => a.userId === viewer)?.claimStatus ?? null) : null,
       /** Người đang xem có cho hiện sáng kiến này trên trang nhân sự của mình không. */
       myShowOnWeb: viewer ? (r.authors.find((a) => a.userId === viewer)?.showOnWeb ?? null) : null,
-      /** Có tệp minh chứng (tải qua GET …/evidence) — tên để hiển thị. */
-      evidenceName: r.evidenceFile ? (r.evidenceName ?? 'minh-chung') : null,
+      /**
+       * Minh chứng DÙNG CHUNG của quyết định (mọi sáng kiến cùng số QĐ + năm). Tệp nào
+       * là tệp chứa dòng của sáng kiến này thì kèm số trang để mở thẳng tới đó.
+       */
+      minhChung: tep.map((f) => hinhTep(f, f.id === r.evidenceFileId ? r.evidencePage : null)),
       authors: tacGia,
       reviewStatus: r.reviewStatus as 'APPROVED' | 'PENDING' | 'REJECTED',
       reviewNote: r.reviewNote,
@@ -436,40 +489,94 @@ export class SangKienService {
     return { ok: true, showOnWeb };
   }
 
-  // ── Minh chứng ───────────────────────────────────────────────────────────
-  /** Tệp minh chứng — ai đăng nhập cũng tải được (quyết định là văn bản trong Trường). */
-  async taiMinhChung(id: string) {
-    const r = await this.prisma.initiative.findFirst({
-      where: { id, deletedAt: null },
-      select: { evidenceFile: true, evidenceName: true },
-    });
-    const duong = r?.evidenceFile ? join(SK_EVIDENCE_DIR, r.evidenceFile) : null;
-    if (!duong || !existsSync(duong)) throw SangKienNotFoundException;
-    const ten = r!.evidenceName || r!.evidenceFile!;
-    return {
-      stream: createReadStream(duong),
-      originalName: ten,
-      mimeType: /\.pdf$/i.test(r!.evidenceFile!) ? 'application/pdf' : /\.png$/i.test(r!.evidenceFile!) ? 'image/png' : 'image/jpeg',
-    };
+  // ── Minh chứng DÙNG CHUNG theo quyết định ───────────────────────────────
+  /** Tệp của nhiều QĐ một lượt → Map<decisionKey, tệp[]>. */
+  private async tepTheoKhoa(keys: string[]) {
+    const ds = keys.length
+      ? await this.prisma.decisionFile.findMany({
+          where: { decisionKey: { in: [...new Set(keys)] }, deletedAt: null },
+          orderBy: { createdAt: 'asc' },
+        })
+      : [];
+    const m = new Map<string, typeof ds>();
+    for (const f of ds) m.set(f.decisionKey, [...(m.get(f.decisionKey) ?? []), f]);
+    return m;
   }
 
-  /** Tác giả đã xác nhận tải (thay) minh chứng. Không bắt Khoa duyệt lại — như liên kết. */
-  async ganMinhChung(userId: string, id: string, file: { filename: string; originalname: string }) {
-    const xoaTep = (ten: string) => unlink(join(SK_EVIDENCE_DIR, ten), () => undefined);
-    let r: HangDayDu;
-    try {
-      r = await this.assertXacNhan(this.prisma, id, userId);
-    } catch (e) {
-      xoaTep(file.filename);
-      throw e;
+  /** Định hình nhiều sáng kiến, kèm tệp minh chứng của QĐ từng cái (một truy vấn). */
+  private async shapeNhieu(rows: HangDayDu[], viewer: string | null) {
+    const tep = await this.tepTheoKhoa(rows.map((r) => khoaQuyetDinh(r.decisionNo, r.decisionDate)));
+    return rows.map((r) => this.shape(r, viewer, tep));
+  }
+
+  /** Tệp minh chứng đã có của một QĐ — form khai mới hỏi trước để khỏi tải lại. */
+  async tepCuaQuyetDinh(decisionNo: string, decisionDate: string) {
+    const khoa = khoaQuyetDinh(decisionNo, decisionDate);
+    const tep = (await this.tepTheoKhoa([khoa])).get(khoa) ?? [];
+    return { items: tep.map((f) => hinhTep(f, null)) };
+  }
+
+  /**
+   * Tải tệp minh chứng cho QĐ của sáng kiến `id` — MỘT lần cho cả QĐ: mọi sáng kiến
+   * cùng số QĐ + năm thấy ngay. Người tải phải là tác giả đã xác nhận của sáng kiến
+   * này, hoặc quản trị Khoa. Không bắt Khoa duyệt lại sáng kiến (như liên kết).
+   */
+  async taiLenTepQd(
+    userId: string,
+    laQuanTri: boolean,
+    id: string,
+    file: { filename: string; originalname: string; mimetype: string; size: number },
+    label?: string | null,
+  ) {
+    const xoaTep = () => unlink(join(SK_EVIDENCE_DIR, file.filename), () => undefined);
+    const r = await this.prisma.initiative.findFirst({ where: { id, deletedAt: null }, include: INCLUDE });
+    if (!r) {
+      xoaTep();
+      throw SangKienNotFoundException;
     }
-    await this.prisma.initiative.update({
-      where: { id },
-      data: { evidenceFile: file.filename, evidenceName: file.originalname, updatedAt: new Date() },
+    const laTacGia = r.authors.some((a) => a.userId === userId && a.claimStatus === 'CONFIRMED');
+    if (!laTacGia && !laQuanTri) {
+      xoaTep();
+      throw KhongPhaiTacGiaSangKienException;
+    }
+    await this.prisma.decisionFile.create({
+      data: {
+        decisionKey: khoaQuyetDinh(r.decisionNo, r.decisionDate),
+        decisionNo: r.decisionNo,
+        label: label?.trim() || null,
+        originalName: file.originalname,
+        storedName: file.filename,
+        mimeType: file.mimetype,
+        size: file.size,
+        uploadedBy: userId,
+      },
     });
-    if (r.evidenceFile && r.evidenceFile !== file.filename) xoaTep(r.evidenceFile);
-    this.emit(id, [userId]);
     return this.findOne(id, userId);
+  }
+
+  /** Đọc một tệp minh chứng — ai đăng nhập cũng xem được (quyết định là văn bản trong Trường). */
+  async docTepQd(fileId: string) {
+    const f = await this.prisma.decisionFile.findFirst({ where: { id: fileId, deletedAt: null } });
+    const duong = f ? join(SK_EVIDENCE_DIR, f.storedName) : null;
+    if (!f || !duong || !existsSync(duong)) throw TepQdKhongCoException;
+    return { stream: createReadStream(duong), originalName: f.originalName, mimeType: f.mimeType };
+  }
+
+  /** Gỡ một tệp (tải nhầm) — người đã tải hoặc quản trị Khoa. Con trỏ trang của sáng kiến tự về trống. */
+  async goTepQd(userId: string, laQuanTri: boolean, fileId: string) {
+    const f = await this.prisma.decisionFile.findFirst({ where: { id: fileId, deletedAt: null } });
+    if (!f) throw TepQdKhongCoException;
+    if (f.uploadedBy !== userId && !laQuanTri) throw KhongGoTepQdException;
+    await this.prisma.decisionFile.delete({ where: { id: f.id } });
+    unlink(join(SK_EVIDENCE_DIR, f.storedName), () => undefined);
+    return { removed: true };
+  }
+
+  /** Quản trị Khoa: admin, hoặc tài khoản được bật quyền xem thống kê (như de-nghi-sua). */
+  async laQuanTri(userId: string, roleName: string) {
+    if (roleName === 'ADMIN' || roleName === 'SUPER_ADMIN') return true;
+    const u = await this.prisma.user.findUnique({ where: { id: userId }, select: { canViewStats: true, isActive: true } });
+    return !!(u?.canViewStats && u.isActive);
   }
 
   // ── Đọc ───────────────────────────────────────────────────────────────────
@@ -492,7 +599,7 @@ export class SangKienService {
       include: INCLUDE,
       orderBy: [{ decisionDate: 'desc' }, { createdAt: 'desc' }],
     });
-    return { items: rows.map((r) => this.shape(r, userId)), total: rows.length };
+    return { items: await this.shapeNhieu(rows, userId), total: rows.length };
   }
 
   /**
@@ -505,7 +612,7 @@ export class SangKienService {
       include: INCLUDE,
     });
     if (!r) throw SangKienNotFoundException;
-    return this.shape(r, viewer);
+    return (await this.shapeNhieu([r], viewer))[0];
   }
 
   /** Tra mã trước khi khai — đã có thì giao diện mời gắn tên thay vì khai bản mới. */
@@ -516,7 +623,7 @@ export class SangKienService {
       where: { code: ma, deletedAt: null },
       include: INCLUDE,
     });
-    return r ? { found: true, item: this.shape(r, viewer) } : { found: false, item: null };
+    return r ? { found: true, item: (await this.shapeNhieu([r], viewer))[0] } : { found: false, item: null };
   }
 
   // ── Ghi ───────────────────────────────────────────────────────────────────
@@ -815,7 +922,7 @@ export class SangKienService {
       include: INCLUDE,
       orderBy: [{ updatedAt: 'desc' }],
     });
-    return { items: rows.map((r) => this.shape(r, null)), total: rows.length };
+    return { items: await this.shapeNhieu(rows, null), total: rows.length };
   }
 
   /**
