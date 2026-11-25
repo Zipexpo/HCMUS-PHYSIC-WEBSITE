@@ -1,4 +1,24 @@
-import { Body, Controller, Delete, Get, Param, Patch, Post, Query, UseGuards } from '@nestjs/common';
+import { randomUUID } from 'node:crypto';
+import { extname } from 'node:path';
+import {
+  Body,
+  Controller,
+  Delete,
+  Get,
+  Param,
+  Patch,
+  Post,
+  Query,
+  Res,
+  StreamableFile,
+  UnprocessableEntityException,
+  UploadedFile,
+  UseGuards,
+  UseInterceptors,
+} from '@nestjs/common';
+import { FileInterceptor } from '@nestjs/platform-express';
+import type { Response } from 'express';
+import { diskStorage } from 'multer';
 import { createZodDto, ZodSerializerDto } from 'nestjs-zod';
 import { z } from 'zod';
 import { ActiveUser } from '../shared/decorators/active-user.decorator';
@@ -11,7 +31,9 @@ import { XemThongKeGuard } from './xem-thong-ke.guard';
 import {
   CreateSangKienBodySchema,
   DanhSachDuyetQuerySchema,
+  DongBoTrangBodySchema,
   DuyetBodySchema,
+  HienTrenWebBodySchema,
   IntegrationSangKienResSchema,
   LoiMoiSangKienResSchema,
   NhanTenBodySchema,
@@ -22,7 +44,22 @@ import {
   TraMaResSchema,
   UpdateSangKienBodySchema,
 } from './sang-kien.model';
-import { SangKienService } from './sang-kien.service';
+import { SK_EVIDENCE_DIR, SangKienService } from './sang-kien.service';
+
+const minhChungStorage = diskStorage({
+  destination: SK_EVIDENCE_DIR,
+  filename: (_req, file, cb) => cb(null, `${randomUUID()}${extname(file.originalname).toLowerCase()}`),
+});
+const chiPdfHoacAnh = (
+  _req: unknown,
+  file: { mimetype: string },
+  cb: (error: Error | null, ok: boolean) => void,
+) => {
+  const ok = file.mimetype === 'application/pdf' || file.mimetype === 'image/png' || file.mimetype === 'image/jpeg';
+  cb(ok ? null : new UnprocessableEntityException([{ field: 'file', error: 'Chỉ nhận PDF hoặc ảnh (JPG, PNG).' }]), ok);
+};
+class HienTrenWebBodyDTO extends createZodDto(HienTrenWebBodySchema) {}
+class DongBoTrangBodyDTO extends createZodDto(DongBoTrangBodySchema) {}
 
 class CreateSangKienBodyDTO extends createZodDto(CreateSangKienBodySchema) {}
 class UpdateSangKienBodyDTO extends createZodDto(UpdateSangKienBodySchema) {}
@@ -74,6 +111,58 @@ export class SangKienController {
   @ZodSerializerDto(SangKienResDTO)
   duyet(@ActiveUser('userId') userId: string, @Param('id') id: string, @Body() body: DuyetBodyDTO) {
     return this.service.duyet(userId, id, body.ok, body.note);
+  }
+
+  /**
+   * Quản trị: đưa mục «Sáng kiến» lên trang nhân sự của MỌI người có tên (một lượt
+   * sau khi Khoa nạp danh sách). Chỉ thay dòng do máy sinh, không xuất bản nháp.
+   */
+  @Post('initiatives-staff-pages/sync')
+  @Roles(RoleName.Admin, RoleName.SuperAdmin)
+  dongBoTrang(@Body() body: DongBoTrangBodyDTO) {
+    return this.service.dongBoTrangTatCa(body.dryRun ?? false);
+  }
+
+  /** Tải minh chứng (bản quét quyết định) — ai đăng nhập cũng xem được. */
+  @Get('initiatives/:id/evidence')
+  async taiMinhChung(@Param('id') id: string, @Res({ passthrough: true }) res: Response): Promise<StreamableFile> {
+    const f = await this.service.taiMinhChung(id);
+    res.set({
+      'Content-Type': f.mimeType,
+      'Content-Disposition': `inline; filename*=UTF-8''${encodeURIComponent(f.originalName)}`,
+    });
+    return new StreamableFile(f.stream);
+  }
+
+  /** Tác giả đã xác nhận tải lên / thay minh chứng (PDF hoặc ảnh, ≤ 25 MB). */
+  @Post('initiatives/:id/evidence')
+  @UseInterceptors(
+    FileInterceptor('file', {
+      storage: minhChungStorage,
+      limits: { fileSize: 25 * 1024 * 1024 },
+      fileFilter: chiPdfHoacAnh,
+    }),
+  )
+  @ZodSerializerDto(SangKienResDTO)
+  ganMinhChung(
+    @ActiveUser('userId') userId: string,
+    @Param('id') id: string,
+    @UploadedFile() file: Express.Multer.File | undefined,
+  ) {
+    if (!file) {
+      throw new UnprocessableEntityException([{ field: 'file', error: 'Cần chọn một tệp minh chứng.' }]);
+    }
+    return this.service.ganMinhChung(userId, id, file);
+  }
+
+  /** Bật / tắt hiện sáng kiến này trên trang nhân sự của chính mình. */
+  @Patch('initiatives/:id/show-on-web')
+  doiHienTrenWeb(
+    @ActiveUser('userId') userId: string,
+    @Param('id') id: string,
+    @Body() body: HienTrenWebBodyDTO,
+  ) {
+    return this.service.doiHienTrenWeb(userId, id, body.showOnWeb);
   }
 
   @Get('initiatives/:id')

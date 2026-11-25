@@ -356,7 +356,10 @@ export class StaffPageService {
       introEn: asEn(p.intro),
       research: entries('research'),
       teaching: entries('teaching'),
-      extras: ((p.extras ?? []) as Array<Record<string, unknown>>).map((e) => ({
+      // Dòng sáng kiến do máy sinh (`auto`) quản ở trang Sáng kiến, không ở form này.
+      extras: ((p.extras ?? []) as Array<Record<string, unknown>>)
+        .filter((e) => e?.auto !== 'sang-kien')
+        .map((e) => ({
         section: asText(e.section),
         title: asText(e.title),
         desc: asText(e.desc),
@@ -1304,11 +1307,18 @@ export class StaffPageService {
       }));
     }
     if (body.extras) {
-      next.extras = body.extras.map((e) => ({
-        section: toLoc2(e.section, e.sectionEn, null),
-        title: toLoc2(e.title, e.titleEn, null),
-        desc: toLoc2(e.desc ?? '', e.descEn, null),
-      }));
+      next.extras = [
+        ...body.extras.map((e) => ({
+          section: toLoc2(e.section, e.sectionEn, null),
+          title: toLoc2(e.title, e.titleEn, null),
+          desc: toLoc2(e.desc ?? '', e.descEn, null),
+        })),
+        // Dòng sáng kiến do máy sinh không có trong form (read() bỏ ra) — giữ nguyên,
+        // không thì lần lưu trang này xoá mất, hoặc làm mất dấu `auto` rồi nhân đôi.
+        ...((prev.extras ?? []) as Array<Record<string, unknown>>).filter(
+          (e) => e?.auto === 'sang-kien',
+        ),
+      ];
     }
     if (body.publications) {
       next.publications = body.publications.map((e: PubIn) => ({
@@ -1679,6 +1689,89 @@ export class StaffPageService {
       ]);
     }
     return report;
+  }
+
+  /**
+   * Mục «Sáng kiến» trên trang nhân sự — SINH từ bảng Initiative (25/11/2026).
+   *
+   * Chỉ thay các dòng do máy sinh (`auto: 'sang-kien'`); mục / dòng người dùng tự gõ
+   * (kể cả tự đặt tên mục là «Sáng kiến») giữ nguyên. Sửa RIÊNG bản nháp và bản đã
+   * xuất bản như `backfillPhotos` — không vô tình xuất bản nội dung nháp của ai.
+   * Người chưa có trang, hoặc trang có ≠ 1 khối hồ sơ → bỏ qua (trả null).
+   *
+   * `lamMoi: false` khi chạy hàng loạt — bên gọi tự `lamMoiNhieuTrang` một lần ở cuối.
+   */
+  async ganMucSangKien(
+    userId: string,
+    entries: Array<{ title: string; desc: string }>,
+    opts: { lamMoi?: boolean } = {},
+  ): Promise<{ slug: string; doi: boolean } | null> {
+    const profile = await this.prisma.scholarProfile.findUnique({
+      where: { userId },
+      select: { staffPageSlug: true },
+    });
+    if (!profile?.staffPageSlug) return null;
+    const layout = await this.prisma.pageLayout.findFirst({
+      where: { slug: profile.staffPageSlug, deletedAt: null },
+      orderBy: [{ isPublished: 'desc' }, { updatedAt: 'desc' }],
+      select: {
+        id: true,
+        slug: true,
+        puckData: true,
+        publishedPuckData: true,
+        isPublished: true,
+      },
+    });
+    if (!layout || this.findStaffNodes(layout.puckData).length !== 1) return null;
+
+    const moi = entries.map((e) => ({
+      section: { vi: 'Sáng kiến', en: 'Innovations' },
+      title: { vi: e.title, en: '' },
+      desc: { vi: e.desc, en: '' },
+      auto: 'sang-kien',
+    }));
+    const thay = (root: unknown) => {
+      let doi = false;
+      const walk = (n: unknown): unknown => {
+        if (Array.isArray(n)) return n.map(walk);
+        if (!n || typeof n !== 'object') return n;
+        const node = n as PuckNode;
+        if (node.type && STAFF_TYPES.includes(node.type) && node.props) {
+          const cu = (node.props.extras ?? []) as Array<Record<string, unknown>>;
+          const next = [...cu.filter((e) => e?.auto !== 'sang-kien'), ...moi];
+          if (JSON.stringify(next) === JSON.stringify(cu)) return node;
+          doi = true;
+          return { ...node, props: { ...node.props, extras: next } };
+        }
+        const out: Record<string, unknown> = {};
+        for (const [k, v] of Object.entries(n as Record<string, unknown>)) {
+          out[k] = v && typeof v === 'object' ? walk(v) : v;
+        }
+        return out;
+      };
+      return { tree: walk(root), doi };
+    };
+    const nhap = thay(layout.puckData);
+    const pub = layout.isPublished
+      ? thay(layout.publishedPuckData)
+      : { tree: layout.publishedPuckData, doi: false };
+    if (!nhap.doi && !pub.doi) return { slug: layout.slug, doi: false };
+    await this.prisma.pageLayout.update({
+      where: { id: layout.id },
+      data: {
+        ...(nhap.doi ? { puckData: nhap.tree as Prisma.InputJsonValue } : {}),
+        ...(pub.doi ? { publishedPuckData: pub.tree as Prisma.InputJsonValue } : {}),
+      },
+    });
+    if (pub.doi && opts.lamMoi !== false) await this.afterWrite(userId, [layout.slug]);
+    return { slug: layout.slug, doi: pub.doi || nhap.doi };
+  }
+
+  /** Xoá cache + dựng lại một loạt trang công khai một lần (sau `ganMucSangKien` hàng loạt). */
+  async lamMoiNhieuTrang(slugs: string[]) {
+    if (!slugs.length) return;
+    await this.cache.clear();
+    this.publicRevalidate.trigger([...new Set(slugs)].map((s) => `page:${s}`));
   }
 
   /** Nhân bản cây, đặt `photo` cho mọi khối hồ sơ (StaffProfile / StaffProfileEditorial). */

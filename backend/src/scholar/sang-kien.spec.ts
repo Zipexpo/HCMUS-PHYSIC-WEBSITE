@@ -79,6 +79,7 @@ function taoCsdl() {
     (w.id === undefined || (typeof w.id === 'string' ? a.id === w.id : w.id.in.includes(a.id))) &&
     (w.initiativeId === undefined || a.initiativeId === w.initiativeId) &&
     (!('userId' in w) || a.userId === w.userId) &&
+    (!('showOnWeb' in w) || (a as Author & { showOnWeb?: boolean }).showOnWeb !== false === w.showOnWeb) &&
     (w.claimStatus === undefined || a.claimStatus === w.claimStatus);
 
   const prisma: any = {
@@ -158,7 +159,12 @@ function taoCsdl() {
         return authors
           .filter((a) => khopTg(a, w))
           .map((a) => ({ ...a, init: inits.find((i) => i.id === a.initiativeId)! }))
-          .filter((a) => !initiative || a.init.deletedAt === null)
+          .filter(
+            (a) =>
+              !initiative ||
+              (a.init.deletedAt === null &&
+                (!initiative.reviewStatus || initiative.reviewStatus.in.includes(a.init.reviewStatus))),
+          )
           .map(({ init, ...a }) => ({ ...a, initiative: day(init) }));
       }),
       deleteMany: vi.fn(async ({ where }) => {
@@ -542,6 +548,54 @@ describe('Khoa duyệt', () => {
     const { svc } = await banNap();
     const kq = await svc.integrationList({});
     expect(kq.items.map((x) => (x as { reviewStatus: string }).reviewStatus)).toEqual(['APPROVED', 'APPROVED']);
+  });
+});
+
+// ── Trang nhân sự (25/11/2026) ─────────────────────────────────────────────
+describe('mục «Sáng kiến» trên trang nhân sự', () => {
+  async function banNap() {
+    const db = taoCsdl();
+    const a = await db.svc.create('u1', khai({ authors: [{ userId: 'u1' }, { userId: 'u2' }] }));
+    await db.svc.traLoiMoi('u2', a.id, true);
+    Object.assign(db.inits[0], { reviewStatus: 'APPROVED', source: 'import' });
+    return { ...db, id: a.id };
+  }
+
+  it('chỉ sáng kiến Khoa đã duyệt, dòng phụ: mã · cấp · QĐ (ngày)', async () => {
+    const { svc } = await banNap();
+    await svc.create('u1', khai({ code: 'SK2026-000999', title: 'Khai mới chưa duyệt' }));
+    expect(await svc.mucTrangCua('u1')).toEqual([
+      {
+        title: 'Hệ đo phổ huỳnh quang giá rẻ cho phòng thí nghiệm',
+        desc: 'SK2026-000123 · Cấp cơ sở · QĐ 3771/QĐ-KHTN (20/11/2026)',
+      },
+    ]);
+  });
+
+  it('đang chờ duyệt bản sửa → trang vẫn hiện bản đã duyệt; người mới thêm chưa hiện', async () => {
+    const { svc, id } = await banNap();
+    await svc.update('u1', id, { title: 'Tên sửa', authors: [{ userId: 'u1' }, { userId: 'u2' }, { userId: 'u3' }] });
+    await svc.traLoiMoi('u3', id, true);
+    expect((await svc.mucTrangCua('u1'))[0].title).toBe('Hệ đo phổ huỳnh quang giá rẻ cho phòng thí nghiệm');
+    expect(await svc.mucTrangCua('u3')).toEqual([]);
+  });
+
+  it('tắt «hiện trên trang» → không hiện; chỉ đụng dòng của chính mình', async () => {
+    const { svc, id } = await banNap();
+    await svc.doiHienTrenWeb('u1', id, false);
+    expect(await svc.mucTrangCua('u1')).toEqual([]);
+    expect(await svc.mucTrangCua('u2')).toHaveLength(1);
+    expect((await svc.findOne(id, 'u1')).myShowOnWeb).toBe(false);
+  });
+
+  it('mỗi thay đổi tự cập nhật trang của những người bị ảnh hưởng', async () => {
+    const db = taoCsdl();
+    const trang = { ganMucSangKien: vi.fn().mockResolvedValue({ slug: 's', doi: true }) };
+    const svc = new SangKienService(db.prisma, { emit: vi.fn() } as never, trang as never);
+    const a = await svc.create('u1', khai({ authors: [{ userId: 'u1' }, { userId: 'u2' }] }));
+    await svc.traLoiMoi('u2', a.id, true);
+    await new Promise((r) => setTimeout(r, 0));
+    expect(trang.ganMucSangKien.mock.calls.map((c) => c[0]).sort()).toEqual(['u1', 'u2', 'u2']);
   });
 });
 

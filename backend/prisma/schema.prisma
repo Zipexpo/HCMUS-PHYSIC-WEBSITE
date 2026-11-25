@@ -1346,6 +1346,12 @@ model Initiative {
   reviewedAt       DateTime?
   /// manual (tác giả khai) · import (Khoa nạp từ danh sách công nhận).
   source           String    @default("manual")
+  /// MINH CHỨNG (bản quét quyết định / trích trang danh sách): tên tệp trên đĩa trong
+  /// `uploads/initiative-evidence/` — thư mục này BỊ CHẶN phục vụ tĩnh (main.ts), chỉ
+  /// tải qua route có đăng nhập, vì danh sách công nhận có tên + mã người học.
+  evidenceFile     String?
+  /// Tên hiển thị khi tải về.
+  evidenceName     String?
   createdBy    String?
   createdAt    DateTime  @default(now())
   updatedAt    DateTime  @updatedAt

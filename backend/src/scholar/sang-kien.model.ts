@@ -103,6 +103,8 @@ export const NhanTenBodySchema = z.object({
 });
 
 export const TraLoiMoiBodySchema = z.object({ accept: z.boolean() });
+export const HienTrenWebBodySchema = z.object({ showOnWeb: z.boolean() });
+export const DongBoTrangBodySchema = z.object({ dryRun: z.boolean().optional() });
 
 // ── Trả về ──────────────────────────────────────────────────────────────────
 export const TacGiaSangKienResSchema = z.object({
@@ -130,6 +132,8 @@ export const SangKienResSchema = z.object({
   createdByName: z.string().nullable(),
   /** Trạng thái của CHÍNH người đang xem; null = không có tên trong sáng kiến. */
   myStatus: z.enum(CLAIM_STATUSES).nullable(),
+  myShowOnWeb: z.boolean().nullable(),
+  evidenceName: z.string().nullable(),
   authors: z.array(TacGiaSangKienResSchema),
   reviewStatus: z.enum(TRANG_THAI_DUYET),
   reviewNote: z.string().nullable(),

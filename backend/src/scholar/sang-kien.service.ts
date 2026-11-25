@@ -1,13 +1,32 @@
+import { createReadStream, existsSync, mkdirSync, unlink } from 'node:fs';
+import { join } from 'node:path';
 import {
   ForbiddenException,
   Injectable,
+  Logger,
   NotFoundException,
+  Optional,
   UnprocessableEntityException,
 } from '@nestjs/common';
 import { Prisma } from '../generated/prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { EventBusService } from '../shared/services/event-bus.service';
 import { pageBySince } from './integration-cursor';
+import { StaffPageService } from './staff-page.service';
+
+/**
+ * Minh chứng sáng kiến. Nằm trong volume `uploads/` (bền qua deploy) nhưng main.ts
+ * CHẶN phục vụ tĩnh thư mục này — danh sách công nhận có tên + mã người học, chỉ
+ * tải qua GET /scholar/initiatives/:id/evidence (có đăng nhập).
+ */
+export const SK_EVIDENCE_DIR = join(process.cwd(), 'uploads', 'initiative-evidence');
+mkdirSync(SK_EVIDENCE_DIR, { recursive: true });
+
+const CAP_NHAN: Record<string, string> = {
+  CO_SO: 'Cấp cơ sở',
+  BO: 'Cấp Bộ',
+  TOAN_QUOC: 'Cấp toàn quốc',
+};
 import type { IntegrationQueryType } from './scholar.model';
 import type {
   CapSangKien,
@@ -230,9 +249,13 @@ type Tx = Prisma.TransactionClient;
 
 @Injectable()
 export class SangKienService {
+  private readonly logger = new Logger(SangKienService.name);
+
   constructor(
     private readonly prisma: PrismaService,
     private readonly bus: EventBusService,
+    // Không có (test) thì thôi đồng bộ trang nhân sự.
+    @Optional() private readonly trang?: StaffPageService,
   ) {}
 
   /** Nội dung hiện tại dưới dạng bản chụp (kèm tên để Khoa đọc được chỗ đổi). */
@@ -303,6 +326,10 @@ export class SangKienService {
       createdBy: r.createdBy,
       createdByName: nguoiKhai ? hoTen(nguoiKhai.user) : null,
       myStatus: viewer ? (r.authors.find((a) => a.userId === viewer)?.claimStatus ?? null) : null,
+      /** Người đang xem có cho hiện sáng kiến này trên trang nhân sự của mình không. */
+      myShowOnWeb: viewer ? (r.authors.find((a) => a.userId === viewer)?.showOnWeb ?? null) : null,
+      /** Có tệp minh chứng (tải qua GET …/evidence) — tên để hiển thị. */
+      evidenceName: r.evidenceFile ? (r.evidenceName ?? 'minh-chung') : null,
       authors: tacGia,
       reviewStatus: r.reviewStatus as 'APPROVED' | 'PENDING' | 'REJECTED',
       reviewNote: r.reviewNote,
@@ -316,10 +343,133 @@ export class SangKienService {
   }
 
   private emit(id: string, userIds: Array<string | null | undefined>) {
-    this.bus.emit('initiative.changed', {
-      id,
-      userIds: [...new Set(userIds.filter((u): u is string => Boolean(u)))],
+    const ids = [...new Set(userIds.filter((u): u is string => Boolean(u)))];
+    this.bus.emit('initiative.changed', { id, userIds: ids });
+    // Trang nhân sự của những người bị ảnh hưởng — chạy nền, hỏng không làm hỏng thao tác.
+    if (this.trang) {
+      void Promise.allSettled(ids.map((u) => this.capNhatTrang(u))).then((kq) =>
+        kq.forEach((k) => k.status === 'rejected' && this.logger.warn(`trang nhân sự: ${String(k.reason)}`)),
+      );
+    }
+  }
+
+  // ── Trang nhân sự ────────────────────────────────────────────────────────
+  /**
+   * Dòng «Sáng kiến» trên trang nhân sự của một người: sáng kiến người đó ĐÃ XÁC
+   * NHẬN, bật «hiện trên trang», và Khoa ĐÃ DUYỆT. Đang chờ duyệt một bản sửa thì
+   * hiện bản đã duyệt (nếu người đó có trong bản ấy); khai mới chưa duyệt thì chưa hiện.
+   */
+  async mucTrangCua(userId: string): Promise<Array<{ title: string; desc: string }>> {
+    const rows = await this.prisma.initiativeAuthor.findMany({
+      where: {
+        userId,
+        claimStatus: 'CONFIRMED',
+        showOnWeb: true,
+        initiative: { deletedAt: null, reviewStatus: { in: ['APPROVED', 'PENDING'] } },
+      },
+      include: { initiative: true },
     });
+    const out: Array<{ ngay: string; title: string; desc: string }> = [];
+    for (const { initiative: r } of rows) {
+      const ban = r.reviewStatus === 'PENDING' ? (laBan(r.approvedSnapshot) ? r.approvedSnapshot : null) : null;
+      if (r.reviewStatus === 'PENDING' && (!ban || !ban.authors.some((a) => a.userId === userId))) continue;
+      const nd = ban ?? { ...r, decisionDate: ngay(r.decisionDate) };
+      const d = nd.decisionDate ? nd.decisionDate.split('-').reverse().join('/') : '';
+      out.push({
+        ngay: nd.decisionDate ?? '',
+        title: nd.title,
+        desc: [nd.code, CAP_NHAN[nd.level] ?? nd.level, `QĐ ${nd.decisionNo}${d ? ` (${d})` : ''}`].join(' · '),
+      });
+    }
+    return out.sort((a, b) => b.ngay.localeCompare(a.ngay)).map(({ title, desc }) => ({ title, desc }));
+  }
+
+  private async capNhatTrang(userId: string, lamMoi = true) {
+    if (!this.trang) return null;
+    return this.trang.ganMucSangKien(userId, await this.mucTrangCua(userId), { lamMoi });
+  }
+
+  /**
+   * Một lượt cho MỌI người có tên trong sáng kiến (sau khi Khoa nạp danh sách) —
+   * chỉ quản trị. Chỉ thay dòng do máy sinh trong mục «Sáng kiến», không xuất bản
+   * nháp của ai. `dryRun` chỉ đếm.
+   */
+  async dongBoTrangTatCa(dryRun = false) {
+    const ds = await this.prisma.initiativeAuthor.findMany({
+      where: { userId: { not: null }, claimStatus: 'CONFIRMED', initiative: { deletedAt: null } },
+      select: { userId: true },
+      distinct: ['userId'],
+    });
+    const ids = ds.map((x) => x.userId as string);
+    const coTrang = await this.prisma.scholarProfile.count({
+      where: { userId: { in: ids }, staffPageSlug: { not: null } },
+    });
+    if (dryRun || !this.trang) return { nguoi: ids.length, coTrang, doi: 0, boQua: 0 };
+    const slugs: string[] = [];
+    let doi = 0;
+    let boQua = 0;
+    for (const u of ids) {
+      try {
+        const kq = await this.capNhatTrang(u, false);
+        if (!kq) boQua++;
+        else if (kq.doi) {
+          doi++;
+          slugs.push(kq.slug);
+        }
+      } catch (e) {
+        boQua++;
+        this.logger.warn(`trang nhân sự ${u}: ${String(e)}`);
+      }
+    }
+    await this.trang.lamMoiNhieuTrang(slugs);
+    return { nguoi: ids.length, coTrang, doi, boQua };
+  }
+
+  /** Tác giả tự bật / tắt hiện sáng kiến này trên trang nhân sự của MÌNH. */
+  async doiHienTrenWeb(userId: string, id: string, showOnWeb: boolean) {
+    const done = await this.prisma.initiativeAuthor.updateMany({
+      where: { initiativeId: id, userId, initiative: { deletedAt: null } },
+      data: { showOnWeb },
+    });
+    if (!done.count) throw SangKienNotFoundException;
+    await this.capNhatTrang(userId).catch((e) => this.logger.warn(`trang nhân sự: ${String(e)}`));
+    return { ok: true, showOnWeb };
+  }
+
+  // ── Minh chứng ───────────────────────────────────────────────────────────
+  /** Tệp minh chứng — ai đăng nhập cũng tải được (quyết định là văn bản trong Trường). */
+  async taiMinhChung(id: string) {
+    const r = await this.prisma.initiative.findFirst({
+      where: { id, deletedAt: null },
+      select: { evidenceFile: true, evidenceName: true },
+    });
+    const duong = r?.evidenceFile ? join(SK_EVIDENCE_DIR, r.evidenceFile) : null;
+    if (!duong || !existsSync(duong)) throw SangKienNotFoundException;
+    const ten = r!.evidenceName || r!.evidenceFile!;
+    return {
+      stream: createReadStream(duong),
+      originalName: ten,
+      mimeType: /\.pdf$/i.test(r!.evidenceFile!) ? 'application/pdf' : /\.png$/i.test(r!.evidenceFile!) ? 'image/png' : 'image/jpeg',
+    };
+  }
+
+  /** Tác giả đã xác nhận tải (thay) minh chứng. Không bắt Khoa duyệt lại — như liên kết. */
+  async ganMinhChung(userId: string, id: string, file: { filename: string; originalname: string }) {
+    const xoaTep = (ten: string) => unlink(join(SK_EVIDENCE_DIR, ten), () => undefined);
+    let r: HangDayDu;
+    try {
+      r = await this.assertXacNhan(this.prisma, id, userId);
+    } catch (e) {
+      xoaTep(file.filename);
+      throw e;
+    }
+    await this.prisma.initiative.update({
+      where: { id },
+      data: { evidenceFile: file.filename, evidenceName: file.originalname, updatedAt: new Date() },
+    });
+    if (r.evidenceFile && r.evidenceFile !== file.filename) xoaTep(r.evidenceFile);
+    this.emit(id, [userId]);
+    return this.findOne(id, userId);
   }
 
   // ── Đọc ───────────────────────────────────────────────────────────────────
