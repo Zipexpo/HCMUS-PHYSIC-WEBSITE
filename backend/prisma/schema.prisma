@@ -233,6 +233,7 @@ model User {
   projectMembers         ProjectMember[]
   scienceActivities      ScienceActivity[]
   scienceActivityMembers ScienceActivityMember[]
+  initiativeAuthors      InitiativeAuthor[]
 
   @@index([role])
   @@index([email])
@@ -1304,6 +1305,84 @@ model ScienceActivityMember {
 
   @@unique([activityId, userId])
   @@index([userId, claimStatus])
+}
+
+/// SÁNG KIẾN được công nhận (Khoa yêu cầu 25/11/2026) — khai GIỐNG BÀI BÁO: MỘT bản
+/// ghi dùng chung cho mọi đồng tác giả, khoá theo MÃ SỐ sáng kiến (vd SK2026-000123)
+/// như bài báo khoá theo DOI. Người khai gắn tên đồng nghiệp; người được gắn phải TỰ
+/// xác nhận thì mới được tính. Khai lại một mã đã có thì không tạo bản thứ hai — chỉ
+/// gắn tên mình vào bản đã có (`join`).
+///
+/// Web Khoa giữ DỮ KIỆN, không giữ điểm: ACADsoom kéo qua /integration/initiatives rồi
+/// tự quyết tính vào đâu (Mục I tiêu chí 3a, phiếu 2C mục C26…).
+model Initiative {
+  id           String    @id @default(cuid())
+  /// Mã số sáng kiến — BẮT BUỘC, duy nhất. Lưu dạng chuẩn hoá (hoa, bỏ khoảng
+  /// trắng, gạch nối thường) — xem `chuanHoaMaSangKien`.
+  code         String    @unique
+  title        String
+  /// Cấp công nhận: CO_SO (mặc định — QĐ của Trường) · BO · TOAN_QUOC.
+  level        String    @default("CO_SO")
+  /// Số quyết định công nhận — BẮT BUỘC, vd 3771/QĐ-KHTN.
+  decisionNo   String
+  /// Ngày ký quyết định — mốc xếp sáng kiến vào năm học / kỳ đánh giá.
+  decisionDate DateTime? @db.Date
+  /// Nhóm ghi trong danh sách công nhận (bài báo, đề tài, KHCN, quy trình…). Chỉ
+  /// hiển thị và thống kê.
+  category     String?
+  note         String?
+  /// Liên kết minh chứng (bản quét quyết định…).
+  url          String?
+  /// KHOA DUYỆT (người dùng chốt 25/11/2026): Khoa nạp từ quyết định → APPROVED;
+  /// tác giả khai mới hoặc sửa NỘI DUNG (mã, tên, cấp, QĐ, ngày, nhóm, danh sách tác
+  /// giả) → PENDING chờ Khoa duyệt. Ghi chú / liên kết không bắt duyệt lại.
+  /// APPROVED · PENDING · REJECTED. Chỉ APPROVED được đếm bên ACADsoom.
+  reviewStatus     String    @default("PENDING")
+  /// Bản ĐÃ DUYỆT gần nhất, chụp lúc tác giả sửa một sáng kiến đang APPROVED — để
+  /// Khoa so chỗ đổi, và để trả lại nguyên bản khi Khoa không duyệt bản sửa.
+  approvedSnapshot Json?
+  reviewNote       String?
+  reviewedBy       String?
+  reviewedAt       DateTime?
+  /// manual (tác giả khai) · import (Khoa nạp từ danh sách công nhận).
+  source           String    @default("manual")
+  createdBy    String?
+  createdAt    DateTime  @default(now())
+  updatedAt    DateTime  @updatedAt
+  deletedAt    DateTime?
+
+  authors InitiativeAuthor[]
+
+  @@index([deletedAt])
+  @@index([decisionDate])
+  @@index([reviewStatus])
+}
+
+/// Một tác giả của sáng kiến, theo ĐÚNG thứ tự trong quyết định (`position`).
+/// `userId` trống = tác giả không có tài khoản (sinh viên, học viên, người đơn vị
+/// khác) — chỉ ghi tên + đơn vị, không xác nhận, không được tính gì. Người có tài
+/// khoản: người tự khai CONFIRMED ngay, người bị gắn tên PENDING tới khi tự xác nhận.
+model InitiativeAuthor {
+  id           String            @id @default(cuid())
+  initiativeId String
+  position     Int               @default(0)
+  userId       String?
+  externalName String?
+  /// Đơn vị (hoặc mã người học) ghi trong quyết định — cho dòng không tài khoản.
+  externalOrg  String?
+  claimStatus  AuthorClaimStatus @default(PENDING)
+  invitedBy    String?
+  respondedAt  DateTime?
+  showOnWeb    Boolean           @default(true)
+  createdAt    DateTime          @default(now())
+  updatedAt    DateTime          @updatedAt
+
+  initiative Initiative @relation(fields: [initiativeId], references: [id], onDelete: Cascade)
+  user       User?      @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([initiativeId, userId])
+  @@index([userId, claimStatus])
+  @@index([initiativeId])
 }
 
 model ResearchProject {

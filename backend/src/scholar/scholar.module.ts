@@ -14,6 +14,8 @@ import { DeNghiSuaController } from './de-nghi-sua.controller';
 import { DeNghiSuaService } from './de-nghi-sua.service';
 import { ThoaThuanController, ThoaThuanIntegrationController } from './thoa-thuan.controller';
 import { ThoaThuanService } from './thoa-thuan.service';
+import { SangKienController, SangKienIntegrationController } from './sang-kien.controller';
+import { SangKienService } from './sang-kien.service';
 
 @Module({
   controllers: [
@@ -24,6 +26,8 @@ import { ThoaThuanService } from './thoa-thuan.service';
     DeNghiSuaController,
     ThoaThuanController,
     ThoaThuanIntegrationController,
+    SangKienController,
+    SangKienIntegrationController,
   ],
   providers: [
     ScholarService,
@@ -35,6 +39,7 @@ import { ThoaThuanService } from './thoa-thuan.service';
     XepHangService,
     DeNghiSuaService,
     ThoaThuanService,
+    SangKienService,
   ],
   // StaffPageService.ensureStaffPage() được AdminModule dùng để tự dựng trang
   // nhân sự khi tạo cán bộ / gán đơn vị.

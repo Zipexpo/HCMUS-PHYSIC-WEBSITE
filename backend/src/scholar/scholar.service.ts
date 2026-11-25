@@ -463,6 +463,8 @@ export class ScholarService {
                 { firstName: { contains: q, mode: 'insensitive' } },
                 { lastName: { contains: q, mode: 'insensitive' } },
                 { email: { contains: q, mode: 'insensitive' } },
+                // MSCB — danh sách sáng kiến / quyết định ghi Mã CB (25/11/2026).
+                { teacherId: q.trim() },
               ],
             }
           : {}),
